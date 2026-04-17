@@ -1,8 +1,8 @@
 defmodule EquinoxWeb.CoreComponents do
   @moduledoc """
   Provides core UI components.
-  
-  Most complex UI is handled by Svelte via LiveView Hooks. This module only 
+
+  Most complex UI is handled by Svelte via LiveView Hooks. This module only
   keeps absolute minimal Phoenix conveniences (like `.icon`).
   """
   use Phoenix.Component
@@ -26,6 +26,8 @@ defmodule EquinoxWeb.CoreComponents do
     <span class={[@name, @class]} />
     """
   end
+
+  # TODO: define title component.
 
   @doc """
   Translates an error message using gettext.
