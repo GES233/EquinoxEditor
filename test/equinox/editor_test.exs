@@ -10,20 +10,28 @@ defmodule Equinox.EditorTest do
       Project.new(%{
         name: "Test Project",
         tracks: %{
-          "t1" => Track.new(%{
-            id: "t1",
-            type: "synth",
-            name: "Track 1",
-            segments: %{
-              "s1" => Segment.new(%{
-                id: "s1",
-                track_id: "t1",
-                notes: [
-                  Note.new(%{id: "n1", start_tick: 0, duration_tick: 480, key: 60, lyric: "la"})
-                ]
-              })
-            }
-          })
+          "t1" =>
+            Track.new(%{
+              id: "t1",
+              type: "synth",
+              name: "Track 1",
+              segments: %{
+                "s1" =>
+                  Segment.new(%{
+                    id: "s1",
+                    track_id: "t1",
+                    notes: [
+                      Note.new(%{
+                        id: "n1",
+                        start_tick: 0,
+                        duration_tick: 480,
+                        key: 60,
+                        lyric: "la"
+                      })
+                    ]
+                  })
+              }
+            })
         }
       })
 
@@ -42,7 +50,8 @@ defmodule Equinox.EditorTest do
     end
 
     test "update_note/5 updates a specific note's properties", %{project: project} do
-      {:ok, updated_project} = Editor.update_note(project, "t1", "s1", "n1", %{lyric: "lu", duration_tick: 960})
+      {:ok, updated_project} =
+        Editor.update_note(project, "t1", "s1", "n1", %{lyric: "lu", duration_tick: 960})
 
       {:ok, track} = Project.get_track(updated_project, "t1")
       {:ok, segment} = Track.get_segment(track, "s1")

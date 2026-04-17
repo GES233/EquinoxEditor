@@ -88,6 +88,7 @@ defimpl Jason.Encoder, for: Equinox.Editor.Segment do
       curves: segment.curves,
       extra: segment.extra
     }
+
     Jason.Encode.map(map, opts)
   end
 end

@@ -51,12 +51,23 @@
   
   $effect(() => {
     if (notes.length > 0 && activeSegmentId) {
-      // In a real app we'd diff the notes or fire specific events on drag-end.
-      // For this PoC, we can just send the whole segment update or mimic the old behaviour
-      bridge.pushEvent("update_note", { 
-        segment_id: activeSegmentId, 
-        note: $state.snapshot(notes[0]) // just a dummy payload for now
-      });
+      // Create a snapshot to avoid reacting to our own updates later
+      const currentNotes = $state.snapshot(notes);
+      const segId = activeSegmentId;
+      
+      // Debounce: wait 300ms before pushing to backend
+      const timeout = setTimeout(() => {
+        // In a real app we'd diff the notes or fire specific events on drag-end.
+        // For this PoC, we can just send the whole segment update or mimic the old behaviour
+        bridge.pushEvent("update_note", { 
+          segment_id: segId, 
+          note: currentNotes[0] // just a dummy payload for now
+        });
+      }, 300);
+
+      // This cleanup function will be called if the effect is triggered again
+      // before the timeout completes, effectively debouncing the network request.
+      return () => clearTimeout(timeout);
     }
   });
 

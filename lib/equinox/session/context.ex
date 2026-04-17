@@ -79,7 +79,10 @@ defmodule Equinox.Session.Context do
 
     with :error <- Map.fetch(cache, seg.id),
          {:error, _} = err <-
-           Equinox.Kernel.GraphBuilder.compile_graph(effective_graph, seg.cluster || %Equinox.Kernel.Graph.Cluster{}) do
+           Equinox.Kernel.GraphBuilder.compile_graph(
+             effective_graph,
+             seg.cluster || %Equinox.Kernel.Graph.Cluster{}
+           ) do
       err
     else
       {:ok, {cached_graph, cached_interventions, cached_recipe_bundles}} ->

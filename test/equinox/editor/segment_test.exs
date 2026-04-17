@@ -14,7 +14,7 @@ defmodule Equinox.Editor.SegmentTest do
     test "JSON encoding ignores graph and cluster" do
       segment = Segment.new(%{name: "Chorus", offset_tick: 1920, graph: %Equinox.Kernel.Graph{}})
       json = Jason.encode!(segment)
-      
+
       assert json =~ "Chorus"
       assert json =~ "offset_tick"
       # Should not contain graph key since it's excluded in only: [...] list

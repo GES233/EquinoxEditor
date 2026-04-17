@@ -17,6 +17,7 @@ defmodule Equinox.Domain.Slicer do
   """
   @spec slice([Note.t()], non_neg_integer()) :: [slice()]
   # 默认 960 ticks = 半个 4/4 拍 (假设 1 beat = 480 ticks)
+  # 可以改成相邻有空（不考虑休止符，那样太 UTAU 了）的那些音符
   def slice(notes, min_rest_ticks \\ 960)
 
   def slice([], _min_rest), do: []

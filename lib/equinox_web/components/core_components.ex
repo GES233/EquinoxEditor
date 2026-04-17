@@ -27,7 +27,7 @@ defmodule EquinoxWeb.CoreComponents do
     """
   end
 
-  # TODO: define title component.
+  # TODO: Add title component.
 
   @doc """
   Translates an error message using gettext.

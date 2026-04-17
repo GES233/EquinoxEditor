@@ -16,7 +16,8 @@ defmodule Equinox.Domain.Note do
           extra: map()
         }
 
-  @derive {Jason.Encoder, only: [:id, :start_tick, :duration_tick, :key, :lyric, :phoneme, :extra]}
+  @derive {Jason.Encoder,
+           only: [:id, :start_tick, :duration_tick, :key, :lyric, :phoneme, :extra]}
   defstruct [:id, :start_tick, :duration_tick, :key, :lyric, :phoneme, extra: %{}]
 
   def new(attrs \\ %{}) do

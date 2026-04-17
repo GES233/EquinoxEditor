@@ -4,7 +4,7 @@ defmodule Equinox.Steps.Phonemizer do
 
   def run(notes_param, _opts) do
     notes = Param.get_payload(notes_param)
-    
+
     # 模拟注音逻辑
     phonemized =
       Enum.map(notes, fn note ->
@@ -79,7 +79,7 @@ defmodule Equinox.Steps.Mixer do
 
   def run(tracks_params, _opts) when is_list(tracks_params) do
     tracks = Enum.map(tracks_params, &Param.get_payload/1)
-    
+
     # 模拟叠加
     mixed = "Mix[#{Enum.join(tracks, " + ")}]"
 
@@ -98,7 +98,7 @@ defmodule Equinox.Steps.Output do
 
   def run(mixed_param, _opts) do
     mixed = Param.get_payload(mixed_param)
-    
+
     # 这里可以是写入 .wav 或者发送给播放器的句柄
     {:ok, Param.new(:master_out, :audio) |> Param.set_payload(mixed)}
   end

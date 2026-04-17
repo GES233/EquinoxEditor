@@ -9,7 +9,7 @@ This repository is the successor to two prior prototypes:
 - **Quincunx**: Validated the Orchid-based DAG kernel and intervention model.
     - Remote: [SynapticStrings/Quincunx](https://github.com/SynapticStrings/Quincunx)
 - **KinoBayanroll** (Livebook Smart Cell): Validated the Svelte 5 + SvelteFlow frontend stack.
-    - Remote: [GES233/kino_bayanroll](https://github.com/GES233/kino_bayanroll)
+    - ~~Remote: [GES233/kino_bayanroll](https://github.com/GES233/kino_bayanroll)~~
 - **PoC Script**: (DiffSinger pipeline demo)
     - Remote: [simple_run.livemd](https://github.com/GES233/DiffSinger/blob/main/examples/diff_singer_model/simple_run.livemd)
     - Local: `C:/Users/Q/Downloads/simple_run.livemd`
@@ -124,17 +124,14 @@ The **only** coupling between Svelte and Phoenix is a small typed interface, mod
 
 ```ts
 // assets/src/lib/bridge/index.ts
-interface EquinoxBridge {
+export interface EquinoxBridge {
   root: HTMLElement;
   pushEvent<T>(name: string, payload: T): void;
   handleEvent<T>(name: string, handler: (payload: T) => void): () => void;
-  // getBlob / requestBinary etc. for waveform assets
 }
 ```
 
-Two implementations exist:
-1. **`LiveBridge`** — backed by a Phoenix LiveView Hook (`this.pushEvent`, `this.handleEvent`). Used in production.
-2. **`MockBridge`** — backed by in-memory fixtures and `fetch`. Used by `npm run dev` standalone. Enables UI-only contributors to work without an Elixir toolchain.
+This is implemented via `createSvelteHook` which acts as a Phoenix LiveView Hook and injects the `bridge` prop into Svelte 5 components when mounting them to the DOM.
 
 **Svelte components receive a `bridge` prop; they must never import from `phoenix_live_view` or inspect `window.liveSocket` directly.** This discipline keeps the components portable and testable.
 
@@ -353,7 +350,7 @@ Port key format stays `"node_id|port_name"` for interop with existing Orchid rec
 ## Working Notes for Agents
 
 - **When adding a new step type**: (1) register in `Equinox.Kernel.StepRegistry`, (2) expose its ports through the topology package, (3) optionally provide a bespoke Svelte node component — otherwise `DynamicNode` renders it.
-- **When touching the bridge interface**: update both `LiveBridge` and `MockBridge` in the same change. The `MockBridge` is the contract.
+- **When touching the bridge interface**: update `createSvelteHook` in `$lib/bridge/index.ts`. The bridge is the contract.
 - **When in doubt about Windows friendliness**: prefer pure-Elixir / pure-JS solutions over native bindings. If a NIF is required, isolate it behind `orchid_symbiont` so it can be torn down and restarted.
 - **Do not reintroduce** `KinoCtx`, `to_source/1`, `broadcast_event/3`-style Kino plumbing, `KinoBayanroll.Registry`, or any Livebook Smart Cell hook. They are archaeology.
 - **Reference prototypes** (read-only):
@@ -384,3 +381,22 @@ Port key format stays `"node_id|port_name"` for interop with existing Orchid rec
 - **Svelte State Hydration**: Refactored `PianoRoll.svelte` to listen for the `project_load` event via `LiveBridge`. Svelte now successfully parses the backend project payload, derives the active track/segment, and renders the backend notes on the canvas.
 - **Bi-directional Editing Skeleton**: Implemented `handle_event` callbacks in `EquinoxWeb.EditorLive` (`add_note`, `update_note`, `delete_note`) ready to be wired up to `Equinox.Editor` state mutations.
 - **Editor Actions Skeleton**: Built `Equinox.Editor` module. Implemented `add_note/4`, `update_note/5`, and `delete_note/4` as pure functional transformations over the nested `Equinox.Project` structure.
+
+### 2026-04-17 (UI Architecture Review)
+- **LiveView Shell Entry**: Verified `EquinoxWeb.EditorLive` is the main entry point that bootstraps `Equinox.Session`, fetches initial graph nodes from `StepRegistry`, and pushes `project_load` events via LiveView Hooks.
+- **Svelte Hooks Integration**: Confirmed Svelte components are mounted as islands using `createSvelteHook` (e.g. `PianoRollHook` on `phx-hook` elements), establishing the exact `EquinoxBridge` boundary.
+
+### UI Architecture (Svelte & LiveView Integration)
+
+- **Backend Componentization**: The main `EditorLive` module acts solely as a container and a top-level message dispatcher for global initialization.
+- Feature-specific UI sections (e.g. PianoRoll, Arranger) are extracted into distinct LiveComponents (e.g. `EquinoxWeb.EditorLive.PianoRollComponent`).
+- **Targeted Event Routing**: In order to prevent the main LiveView from bloating, each LiveComponent has `phx-target={@myself}` set on its hook mount point.
+- The `EquinoxBridge` (JS side) uses `this.pushEventTo(this.el, ...)` to route WebSocket events specifically to the LiveComponent responsible for that specific DOM tree.
+- **Frontend Debouncing**: High-frequency user interactions (like dragging notes) should not continuously broadcast WebSocket messages. Rather than debouncing on the Elixir backend, we use Svelte 5's reactive features:
+  - Local `$state` updates happen instantly for an optimistic UI.
+  - An `$effect` handles debouncing network requests using standard `setTimeout` with a cleanup function to cancel previous timeouts.
+
+
+### Tooling & Environment Observations (Agent)
+- **PowerShell vs. Bash**: While the host environment is Windows (where PowerShell is preferred), the agent's execution tool is fundamentally a cross-platform Unix shell emulator (`mvdan/sh`). This means the agent defaults to bash syntax and utilities. To fully utilize Windows-native capabilities, the agent would need to explicitly invoke `powershell.exe`.
+- **Tool Calling**: The disconnect between the host OS (Windows) and the tool environment (`bash`) requires the agent to be extra mindful of path separators (using forward slashes) and line endings (CRLF vs LF) to prevent tool calling errors and command failures.

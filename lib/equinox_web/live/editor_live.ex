@@ -51,6 +51,7 @@ defmodule EquinoxWeb.EditorLive do
       })
 
     socket = push_event(socket, "project_load", project)
+    socket = push_event(socket, "arranger-island:project_load", project)
 
     # 2. Fetch nodes from registry
     all_nodes = Equinox.Kernel.StepRegistry.list_all()
@@ -91,58 +92,11 @@ defmodule EquinoxWeb.EditorLive do
     {:noreply, socket}
   end
 
-  def handle_event("update_note", %{"segment_id" => seg_id, "note" => note_params}, socket) do
-    IO.puts("Received note update from PianoRoll for segment: #{seg_id}")
-    IO.inspect(note_params)
-    # TODO: Pass the update up to Equinox.Session.Server to mutate the Project
-    {:noreply, socket}
-  end
-
-  def handle_event("add_note", %{"segment_id" => seg_id, "note" => note_params}, socket) do
-    IO.puts("Received new note from PianoRoll for segment: #{seg_id}")
-    IO.inspect(note_params)
-    # TODO: Pass the update up to Equinox.Session.Server
-    {:noreply, socket}
-  end
-
-  def handle_event("delete_note", %{"segment_id" => seg_id, "note_id" => note_id}, socket) do
-    IO.puts("Received note deletion from PianoRoll for segment: #{seg_id}, note: #{note_id}")
-    # TODO: Pass the update up to Equinox.Session.Server
-    {:noreply, socket}
-  end
-
   def handle_event("synth_graph_update", payload, socket) do
     IO.puts("Received topology update from NodeEditor:")
     IO.inspect(payload)
     # TODO: 将前端发来的 node/edges 解析为 Graph.t() 并推入 Track History
     {:noreply, socket}
-  end
-
-  # Arranger hooks
-  def handle_event("add_arranger_node", payload, socket) do
-    IO.inspect(payload, label: "Arranger Add External Node")
-    {:noreply, socket}
-  end
-
-  def handle_event("add_external_node", payload, socket) do
-    IO.inspect(payload, label: "Arranger Remove External Node")
-    {:noreply, socket}
-  end
-
-  def handle_event("update_node_properties", payload, socket) do
-    IO.inspect(payload, label: "Arranger Update Node Properties")
-    {:noreply, socket}
-  end
-
-  def handle_event("mix", _payload, socket) do
-    IO.puts("Arranger triggered Mix (Dispatch to Engine)")
-    # 模拟通知前端开始 Mix，然后在后台跑 Engine
-    {:noreply, push_event(socket, "mix_result", %{status: "started"})}
-  end
-
-  def handle_event("export", payload, socket) do
-    IO.inspect(payload, label: "Arranger Export Audio")
-    {:noreply, push_event(socket, "export_result", %{status: "started"})}
   end
 
   def render(assigns) do
@@ -156,28 +110,25 @@ defmodule EquinoxWeb.EditorLive do
           <!-- phx-update="ignore" is required so LiveView doesn't destroy Svelte's DOM -->
           <div
             class="flex-1 border border-zinc-700 rounded overflow-hidden"
-            id="piano-roll-island"
+            id="slicer-island"
             phx-update="ignore"
           >
             <!-- 插入 Slicer -->
           </div>
-          <div
-            class="flex-1 border border-zinc-700 rounded overflow-hidden"
-            id="piano-roll-island"
-            phx-hook="PianoRollHook"
-            phx-update="ignore"
-          >
-          </div>
-        </div>
 
-    <!-- Right panel: Node Editor -->
-        <div
-          class="h-18 border border-zinc-700 rounded overflow-hidden"
-          id="arranger-island"
-          phx-hook="ArrangerHook"
-          phx-update="ignore"
-        >
+          <.live_component
+            module={EquinoxWeb.EditorLive.PianoRollComponent}
+            id="piano-roll-island"
+            session_id={@session_id}
+          />
         </div>
+        
+    <!-- Right panel: Arranger Editorr -->
+        <.live_component
+          module={EquinoxWeb.EditorLive.ArrangerComponent}
+          id="arranger-island"
+          session_id={@session_id}
+        />
       </div>
     </div>
     """

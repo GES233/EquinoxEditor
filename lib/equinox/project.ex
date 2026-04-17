@@ -19,7 +19,8 @@ defmodule Equinox.Project do
           extra: map()
         }
 
-  @derive {Jason.Encoder, only: [:id, :name, :version, :tempo_map, :ticks_per_beat, :tracks, :extra]}
+  @derive {Jason.Encoder,
+           only: [:id, :name, :version, :tempo_map, :ticks_per_beat, :tracks, :extra]}
   defstruct [
     :id,
     name: "Untitled Project",

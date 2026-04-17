@@ -29,7 +29,7 @@ defmodule Equinox.Application do
 
   defp register_builtin_steps do
     alias Equinox.Kernel.StepRegistry
-    
+
     # Synth nodes
     StepRegistry.register(:phonemizer, %{
       module: Equinox.Steps.Phonemizer,
@@ -62,7 +62,8 @@ defmodule Equinox.Application do
 
     StepRegistry.register(:mixer, %{
       module: Equinox.Steps.Mixer,
-      inputs: [:tracks], # 可以接受多个输入，Orchid 支持 List
+      # 可以接受多个输入，Orchid 支持 List
+      inputs: [:tracks],
       outputs: [:mixed],
       options: []
     })

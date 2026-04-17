@@ -67,10 +67,11 @@ export const createSvelteHook = (Component: any) => {
       const bridge: EquinoxBridge = {
         root: this.el,
         pushEvent: (name, payload) => {
-          this.pushEvent(name, payload);
+          this.pushEventTo(this.el, name, payload);
         },
         handleEvent: (name, handler) => {
           this.handleEvent(name, handler);
+          this.handleEvent(`${this.el.id}:${name}`, handler);
           return () => {};
         }
       };

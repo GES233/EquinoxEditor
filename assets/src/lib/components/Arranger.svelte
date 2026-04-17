@@ -136,6 +136,41 @@
     bridge.handleEvent("export_result", (result: any) => {
       console.log("Export result:", result);
     });
+    bridge.handleEvent("project_load", (project: any) => {
+      console.log("Arranger Project loaded:", project);
+      const synth_nodes: SynthNodeMap = {};
+      const external_nodes: ExternalNodeMap = {};
+      const edges: EdgeData[] = [];
+      let i = 0;
+      
+      for (const trackId of Object.keys(project.tracks || {})) {
+        const track = project.tracks[trackId];
+        synth_nodes[trackId] = {
+          id: trackId,
+          type: track.type === "synth" ? "synth" : "external_audio",
+          label: track.name || trackId,
+          provider_id: "default",
+          volume: 0.8,
+          muted: track.mute || false,
+          solo: track.solo || false,
+          position: { x: 50, y: i * 160 + 30 }
+        };
+        edges.push({
+          id: `e_${trackId}_output`,
+          source: trackId,
+          target: "output"
+        });
+        i++;
+      }
+
+      const state: ArrangerState = {
+        output_node: { id: "output", label: "Master Output", volume: 1.0, muted: false, position: { x: 400, y: 80 } },
+        synth_nodes,
+        external_nodes,
+        edges
+      };
+      syncState(state);
+    });
   });
 
   function addNode(stepDef: any) {
