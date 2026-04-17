@@ -18,10 +18,61 @@ defmodule Equinox.Application do
       EquinoxWeb.Endpoint
     ]
 
-    # See https://hexdocs.pm/elixir/Supervisor.html
-    # for other strategies and supported options
     opts = [strategy: :one_for_one, name: Equinox.Supervisor]
-    Supervisor.start_link(children, opts)
+    result = Supervisor.start_link(children, opts)
+
+    # Register built-in steps
+    register_builtin_steps()
+
+    result
+  end
+
+  defp register_builtin_steps do
+    alias Equinox.Kernel.StepRegistry
+    
+    # Synth nodes
+    StepRegistry.register(:phonemizer, %{
+      module: Equinox.Steps.Phonemizer,
+      inputs: [:notes],
+      outputs: [:linguistic],
+      options: []
+    })
+
+    StepRegistry.register(:acoustic_model, %{
+      module: Equinox.Steps.AcousticModel,
+      inputs: [:notes, :linguistic],
+      outputs: [:mel],
+      options: []
+    })
+
+    StepRegistry.register(:vocoder, %{
+      module: Equinox.Steps.Vocoder,
+      inputs: [:mel],
+      outputs: [:audio],
+      options: []
+    })
+
+    # Arranger nodes
+    StepRegistry.register(:track_input, %{
+      module: Equinox.Steps.TrackInput,
+      inputs: [:audio],
+      outputs: [:track_out],
+      options: [offset_tick: 0, volume: 1.0]
+    })
+
+    StepRegistry.register(:mixer, %{
+      module: Equinox.Steps.Mixer,
+      inputs: [:tracks], # 可以接受多个输入，Orchid 支持 List
+      outputs: [:mixed],
+      options: []
+    })
+
+    StepRegistry.register(:master_output, %{
+      module: Equinox.Steps.Output,
+      inputs: [:mixed],
+      outputs: [:master_out],
+      options: []
+    })
   end
 
   # Tell Phoenix to update the endpoint configuration

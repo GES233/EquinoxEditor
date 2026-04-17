@@ -7,9 +7,51 @@ defmodule EquinoxWeb.EditorLive do
       session_id = "default_session"
       Equinox.Session.start(session_id)
       # 这里可以按需 subscribe 等待 engine 的事件
+
+      send(self(), :push_initial_state)
     end
 
     {:ok, assign(socket, page_title: "Equinox Editor", session_id: "default_session")}
+  end
+
+  def handle_info(:push_initial_state, socket) do
+    # Fetch nodes from registry
+    all_nodes = Equinox.Kernel.StepRegistry.list_all()
+
+    # Determine synth vs arranger nodes by a simple heuristic (or we can add categories to StepRegistry)
+    # For now: :track_input, :mixer, :master_output -> Arranger; others -> Synth
+    arranger_types = [:track_input, :mixer, :master_output]
+
+    synth_defs =
+      all_nodes
+      |> Enum.reject(fn {name, _spec} -> name in arranger_types end)
+      |> Enum.map(fn {name, spec} ->
+        %{
+          name: to_string(name) |> String.capitalize(),
+          module: to_string(spec.module),
+          inputs: spec.inputs,
+          outputs: spec.outputs
+        }
+      end)
+
+    arranger_defs =
+      all_nodes
+      |> Enum.filter(fn {name, _spec} -> name in arranger_types end)
+      |> Enum.map(fn {name, spec} ->
+        %{
+          name: to_string(name) |> String.capitalize(),
+          module: to_string(spec.module),
+          inputs: spec.inputs,
+          outputs: spec.outputs
+        }
+      end)
+
+    socket =
+      socket
+      |> push_event("synth_nodes_available", %{nodes: synth_defs})
+      |> push_event("arranger_nodes_available", %{nodes: arranger_defs})
+
+    {:noreply, socket}
   end
 
   def handle_event("update_notes", %{"notes" => notes}, socket) do
@@ -27,12 +69,12 @@ defmodule EquinoxWeb.EditorLive do
   end
 
   # Arranger hooks
-  def handle_event("add_external_node", payload, socket) do
+  def handle_event("add_arranger_node", payload, socket) do
     IO.inspect(payload, label: "Arranger Add External Node")
     {:noreply, socket}
   end
 
-  def handle_event("remove_external_node", payload, socket) do
+  def handle_event("add_external_node", payload, socket) do
     IO.inspect(payload, label: "Arranger Remove External Node")
     {:noreply, socket}
   end
@@ -65,24 +107,24 @@ defmodule EquinoxWeb.EditorLive do
           <div
             class="flex-1 border border-zinc-700 rounded overflow-hidden"
             id="piano-roll-island"
+            phx-update="ignore"
+          >
+            <!-- 插入 Slicer -->
+          </div>
+          <div
+            class="flex-1 border border-zinc-700 rounded overflow-hidden"
+            id="piano-roll-island"
             phx-hook="PianoRollHook"
             phx-update="ignore"
           >
           </div>
-          <div
-            class="h-48 border border-zinc-700 rounded overflow-hidden"
-            id="arranger-island"
-            phx-hook="ArrangerHook"
-            phx-update="ignore"
-          >
-          </div>
         </div>
-        
-    <!-- Right panel: Node Editor -->
+
+        <!-- Right panel: Node Editor -->
         <div
-          class="w-1/3 border border-zinc-700 rounded overflow-hidden"
-          id="node-editor-island"
-          phx-hook="NodeEditorHook"
+          class="h-18 border border-zinc-700 rounded overflow-hidden"
+          id="arranger-island"
+          phx-hook="ArrangerHook"
           phx-update="ignore"
         >
         </div>

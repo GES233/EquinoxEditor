@@ -13,6 +13,8 @@
 
   let { bridge, payload } = $props();
 
+  let arrangerStepDefs = $state<any[]>([]);
+
   const nodeTypes = {
     synth: TrackNode,
     external_audio: TrackNode,
@@ -122,6 +124,9 @@
 
   $effect(() => {
     if (!bridge) return;
+    bridge.handleEvent("arranger_nodes_available", ({ nodes: defs }: any) => {
+      arrangerStepDefs = defs;
+    });
     bridge.handleEvent("state_updated", (state: ArrangerState) => {
       syncState(state);
     });
@@ -132,6 +137,11 @@
       console.log("Export result:", result);
     });
   });
+
+  function addNode(stepDef: any) {
+    // This function will dispatch an add_node event for Arranger generic nodes
+    bridge.pushEvent("add_arranger_node", { stepDef });
+  }
 
   function addExternalTrack() {
     externalCounter++;
@@ -183,12 +193,22 @@
 <div class="p-4 border border-slate-200 rounded-lg font-sans bg-white">
   <div class="flex items-center justify-between mb-3">
     <h3 class="m-0 text-base text-gray-800">Arranger Mixer</h3>
-    <button
-      class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded cursor-pointer border-none font-medium transition-colors"
-      onclick={addExternalTrack}
-    >
-      + Add Audio Track
-    </button>
+    <div class="flex gap-2">
+      {#each arrangerStepDefs as step}
+        <button
+          class="px-2 py-1 bg-zinc-200 text-zinc-700 hover:text-black hover:bg-zinc-300 rounded text-xs cursor-pointer border border-zinc-300"
+          onclick={() => addNode(step)}
+        >
+          + {step.name}
+        </button>
+      {/each}
+      <button
+        class="px-3 py-1 bg-emerald-600 hover:bg-emerald-500 text-white text-xs rounded cursor-pointer border-none font-medium transition-colors"
+        onclick={addExternalTrack}
+      >
+        + Add Audio Track
+      </button>
+    </div>
   </div>
   <div class="relative rounded overflow-hidden bg-neutral-800 h-125 text-black">
     <SvelteFlow

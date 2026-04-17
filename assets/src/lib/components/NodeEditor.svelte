@@ -25,12 +25,10 @@
 
   // Example placeholder definition
   $effect(() => {
-    if (stepDefs.length === 0) {
-      stepDefs = [
-        { name: "DiffSinger", module: "Elixir.DiffSinger", inputs: ["notes"], outputs: ["mel"] },
-        { name: "Vocoder", module: "Elixir.Vocoder", inputs: ["mel"], outputs: ["audio"] }
-      ];
-    }
+    if (!bridge) return;
+    bridge.handleEvent("synth_nodes_available", ({ nodes: defs }: any) => {
+      stepDefs = defs;
+    });
   });
 
   let syncPending = false;
