@@ -1,6 +1,6 @@
 import { Position } from "./position";
 
-export interface BodeBase {
+export interface NodeBase {
     // Or use Mixin to inject these fields?
     id: string,
     type: string,
