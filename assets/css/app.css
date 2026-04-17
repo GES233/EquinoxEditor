@@ -1,0 +1,14 @@
+@import "tailwindcss";
+@import "@xyflow/svelte/dist/style.css";
+
+/* 
+  Any custom CSS utilities or base overrides can go here.
+  Tailwind v4 uses this simpler import syntax.
+*/
+
+html, body {
+  height: 100%;
+  margin: 0;
+  background-color: #1a1a1a;
+  color: #e5e5e5;
+}
