@@ -7,11 +7,11 @@ defmodule Equinox.Session.Context do
   alias Equinox.Project
   alias Equinox.Session.Storage
   alias Equinox.Kernel.Graph
-  alias Equinox.Editor.{Track, Segment, History}
+  alias Equinox.Editor.{Track, Segment}
   alias Equinox.Kernel.{Blackboard, Planner, RecipeBundle}
 
   @type static_bundles_cache :: %{
-          Segment.id() => {Graph.t(), Segment.interventions_map(), [RecipeBundle.t()]}
+          Segment.id() => {Graph.t(), RecipeBundle.interventions_map(), [RecipeBundle.t()]}
         }
 
   @type t :: %__MODULE__{
@@ -71,11 +71,15 @@ defmodule Equinox.Session.Context do
   end
 
   defp compile_segment(%Segment{} = seg, cache) do
-    {effective_graph, interventions} = History.Resolver.resolve(seg.history, seg.graph)
+    # History resolution is moving to Project/Editor level.
+    # For now, we assume the Segment's graph is already the effective graph.
+    # We will pass empty interventions until we fully integrate the Domain.Note/Curve translator.
+    effective_graph = seg.graph || %Equinox.Kernel.Graph{}
+    interventions = %{}
 
     with :error <- Map.fetch(cache, seg.id),
          {:error, _} = err <-
-           Equinox.Kernel.GraphBuilder.compile_graph(effective_graph, seg.cluster) do
+           Equinox.Kernel.GraphBuilder.compile_graph(effective_graph, seg.cluster || %Equinox.Kernel.Graph.Cluster{}) do
       err
     else
       {:ok, {cached_graph, cached_interventions, cached_recipe_bundles}} ->

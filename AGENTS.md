@@ -466,45 +466,41 @@ And **never** do this:
 
 ```
 equinox/
-├── apps/
+├── lib/
 │   ├── equinox/              # Core domain + Kernel
-│   │   ├── lib/
-│   │   │   └── equinox/
-│   │   │       ├── application.ex
-│   │   │       ├── project.ex        # Top-level session container
-│   │   │       ├── track.ex          # Track (Context) with topology_ref
-│   │   │       ├── editor/           # Edit actions, history
-│   │   │       ├── session/          # Runtime session state
-│   │   │       ├── topology/         # Topology registry + hydration
-│   │   │       ├── kernel/           # Graph, Compiler, Engine, RecipeBundle
-│   │   │       └── termi.ex
-│   │   └── mix.exs
+│   │   ├── application.ex
+│   │   ├── project.ex        # Top-level session container
+│   │   ├── track.ex          # Track (Context) with topology_ref
+│   │   ├── editor/           # Edit actions, history
+│   │   ├── session/          # Runtime session state
+│   │   ├── topology/         # Topology registry + hydration
+│   │   ├── kernel/           # Graph, Compiler, Engine, RecipeBundle
+│   │   └── domain/           # Domain entities (Note, Slicer)
 │   │
-│   └── equinox_web/          # Phoenix + Svelte shell
-│       ├── lib/
-│       │   └── equinox_web/
-│       │       ├── application.ex
-│       │       ├── endpoint.ex
-│       │       ├── router.ex
-│       │       ├── live/             # LiveView entrypoints
-│       │       └── components/       # .heex + Svelte mount points
-│       ├── assets/
-│       │   ├── src/                  # Svelte 5 + TS source
-│       │   │   ├── lib/
-│       │   │   │   ├── stores/       # viewport.svelte.ts, node_registry.ts
-│       │   │   │   ├── components/   # PianoRoll, NodeEditor, Arranger, ...
-│       │   │   │   └── bridge/       # LiveView <-> Svelte transport
-│       │   │   ├── piano_roll.ts     # Entry: Piano Roll island
-│       │   │   ├── node_editor.ts    # Entry: Synth node editor
-│       │   │   ├── arranger.ts       # Entry: Arranger island
-│       │   │   └── app.ts            # Shared bootstrap + hooks
-│       │   ├── css/
-│       │   ├── index.html            # Vite dev entry (mock bridge)
-│       │   ├── vite.config.ts
-│       │   └── tsconfig.json
-│       ├── priv/static/              # Vite build output lands here
-│       └── mix.exs
+│   ├── equinox_web/          # Phoenix + Svelte shell
+│   │   ├── application.ex
+│   │   ├── endpoint.ex
+│   │   ├── router.ex
+│   │   ├── live/             # LiveView entrypoints
+│   │   └── components/       # .heex + Svelte mount points
+│   ├── equinox.ex
+│   └── equinox_web.ex
 │
+├── assets/
+│   ├── src/                  # Svelte 5 + TS source
+│   │   ├── lib/
+│   │   │   ├── stores/       # viewport.svelte.ts, node_registry.ts
+│   │   │   ├── components/   # PianoRoll, NodeEditor, Arranger, ...
+│   │   │   └── bridge/       # LiveView <-> Svelte transport
+│   │   ├── piano_roll.ts     # Entry: Piano Roll island
+│   │   ├── node_editor.ts    # Entry: Synth node editor
+│   │   ├── arranger.ts       # Entry: Arranger island
+│   │   └── app.ts            # Shared bootstrap + hooks
+│   ├── css/
+│   ├── index.html            # Vite dev entry (mock bridge)
+│   ├── vite.config.ts
+│   └── tsconfig.json
+├── priv/static/              # Vite build output lands here
 ├── config/
 ├── AGENTS.md
 └── mix.exs
@@ -524,15 +520,15 @@ iex -S mix phx.server
 # Frontend
 npm install
 npm run dev       # Vite dev server, uses mock bridge
-npm run build     # Builds into apps/equinox_web/priv/static
+npm run build     # Builds into priv/static
 npm run check     # svelte-check + tsc
 ```
 
-The Phoenix dev server should watch Vite output rather than invoke `esbuild`/`tailwind` Mix tasks directly. Configure `:watchers` in `config/dev.exs` to spawn `npm run dev` inside `apps/equinox_web/assets`.
+The Phoenix dev server should watch Vite output rather than invoke `esbuild`/`tailwind` Mix tasks directly. Configure `:watchers` in `config/dev.exs` to spawn `npm run dev` inside `assets`.
 
 ## Tech Stack
 
-### Backend (apps/equinox)
+### Backend (lib/equinox)
 
 Orchid ecosystem — workflow orchestration kernel:
 
@@ -541,7 +537,7 @@ Orchid ecosystem — workflow orchestration kernel:
 - **orchid_stratum** (~> 0.2) — Deterministic content-addressable cache.
 - **orchid_intervention** (~> 0.1) — External data injection semantics.
 
-### Web (apps/equinox_web)
+### Web (lib/equinox_web)
 
 - **phoenix** (~> 1.8), **phoenix_live_view** (~> 1.1), **phoenix_html** (~> 4.1)
 - **bandit** (~> 1.5), **jason**
@@ -770,7 +766,7 @@ Users connect/disconnect ports; the Compiler validates against topology contract
 
 ## Kernel Modules
 
-Naming convention inside `apps/equinox/lib/equinox/kernel/`:
+Naming convention inside `lib/equinox/kernel/`:
 
 | Module | Responsibility | Ancestor |
 |---|---|---|

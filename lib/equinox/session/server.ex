@@ -11,14 +11,15 @@ defmodule Equinox.Session.Server do
   alias Equinox.Kernel.Dispatcher
 
   def start_link(opts) do
-    session_id = Keyword.fetch!(opts, :session_id)
-    GenServer.start_link(__MODULE__, opts, name: Session.server(session_id))
+    with {:ok, session_id} <- Keyword.fetch(opts, :session_id) do
+      GenServer.start_link(__MODULE__, opts, name: Session.server(session_id))
+    end
   end
 
   @impl true
   def init(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
-    project = Keyword.get(opts, :project, Project.new(session_id))
+    project = Keyword.get(opts, :project, Project.new(id: session_id))
     storage = if Keyword.get(opts, :enable_cache, true), do: Storage.new(), else: nil
     {:ok, Context.new(session_id, project, storage)}
   end

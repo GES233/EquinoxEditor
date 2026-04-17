@@ -1,83 +1,93 @@
 defmodule Equinox.Editor.Segment do
   @moduledoc """
-  增量生成的最小单元，属于某个 Track。
-  持有静态拓扑、用户编辑历史和缓存的运行时引用。
+  增量生成的最小单元 (Pure Data)。
+  持有 Notes 和 Curves，供编译器生成 Orchid Graph。
+  如果作为特殊 Override，可选持有 graph 结构（但序列化时会忽略）。
   """
 
-  alias Equinox.Editor.History
   alias Equinox.Kernel.{Graph, Graph.Cluster}
-
-  @type interventions_map :: %{
-          Graph.PortRef.t() => OrchidIntervention.intervention_spec()
-        }
 
   @type id :: atom() | String.t()
 
   @type t :: %__MODULE__{
           id: id(),
           track_id: atom() | String.t() | nil,
-          topology_ref: String.t() | nil,
-          graph: Graph.t(Orchid.Step.implementation()),
-          cluster: Cluster.t(),
-          history: History.t(),
-          data_interventions: interventions_map(),
+          name: String.t(),
+          offset_tick: non_neg_integer(),
+          notes: [Equinox.Domain.Note.t()],
+          curves: map(),
+          graph: Graph.t(Orchid.Step.implementation()) | nil,
+          cluster: Cluster.t() | nil,
           extra: map()
         }
 
+  # 这里不使用 @derive，而是使用 defimpl 手动丢弃 graph 和 cluster
   defstruct [
     :id,
     :track_id,
-    :topology_ref,
-    graph: %Graph{},
-    cluster: %Cluster{},
-    history: %History{},
-    data_interventions: %{},
+    name: "New Segment",
+    offset_tick: 0,
+    notes: [],
+    curves: %{},
+    graph: nil,
+    cluster: nil,
     extra: %{}
   ]
 
-  @spec new(id(), Graph.t()) :: t()
-  @spec new(id(), Graph.t(), keyword()) :: t()
-  def new(id, graph, opts \\ []) do
-    cluster_declaration = Keyword.get(opts, :cluster, %Cluster{})
-    track_id = Keyword.get(opts, :track_id)
-    topology_ref = Keyword.get(opts, :topology_ref)
+  @spec new(map() | keyword()) :: t()
+  def new(attrs \\ %{}) do
+    attrs = normalize_keys(attrs)
 
     %__MODULE__{
-      id: id,
-      track_id: track_id,
-      topology_ref: topology_ref,
-      graph: graph,
-      cluster: cluster_declaration,
-      history: History.new()
+      id: Map.get(attrs, :id, generate_id()),
+      track_id: Map.get(attrs, :track_id),
+      name: Map.get(attrs, :name, "New Segment"),
+      offset_tick: Map.get(attrs, :offset_tick, 0),
+      notes: Map.get(attrs, :notes, []),
+      curves: Map.get(attrs, :curves, %{}),
+      graph: Map.get(attrs, :graph),
+      cluster: Map.get(attrs, :cluster),
+      extra: Map.get(attrs, :extra, %{})
     }
   end
 
-  @spec inject_graph_and_interventions(t(), Graph.t(), map(), boolean()) :: t()
-  def inject_graph_and_interventions(
-        %__MODULE__{} = segment,
-        %Graph{} = graph,
-        data_interventions,
-        clear_history \\ true
-      ) do
-    history = if clear_history, do: %History{}, else: segment.history
+  @doc "从 JSON Map 反序列化并构造嵌套结构体"
+  def from_attrs(attrs) do
+    attrs = normalize_keys(attrs)
 
-    %{segment | graph: graph, data_interventions: data_interventions, history: history}
+    notes =
+      Map.get(attrs, :notes, [])
+      |> Enum.map(&Equinox.Domain.Note.new/1)
+
+    attrs
+    |> Map.put(:notes, notes)
+    |> new()
   end
 
-  @spec apply_operation(t(), History.Operation.t()) :: t()
-  def apply_operation(%__MODULE__{} = segment, operation) do
-    %{segment | history: History.push(segment.history, operation)}
-  end
+  defp generate_id, do: :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
 
-  @spec undo(t()) :: {t(), History.Operation.t() | nil}
-  def undo(%__MODULE__{} = segment) do
-    {his, op} = History.undo(segment.history)
-    {%{segment | history: his}, op}
+  defp normalize_keys(map_or_kw) do
+    map_or_kw
+    |> Enum.into(%{})
+    |> Map.new(fn
+      {k, v} when is_binary(k) -> {String.to_atom(k), v}
+      {k, v} when is_atom(k) -> {k, v}
+    end)
   end
+end
 
-  @spec redo(t()) :: {t(), History.Operation.t() | nil}
-  def redo(%__MODULE__{} = segment) do
-    {his, op} = History.redo(segment.history)
-    {%{segment | history: his}, op}
+defimpl Jason.Encoder, for: Equinox.Editor.Segment do
+  def encode(segment, opts) do
+    # 明确指定需要序列化的纯数据字段
+    map = %{
+      id: segment.id,
+      track_id: segment.track_id,
+      name: segment.name,
+      offset_tick: segment.offset_tick,
+      notes: segment.notes,
+      curves: segment.curves,
+      extra: segment.extra
+    }
+    Jason.Encode.map(map, opts)
   end
 end
