@@ -4,8 +4,10 @@ defmodule Equinox.Domain.Note do
   采用 Tick 作为绝对时间单位。
   """
 
+  @type id :: String.t()
+
   @type t :: %__MODULE__{
-          id: String.t(),
+          id: id(),
           start_tick: non_neg_integer(),
           duration_tick: pos_integer(),
           key: integer(),

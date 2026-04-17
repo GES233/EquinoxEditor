@@ -6,6 +6,57 @@ export interface EquinoxBridge {
   handleEvent<T>(name: string, handler: (payload: T) => void): () => void;
 }
 
+// --- Data Types from Backend (project.ex, track.ex, segment.ex, note.ex) ---
+
+export interface ProjectData {
+  id: string;
+  name: string;
+  version: number;
+  tempo_map: TempoPoint[];
+  ticks_per_beat: number;
+  tracks: Record<string, TrackData>;
+  extra: Record<string, any>;
+}
+
+export interface TempoPoint {
+  tick: number;
+  bpm: number;
+}
+
+export interface TrackData {
+  id: string;
+  project_id: string | null;
+  type: string;
+  name: string;
+  topology_ref: string | null;
+  color: string;
+  mute: boolean;
+  solo: boolean;
+  parameters: Record<string, any>;
+  segments: Record<string, SegmentData>;
+  extra: Record<string, any>;
+}
+
+export interface SegmentData {
+  id: string;
+  track_id: string | null;
+  name: string;
+  offset_tick: number;
+  notes: NoteData[];
+  curves: Record<string, any>;
+  extra: Record<string, any>;
+}
+
+export interface NoteData {
+  id: string;
+  start_tick: number;
+  duration_tick: number;
+  key: number;
+  lyric: string;
+  phoneme: string | null;
+  extra: Record<string, any>;
+}
+
 // Map DOM elements to mounted instances so we can destroy them
 const instances = new Map<HTMLElement, Record<string, any>>();
 

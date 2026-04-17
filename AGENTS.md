@@ -804,3 +804,17 @@ Port key format stays `"node_id|port_name"` for interop with existing Orchid rec
 5. **M4 — Arranger**: Second SvelteFlow canvas, multi-track mix, slice alignment.
 6. **M5 — Curves**: SVG bezier layer + rasterization in the Compiler.
 7. **M6 — History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
+
+## Agent Work Log
+
+### 2026-04-17 (M0/M1 Data Architecture)
+- **Restructured Core Domain (Pure Data)**: Removed Ecto schemas from `Equinox.Project`, `Equinox.Editor.Track`, `Equinox.Editor.Segment`. Converted them to strictly JSON-serializable pure Elixir structs using `Jason.Encoder`.
+- **Global History & Clean Segments**: Explicitly removed `history` from `Segment` (history will be managed at the Project/Editor level). `Segment` no longer serializes its runtime `graph` or `cluster`, retaining only `notes` and `curves` (Pure Data) for storage and hash calculation.
+- **Project Serialization**: Added symmetric `Project.to_json/1` and `Project.from_json/1` for full recursive hydration of `project.json` in the bundle architecture.
+- **App Structure Fix**: Removed the incorrect `apps/` umbrella folder convention and aligned `AGENTS.md` with the actual standard Phoenix structure (`lib/equinox`, `lib/equinox_web`).
+
+### 2026-04-17 (M2 Bridge Protocol & Hydration)
+- **TypeScript Bridge Types**: Added explicit `ProjectData`, `TrackData`, `SegmentData`, `NoteData` interfaces to `assets/src/lib/bridge/index.ts` to mirror Elixir Pure Data exactly.
+- **Svelte State Hydration**: Refactored `PianoRoll.svelte` to listen for the `project_load` event via `LiveBridge`. Svelte now successfully parses the backend project payload, derives the active track/segment, and renders the backend notes on the canvas.
+- **Bi-directional Editing Skeleton**: Implemented `handle_event` callbacks in `EquinoxWeb.EditorLive` (`add_note`, `update_note`, `delete_note`) ready to be wired up to `Equinox.Editor` state mutations.
+- **Editor Actions Skeleton**: Built `Equinox.Editor` module. Implemented `add_note/4`, `update_note/5`, and `delete_note/4` as pure functional transformations over the nested `Equinox.Project` structure.

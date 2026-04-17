@@ -15,7 +15,44 @@ defmodule EquinoxWeb.EditorLive do
   end
 
   def handle_info(:push_initial_state, socket) do
-    # Fetch nodes from registry
+    # 1. Provide project initial state
+    project =
+      Equinox.Project.new(%{
+        name: "Equinox Default Session",
+        tracks: %{
+          "track_1" =>
+            Equinox.Editor.Track.new(
+              id: "track_1",
+              type: "synth",
+              name: "Main Vocal",
+              segments: %{
+                "seg_1" =>
+                  Equinox.Editor.Segment.new(%{
+                    id: "seg_1",
+                    offset_tick: 480,
+                    notes: [
+                      Equinox.Domain.Note.new(%{
+                        start_tick: 0,
+                        duration_tick: 240,
+                        key: 60,
+                        lyric: "a"
+                      }),
+                      Equinox.Domain.Note.new(%{
+                        start_tick: 240,
+                        duration_tick: 480,
+                        key: 62,
+                        lyric: "ha"
+                      })
+                    ]
+                  })
+              }
+            )
+        }
+      })
+
+    socket = push_event(socket, "project_load", project)
+
+    # 2. Fetch nodes from registry
     all_nodes = Equinox.Kernel.StepRegistry.list_all()
 
     # Determine synth vs arranger nodes by a simple heuristic (or we can add categories to StepRegistry)
@@ -54,10 +91,23 @@ defmodule EquinoxWeb.EditorLive do
     {:noreply, socket}
   end
 
-  def handle_event("update_notes", %{"notes" => notes}, socket) do
-    IO.puts("Received notes from PianoRoll:")
-    IO.inspect(notes)
-    # TODO: 走 Equinox.Session.Server 的 apply_operation 操作 History
+  def handle_event("update_note", %{"segment_id" => seg_id, "note" => note_params}, socket) do
+    IO.puts("Received note update from PianoRoll for segment: #{seg_id}")
+    IO.inspect(note_params)
+    # TODO: Pass the update up to Equinox.Session.Server to mutate the Project
+    {:noreply, socket}
+  end
+
+  def handle_event("add_note", %{"segment_id" => seg_id, "note" => note_params}, socket) do
+    IO.puts("Received new note from PianoRoll for segment: #{seg_id}")
+    IO.inspect(note_params)
+    # TODO: Pass the update up to Equinox.Session.Server
+    {:noreply, socket}
+  end
+
+  def handle_event("delete_note", %{"segment_id" => seg_id, "note_id" => note_id}, socket) do
+    IO.puts("Received note deletion from PianoRoll for segment: #{seg_id}, note: #{note_id}")
+    # TODO: Pass the update up to Equinox.Session.Server
     {:noreply, socket}
   end
 
@@ -120,7 +170,7 @@ defmodule EquinoxWeb.EditorLive do
           </div>
         </div>
 
-        <!-- Right panel: Node Editor -->
+    <!-- Right panel: Node Editor -->
         <div
           class="h-18 border border-zinc-700 rounded overflow-hidden"
           id="arranger-island"
