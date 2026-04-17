@@ -41,7 +41,7 @@
     queueMicrotask(() => {
       syncPending = false;
       const { nodes: ns, edges: es } = sflowToGraphPayload(nodes, edges);
-      // bridge.pushEvent("synth_graph_update", { nodes: ns, edges: es });
+      bridge.pushEvent("synth_graph_update", { nodes: ns, edges: es });
     });
   }
 

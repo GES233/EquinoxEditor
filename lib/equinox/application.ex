@@ -11,9 +11,10 @@ defmodule Equinox.Application do
       EquinoxWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:equinox, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Equinox.PubSub},
-      # Start a worker by calling: Equinox.Worker.start_link(arg)
-      # {Equinox.Worker, arg},
-      # Start to serve requests, typically the last entry
+      Equinox.Session.Registry,
+      {Task.Supervisor, name: Equinox.RenderTaskSupervisor},
+      {DynamicSupervisor, name: Equinox.Session.DynamicSupervisor, strategy: :one_for_one},
+      Equinox.Kernel.StepRegistry,
       EquinoxWeb.Endpoint
     ]
 

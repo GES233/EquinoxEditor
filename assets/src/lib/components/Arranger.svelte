@@ -11,7 +11,7 @@
   import TrackNode from "./arranger/TrackNode.svelte";
   import OutputNode from "./arranger/OutputNode.svelte";
 
-  let { ctx, payload } = $props();
+  let { bridge, payload } = $props();
 
   const nodeTypes = {
     synth: TrackNode,
@@ -121,14 +121,14 @@
   });
 
   $effect(() => {
-    if (!ctx) return;
-    ctx.handleEvent("state_updated", (state: ArrangerState) => {
+    if (!bridge) return;
+    bridge.handleEvent("state_updated", (state: ArrangerState) => {
       syncState(state);
     });
-    ctx.handleEvent("mix_result", (result: any) => {
+    bridge.handleEvent("mix_result", (result: any) => {
       console.log("Mix result:", result);
     });
-    ctx.handleEvent("export_result", (result: any) => {
+    bridge.handleEvent("export_result", (result: any) => {
       console.log("Export result:", result);
     });
   });
@@ -136,29 +136,29 @@
   function addExternalTrack() {
     externalCounter++;
     const label = `Audio Track ${externalCounter}`;
-    ctx.pushEvent("add_external_node", { label });
+    bridge.pushEvent("add_external_node", { label });
   }
 
   function deleteExternalTrack(id: string) {
-    ctx.pushEvent("remove_external_node", { id });
+    bridge.pushEvent("remove_external_node", { id });
   }
 
   function updateNodeProperty(nodeId: string, props: Record<string, any>) {
-    ctx.pushEvent("update_node_properties", { node_id: nodeId, props });
+    bridge.pushEvent("update_node_properties", { node_id: nodeId, props });
   }
 
   function play() {
-    ctx.pushEvent("mix", {});
+    bridge.pushEvent("mix", {});
   }
 
   function exportAudio() {
-    ctx.pushEvent("export", { path: "output.wav" });
+    bridge.pushEvent("export", { path: "output.wav" });
   }
 
   function handleNodeDragStop({ targetNode }: { targetNode: Node | null }) {
     if (!targetNode) return;
     const pos = targetNode.position;
-    ctx.pushEvent("update_node_properties", {
+    bridge.pushEvent("update_node_properties", {
       node_id: targetNode.id,
       props: { position: { x: Math.round(pos.x), y: Math.round(pos.y) } },
     });
@@ -166,7 +166,7 @@
 
   function handleConnect(connection: any) {
     const id = `e_${connection.source}_${connection.target}`;
-    ctx.pushEvent("add_edge", {
+    bridge.pushEvent("add_edge", {
       id,
       source: connection.source,
       target: connection.target,
@@ -175,7 +175,7 @@
 
   function handleDelete({ nodes: deletedNodes, edges: deletedEdges }: { nodes: Node[]; edges: Edge[] }) {
     for (const edge of deletedEdges) {
-      ctx.pushEvent("remove_edge", { id: edge.id });
+      bridge.pushEvent("remove_edge", { id: edge.id });
     }
   }
 </script>

@@ -12,7 +12,7 @@
   $effect(() => {
     // Only send if we have notes (to avoid wiping out backend state on initial empty load if any)
     if (notes.length > 0) {
-      // bridge.pushEvent("update_notes", { notes: $state.snapshot(notes) });
+      bridge.pushEvent("update_notes", { notes: $state.snapshot(notes) });
     }
   });
 
