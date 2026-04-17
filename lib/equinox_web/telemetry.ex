@@ -10,9 +10,10 @@ defmodule EquinoxWeb.Telemetry do
   def init(_arg) do
     children = [
       # Telemetry poller will execute the given period measurements
-      # every 10_000ms. Learn more here: https://hexdocs.pm/telemetry_metrics
+      # every 10_000ms.
+      # 了解更多信息参见： https://hexdocs.pm/telemetry_metrics
       {:telemetry_poller, measurements: periodic_measurements(), period: 10_000}
-      # Add reporters as children of your supervision tree.
+      # 将 reporters 添加为你的应用的监管树的子项。
       # {Telemetry.Metrics.ConsoleReporter, metrics: metrics()}
     ]
 
@@ -62,8 +63,8 @@ defmodule EquinoxWeb.Telemetry do
 
   defp periodic_measurements do
     [
-      # A module, function and arguments to be invoked periodically.
-      # This function must call :telemetry.execute/3 and a metric must be added above.
+      # 一个需要定期调用的模块、函数及其参数。
+      # 此函数必须调用 :telemetry.execute/3，并且必须在其上方添加一个 metric 。
       # {EquinoxWeb, :count_users, []}
     ]
   end

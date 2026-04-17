@@ -1,21 +1,26 @@
 defmodule EquinoxWeb.CoreComponents do
   @moduledoc """
-  Provides core UI components.
+  提供核心 UI 部件。
 
-  Most complex UI is handled by Svelte via LiveView Hooks. This module only
-  keeps absolute minimal Phoenix conveniences (like `.icon`).
+  ~~第一眼看上去，这个模块看上去有些令人发怵，但是它的目标是为你的应用提供核心的「积木」，
+  像是模态框、表格以及表单。~~好了，现在复杂组件交给 Svelte 了，其经由 LiveView 钩子而与后端连接。
+
+  该模块仅提供一些最基本的最小化的 Phoenix 便捷功能（比方说 `.icon`）。
   """
   use Phoenix.Component
 
   @doc """
-  Renders a [Heroicon](https://heroicons.com).
+  渲染一个 [Heroicon](https://heroicons.com) 图标。
 
-  Icons are extracted from the `deps/heroicons` directory and bundled within
-  your compiled app.css by the plugin in your `assets/css/app.css`.
+  Heroicon 的图标一般存在三种风格——轮廓（outline）、实心（solid）
+  以及迷你（mini）。默认的风格是轮廓，对于实心以及小号的，可能需要
+  `-solid` 以及 `-mini` 后缀。
 
-  ## Examples
+  你可以通过设置宽高以及背景颜色来定制化图标的大小和颜色。
 
-      <.icon name="hero-x-mark-solid" />
+  图标从 `deps/heroicons` 目录提取，并由插件在 `assets/vendor/heroicons.js`
+  中捆绑到编译好的 app.css 中。
+
       <.icon name="hero-arrow-path" class="ml-1 w-3 h-3 animate-spin" />
   """
   attr :name, :string, required: true
@@ -28,20 +33,4 @@ defmodule EquinoxWeb.CoreComponents do
   end
 
   # TODO: Add title component.
-
-  @doc """
-  Translates an error message using gettext.
-  """
-  def translate_error({msg, opts}) do
-    Enum.reduce(opts, msg, fn {key, value}, acc ->
-      String.replace(acc, "%{#{key}}", fn _ -> to_string(value) end)
-    end)
-  end
-
-  @doc """
-  Translates the errors for a field from a keyword list of errors.
-  """
-  def translate_errors(errors, field) when is_list(errors) do
-    for {^field, {msg, opts}} <- errors, do: translate_error({msg, opts})
-  end
 end

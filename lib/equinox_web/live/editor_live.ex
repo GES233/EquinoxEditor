@@ -16,42 +16,14 @@ defmodule EquinoxWeb.EditorLive do
 
   def handle_info(:push_initial_state, socket) do
     # 1. Provide project initial state
-    project =
-      Equinox.Project.new(%{
-        name: "Equinox Default Session",
-        tracks: %{
-          "track_1" =>
-            Equinox.Editor.Track.new(
-              id: "track_1",
-              type: "synth",
-              name: "Main Vocal",
-              segments: %{
-                "seg_1" =>
-                  Equinox.Editor.Segment.new(%{
-                    id: "seg_1",
-                    offset_tick: 480,
-                    notes: [
-                      Equinox.Domain.Note.new(%{
-                        start_tick: 0,
-                        duration_tick: 240,
-                        key: 60,
-                        lyric: "a"
-                      }),
-                      Equinox.Domain.Note.new(%{
-                        start_tick: 240,
-                        duration_tick: 480,
-                        key: 62,
-                        lyric: "ha"
-                      })
-                    ]
-                  })
-              }
-            )
-        }
-      })
+    project = build_default_proj()
 
-    socket = push_event(socket, "project_load", project)
-    socket = push_event(socket, "arranger-island:project_load", project)
+    socket =
+      socket
+      # 给本体
+      |> push_event("project_load", project)
+      # 给组件
+      |> push_event("arranger-island:project_load", project)
 
     # 2. Fetch nodes from registry
     all_nodes = Equinox.Kernel.StepRegistry.list_all()
@@ -122,8 +94,7 @@ defmodule EquinoxWeb.EditorLive do
             session_id={@session_id}
           />
         </div>
-        
-    <!-- Right panel: Arranger Editorr -->
+        <!-- Right panel: Arranger Editorr -->
         <.live_component
           module={EquinoxWeb.EditorLive.ArrangerComponent}
           id="arranger-island"
@@ -132,5 +103,42 @@ defmodule EquinoxWeb.EditorLive do
       </div>
     </div>
     """
+  end
+
+  ## 一些 Private functions
+
+  defp build_default_proj do
+    Equinox.Project.new(%{
+      name: "Equinox Default Session",
+      tracks: %{
+        "track_1" =>
+          Equinox.Editor.Track.new(
+            id: "track_1",
+            type: "synth",
+            name: "Main Vocal",
+            segments: %{
+              "seg_1" =>
+                Equinox.Editor.Segment.new(%{
+                  id: "seg_1",
+                  offset_tick: 480,
+                  notes: [
+                    Equinox.Domain.Note.new(%{
+                      start_tick: 0,
+                      duration_tick: 240,
+                      key: 60,
+                      lyric: "a"
+                    }),
+                    Equinox.Domain.Note.new(%{
+                      start_tick: 240,
+                      duration_tick: 480,
+                      key: 62,
+                      lyric: "ha"
+                    })
+                  ]
+                })
+            }
+          )
+      }
+    })
   end
 end

@@ -1,13 +1,10 @@
 defmodule EquinoxWeb.Layouts do
   @moduledoc """
-  This module holds layouts and related functionality
-  used by your application.
+  该模块包含应用的布局和相关功能。
   """
   use EquinoxWeb, :html
 
-  # Embed all files in layouts/* within this module.
-  # The default root.html.heex file contains the HTML
-  # skeleton of your application, namely HTML headers
-  # and other static content.
+  # 将 layouts/* 中的所有文件嵌入此模块。
+  # 默认的 root.html.heex 文件包含应用程序的 HTML 框架，即 HTML 标头和其他静态内容
   embed_templates "layouts/*"
 end

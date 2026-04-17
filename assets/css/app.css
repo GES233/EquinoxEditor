@@ -1,6 +1,8 @@
 @import "tailwindcss";
 @import "@xyflow/svelte/dist/style.css";
 
+@plugin "../vendor/heroicons";
+
 /* 
   Any custom CSS utilities or base overrides can go here.
   Tailwind v4 uses this simpler import syntax.

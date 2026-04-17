@@ -20,18 +20,16 @@ defmodule EquinoxWeb.Router do
     live "/", EditorLive, :index
   end
 
-  # Other scopes may use custom stacks.
+  # 其他 scope 可使用自定义的堆栈。
   # scope "/api", EquinoxWeb do
   #   pipe_through :api
   # end
 
-  # Enable LiveDashboard in development
+  # 在开发中启用 LiveDashboard
   if Application.compile_env(:equinox, :dev_routes) do
-    # If you want to use the LiveDashboard in production, you should put
-    # it behind authentication and allow only admins to access it.
-    # If your application does not have an admins-only section yet,
-    # you can use Plug.BasicAuth to set up some basic authentication
-    # as long as you are also using SSL (which you should anyway).
+    # 如果想在生产环境中使用 LiveDashboard，则应进行身份验证，且允许管理员访问。
+    # 如果应用尚未设置仅限管理员访问的部分，则可以使用 Plug.BasicAuth
+    # 设置一些基本身份验证，只要也部署了 SSL（无论如何都应该使用）。
     import Phoenix.LiveDashboard.Router
 
     scope "/dev" do

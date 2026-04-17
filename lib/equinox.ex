@@ -1,9 +1,7 @@
 defmodule Equinox do
   @moduledoc """
-  Equinox keeps the contexts that define your domain
-  and business logic.
+  Equinox 是一个轻量级的编辑器应用。
 
-  Contexts are also responsible for managing your data, regardless
-  if it comes from the database, an external API or others.
+  前面忘了，但真不如 UTAU 。
   """
 end
