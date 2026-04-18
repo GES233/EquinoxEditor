@@ -20,6 +20,7 @@ defmodule Equinox.Kernel.Graph do
           }
     @type t() :: t(term())
 
+    @derive {Jason.Encoder, only: [:id, :container, :inputs, :outputs, :options, :extra]}
     defstruct [:id, :container, inputs: [], outputs: [], options: [], extra: %{}]
   end
 
@@ -33,6 +34,7 @@ defmodule Equinox.Kernel.Graph do
             to_port: Node.node_port()
           }
 
+    @derive {Jason.Encoder, only: [:from_node, :from_port, :to_node, :to_port]}
     defstruct [:from_node, :from_port, :to_node, :to_port]
 
     @spec new(Node.id(), Node.node_port(), Node.id(), Node.node_port()) :: t()
@@ -123,6 +125,7 @@ defmodule Equinox.Kernel.Graph do
         }
   @type t() :: t(term())
 
+  @derive {Jason.Encoder, only: [:nodes, :edges]}
   defstruct nodes: %{}, edges: MapSet.new(), in_edges: %{}, out_edges: %{}
 
   def new do

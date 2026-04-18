@@ -7,6 +7,7 @@
     stepDefToTemplateNode,
     genEdgeId,
     sflowToGraphPayload,
+    graphPayloadToSFlow,
     type SFlowNode,
     type SFlowEdge,
   } from "$lib/utils";
@@ -28,6 +29,19 @@
     if (!bridge) return;
     bridge.handleEvent("synth_nodes_available", ({ nodes: defs }: any) => {
       stepDefs = defs;
+    });
+    
+    // 监听从后端传来的初始化或更新的数据
+    bridge.handleEvent("project_load", (project: any) => {
+      // 从 project 中提取 track_1 的 synth_graph
+      if (project && project.tracks && project.tracks["track_1"]) {
+        const synthGraph = project.tracks["track_1"].synth_graph;
+        if (synthGraph) {
+          const sflowData = graphPayloadToSFlow(synthGraph);
+          nodes = sflowData.nodes;
+          edges = sflowData.edges;
+        }
+      }
     });
   });
 

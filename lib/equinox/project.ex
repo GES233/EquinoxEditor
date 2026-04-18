@@ -16,16 +16,7 @@ defmodule Equinox.Project do
           tempo_map: [tempo_point()],
           ticks_per_beat: pos_integer(),
           tracks: %{Track.id() => Track.t()},
-          nodes: [%{id: String.t(), type: String.t(), data: map()}],
-          edges: [
-            %{
-              id: String.t(),
-              source: String.t(),
-              sourceHandle: String.t(),
-              target: String.t(),
-              targetHandle: String.t()
-            }
-          ],
+          arranger_graph: Equinox.Kernel.Graph.t() | nil,
           extra: map()
         }
 
@@ -37,8 +28,7 @@ defmodule Equinox.Project do
              :tempo_map,
              :ticks_per_beat,
              :tracks,
-             :nodes,
-             :edges,
+             :arranger_graph,
              :extra
            ]}
   defstruct [
@@ -48,8 +38,7 @@ defmodule Equinox.Project do
     tempo_map: [%{tick: 0, bpm: 120.0}],
     ticks_per_beat: 480,
     tracks: %{},
-    nodes: [],
-    edges: [],
+    arranger_graph: nil,
     extra: %{}
   ]
 
@@ -65,8 +54,7 @@ defmodule Equinox.Project do
       tempo_map: Map.get(attrs, :tempo_map, [%{tick: 0, bpm: 120.0}]),
       ticks_per_beat: Map.get(attrs, :ticks_per_beat, 480),
       tracks: Map.get(attrs, :tracks, %{}),
-      nodes: Map.get(attrs, :nodes, []),
-      edges: Map.get(attrs, :edges, []),
+      arranger_graph: Map.get(attrs, :arranger_graph),
       extra: Map.get(attrs, :extra, %{})
     }
   end
@@ -90,13 +78,13 @@ defmodule Equinox.Project do
         {track_id, Track.from_attrs(track_attrs)}
       end)
 
-    nodes = Map.get(attrs, :nodes, [])
-    edges = Map.get(attrs, :edges, [])
+    arranger_graph = Map.get(attrs, :arranger_graph)
+
+    # TODO: 当我们实现完整的反序列化时，这里可能需要调用 Graph.from_json() 等，目前暂存原始 Map
 
     attrs
     |> Map.put(:tracks, tracks)
-    |> Map.put(:nodes, nodes)
-    |> Map.put(:edges, edges)
+    |> Map.put(:arranger_graph, arranger_graph)
     |> new()
   end
 

@@ -14,6 +14,7 @@ defmodule Equinox.Editor.Track do
           type: track_type(),
           name: String.t(),
           topology_ref: String.t() | nil,
+          synth_graph: Equinox.Kernel.Graph.t() | nil,
           color: String.t(),
           mute: boolean(),
           solo: boolean(),
@@ -29,6 +30,7 @@ defmodule Equinox.Editor.Track do
              :type,
              :name,
              :topology_ref,
+             :synth_graph,
              :color,
              :mute,
              :solo,
@@ -42,6 +44,7 @@ defmodule Equinox.Editor.Track do
     type: "synth",
     name: "New Track",
     topology_ref: nil,
+    synth_graph: nil,
     color: "#3B82F6",
     mute: false,
     solo: false,
@@ -60,6 +63,7 @@ defmodule Equinox.Editor.Track do
       type: Map.get(attrs, :type, "synth"),
       name: Map.get(attrs, :name, "New Track"),
       topology_ref: Map.get(attrs, :topology_ref),
+      synth_graph: Map.get(attrs, :synth_graph),
       color: Map.get(attrs, :color, "#3B82F6"),
       mute: Map.get(attrs, :mute, false),
       solo: Map.get(attrs, :solo, false),
@@ -77,8 +81,11 @@ defmodule Equinox.Editor.Track do
       Map.get(attrs, :segments, %{})
       |> Map.new(fn {k, v} -> {k, Segment.from_attrs(v)} end)
 
+    synth_graph = Map.get(attrs, :synth_graph)
+
     attrs
     |> Map.put(:segments, segments)
+    |> Map.put(:synth_graph, synth_graph)
     |> new()
   end
 

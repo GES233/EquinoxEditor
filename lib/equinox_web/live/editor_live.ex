@@ -66,15 +66,25 @@ defmodule EquinoxWeb.EditorLive do
 
   def handle_event("synth_graph_update", payload, socket) do
     IO.puts("Received topology update from NodeEditor:")
-    IO.inspect(payload)
 
     nodes = Map.get(payload, "nodes", [])
     edges = Map.get(payload, "edges", [])
 
+    {:ok, synth_graph} = Equinox.Kernel.SvelteFlowTranslator.from_svelte_payload(nodes, edges)
+
     # 更新 Session/Project (这里临时只推入 default_session)
     project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
 
-    updated_project = %{project | nodes: nodes, edges: edges}
+    updated_project =
+      case Equinox.Project.get_track(project, "track_1") do
+        {:ok, track} ->
+          updated_track = %{track | synth_graph: synth_graph}
+          {:ok, new_proj} = Equinox.Project.update_track(project, "track_1", updated_track)
+          new_proj
+
+        :error ->
+          project
+      end
 
     # 理论上应该通过 Command 机制更新，这里简化处理
     GenServer.call(
@@ -85,10 +95,30 @@ defmodule EquinoxWeb.EditorLive do
     {:noreply, socket}
   end
 
+  def handle_event("render_audio", _payload, socket) do
+    IO.puts("Triggering render pipeline via Session.Server dispatcher...")
+
+    # 触发 Orchid 渲染流程
+    GenServer.cast(
+      Equinox.Session.server(socket.assigns.session_id),
+      {:dispatch, [concurrency: 4, timeout: 5000]}
+    )
+
+    {:noreply, socket}
+  end
+
   def render(assigns) do
     ~H"""
     <div class="h-screen w-screen flex flex-col bg-zinc-900 text-white">
-      <div class="p-4 border-b border-zinc-700 font-bold">Equinox M0 Skeleton</div>
+      <div class="p-4 border-b border-zinc-700 flex justify-between items-center">
+        <div class="font-bold">Equinox M0 Skeleton</div>
+        <button
+          phx-click="render_audio"
+          class="px-4 py-2 bg-amber-600 hover:bg-amber-500 text-white font-semibold rounded shadow-md cursor-pointer transition-colors"
+        >
+          ▶ Render & Play
+        </button>
+      </div>
 
       <div class="flex-1 flex p-4 gap-4">
         <!-- Left panel: Piano Roll & Arranger -->
