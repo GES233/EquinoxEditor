@@ -9,8 +9,7 @@ defmodule EquinoxWeb.Telemetry do
   @impl true
   def init(_arg) do
     children = [
-      # Telemetry poller will execute the given period measurements
-      # every 10_000ms.
+      # 遥测轮询器将每 10_000 毫秒执行给定周期的测量。
       # 了解更多信息参见： https://hexdocs.pm/telemetry_metrics
       {:telemetry_poller, measurements: periodic_measurements(), period: 10_000}
       # 将 reporters 添加为你的应用的监管树的子项。

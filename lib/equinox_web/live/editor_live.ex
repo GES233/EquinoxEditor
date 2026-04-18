@@ -67,7 +67,21 @@ defmodule EquinoxWeb.EditorLive do
   def handle_event("synth_graph_update", payload, socket) do
     IO.puts("Received topology update from NodeEditor:")
     IO.inspect(payload)
-    # TODO: 将前端发来的 node/edges 解析为 Graph.t() 并推入 Track History
+
+    nodes = Map.get(payload, "nodes", [])
+    edges = Map.get(payload, "edges", [])
+
+    # 更新 Session/Project (这里临时只推入 default_session)
+    project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
+
+    updated_project = %{project | nodes: nodes, edges: edges}
+
+    # 理论上应该通过 Command 机制更新，这里简化处理
+    GenServer.call(
+      Equinox.Session.server(socket.assigns.session_id),
+      {:update_project, updated_project}
+    )
+
     {:noreply, socket}
   end
 
@@ -94,12 +108,23 @@ defmodule EquinoxWeb.EditorLive do
             session_id={@session_id}
           />
         </div>
-        <!-- Right panel: Arranger Editorr -->
-        <.live_component
-          module={EquinoxWeb.EditorLive.ArrangerComponent}
-          id="arranger-island"
-          session_id={@session_id}
-        />
+        <!-- Right panel: Node Editor & Arranger -->
+        <div class="flex-1 flex flex-col gap-4">
+          <div
+            class="flex-1 border border-zinc-700 rounded overflow-hidden relative"
+            id="node-editor-island"
+            phx-hook="NodeEditorHook"
+            phx-update="ignore"
+          >
+            <!-- 插入 NodeEditor -->
+          </div>
+
+          <.live_component
+            module={EquinoxWeb.EditorLive.ArrangerComponent}
+            id="arranger-island"
+            session_id={@session_id}
+          />
+        </div>
       </div>
     </div>
     """

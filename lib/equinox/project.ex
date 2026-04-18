@@ -16,11 +16,31 @@ defmodule Equinox.Project do
           tempo_map: [tempo_point()],
           ticks_per_beat: pos_integer(),
           tracks: %{Track.id() => Track.t()},
+          nodes: [%{id: String.t(), type: String.t(), data: map()}],
+          edges: [
+            %{
+              id: String.t(),
+              source: String.t(),
+              sourceHandle: String.t(),
+              target: String.t(),
+              targetHandle: String.t()
+            }
+          ],
           extra: map()
         }
 
   @derive {Jason.Encoder,
-           only: [:id, :name, :version, :tempo_map, :ticks_per_beat, :tracks, :extra]}
+           only: [
+             :id,
+             :name,
+             :version,
+             :tempo_map,
+             :ticks_per_beat,
+             :tracks,
+             :nodes,
+             :edges,
+             :extra
+           ]}
   defstruct [
     :id,
     name: "Untitled Project",
@@ -28,6 +48,8 @@ defmodule Equinox.Project do
     tempo_map: [%{tick: 0, bpm: 120.0}],
     ticks_per_beat: 480,
     tracks: %{},
+    nodes: [],
+    edges: [],
     extra: %{}
   ]
 
@@ -43,6 +65,8 @@ defmodule Equinox.Project do
       tempo_map: Map.get(attrs, :tempo_map, [%{tick: 0, bpm: 120.0}]),
       ticks_per_beat: Map.get(attrs, :ticks_per_beat, 480),
       tracks: Map.get(attrs, :tracks, %{}),
+      nodes: Map.get(attrs, :nodes, []),
+      edges: Map.get(attrs, :edges, []),
       extra: Map.get(attrs, :extra, %{})
     }
   end
@@ -66,8 +90,13 @@ defmodule Equinox.Project do
         {track_id, Track.from_attrs(track_attrs)}
       end)
 
+    nodes = Map.get(attrs, :nodes, [])
+    edges = Map.get(attrs, :edges, [])
+
     attrs
     |> Map.put(:tracks, tracks)
+    |> Map.put(:nodes, nodes)
+    |> Map.put(:edges, edges)
     |> new()
   end
 

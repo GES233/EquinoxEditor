@@ -25,6 +25,16 @@ defmodule Equinox.Session.Server do
   end
 
   @impl true
+  def handle_call({:get_project}, _from, state) do
+    {:reply, state.project, state}
+  end
+
+  @impl true
+  def handle_call({:update_project, new_project}, _from, state) do
+    {:reply, :ok, %{state | project: new_project}}
+  end
+
+  @impl true
   def handle_cast({:dispatch, dispatch_opts}, %Context{} = state) do
     case Context.dispatch_to_plans(state) do
       {_legacy_state, {:error, _}} = _err ->

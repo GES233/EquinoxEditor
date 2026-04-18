@@ -34,7 +34,7 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 ## 5. Coding Conventions
 
-- **Elixir**: Return `{:ok, value} | {:error, reason}`. API names start with verbs (`create_`, `update_`).
+- **Elixir**: Return `{:ok, value} | {:error, reason}`(except some Context-like structs, it prefer `t() -> t() | {:error, reason}`). API names start with verbs (`create_`, `update_`).
 - **Svelte 5**: Runes ONLY (`$state`, `$derived`, `$props`, `$effect`).
 - **Tailwind v4**: `!` modifier goes at the END (e.g., `bg-amber-500!`). Gradients use `bg-linear-to-b`.
 - **SvelteFlow**: NEVER use reserved node types like `input`/`output`. Use custom names (e.g., `custom_input`).
@@ -50,8 +50,8 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 1. ~~**M0 — Skeleton**: Umbrella scaffolded, Vite ↔ Phoenix wiring verified on Windows, `MockBridge` + `LiveBridge` both render an empty PianoRoll.~~
 2. ~~**M1 — Piano Roll parity**: Port notes/viewport/grid/slicer overlay from KinoBayanroll.~~
-3. **M2 — Node Editor parity(Current)**: SvelteFlow-based Synth editor, StepRegistry-driven palette, graph persistence via `Equinox.Project`.
-4. **M3 — Kernel integration**: End-to-end render using Orchid.
+3. ~~**M2 — Node Editor parity**: SvelteFlow-based Synth editor, StepRegistry-driven palette, graph persistence via `Equinox.Project`.~~
+4. (Current)**M3 — Kernel integration**: End-to-end render using Orchid.
 5. **M4 — Arranger**: Second SvelteFlow canvas, multi-track mix, slice alignment.
 6. **M5 — Curves**: SVG bezier layer + rasterization in the Compiler.
 7. **M6 — History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
