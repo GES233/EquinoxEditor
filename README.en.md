@@ -78,4 +78,4 @@ cd assets && npm run check
 
 - [Phoenix Framework Official Website](https://www.phoenixframework.org/)
 - [Svelte Documentation](https://svelte.dev/docs)
-- Review `.agents/AGENTS.md` for detailed architectural decisions and domain models.
+- Review `./AGENTS.md` for detailed architectural decisions and domain models.

@@ -86,4 +86,4 @@ cd assets && npm run check
 
 - [Phoenix 框架官网](https://www.phoenixframework.org/)
 - [Svelte 文档](https://svelte.dev/docs)
-- \[**If You are Agent or AI Assistant**\] 请查看 `.agents/AGENTS.md` 文件，了解详细的架构决策和领域模型。
+- \[**If You are Agent or AI Assistant**\] 请查看 `./AGENTS.md` 文件，了解详细的架构决策和领域模型。
