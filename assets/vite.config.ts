@@ -1,4 +1,5 @@
-import { defineConfig } from 'vite';
+// Reference: https://svelte.dev/docs/svelte/testing
+import { defineConfig } from 'vitest/config';
 import { svelte } from '@sveltejs/vite-plugin-svelte';
 import tailwindcss from '@tailwindcss/vite';
 import path from 'path';
@@ -13,6 +14,11 @@ export default defineConfig({
       '$lib': path.resolve(__dirname, './src/lib'),
       '$components': path.resolve(__dirname, './src/lib/components'),
     }
+  },
+  test: {
+    environment: 'jsdom',
+    setupFiles: ['./src/setupTest.ts'],
+    globals: true,
   },
   build: {
     target: 'esnext',

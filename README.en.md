@@ -63,16 +63,18 @@ Now you can visit [`localhost:4000`](http://localhost:4000) from your browser. T
 ## Development Tools
 
 For frontend development without the backend, you can use the Vite dev server with a mock bridge:
-```bash
-cd assets
-npm run dev
-```
+
+   ```bash
+   cd assets
+   npm run dev
+   ```
 
 Run checks before committing:
-```bash
-mix precommit
-cd assets && npm run check
-```
+
+   ```bash
+   mix precommit
+   cd assets && npm run check
+   ```
 
 ## Learn More
 
