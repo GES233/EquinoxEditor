@@ -1,76 +1,89 @@
 # Equinox
 
-**Equinox** is a vocal synthesis editor built in Elixir. It provides an interactive editing experience for AI singing voice synthesis, targeting desktop-class DAW-like workflows delivered through the web.
+[English](README.en.md)
 
-This repository is the successor to two prior prototypes:
-- **Quincunx**: Validated the Orchid-based DAG kernel and intervention model.
-- **KinoBayanroll**: Validated the Svelte 5 + SvelteFlow frontend stack.
+Equinox 是基于 Orchid 源于开发者高中时想法（节点编辑图+可编辑/介入数据）的概念验证。
 
-Equinox consolidates those lessons into a single **Phoenix + Svelte** application, abandoning Livebook/Kino hosting entirely.
+因为技术栈，此应用会成为以 WebUI 为主的一个类似于 OpenUTAU 的轻（jian）量（lou）应用。
 
-## Architecture
+本项目是以下几个项目精神上的继承者：
+
+- **QyEditor**： 本项目最早的原型，计划整合贝塞尔曲线与 DAG 自组织与调度。
+- **Quincunx**： 验证了前端友好的 Node-Edge-based 工作流的可行性以及整合了 Orchid 生态一系列的插件。 
+- **KinoBayanroll**： 花费了开发者数十美元（中转站按量计费 SOTA 模型的开销）已验证 Svelte5 + SvelteFlow 的可行性的一个基于 Livebook 的 Kino 插件。
+
+Equinox 是将其「固化」成单个 Phoenix + Svelte 应用的成果，脱离了难以维护且最优方案为绑定成熟 JSLib 的 Kino 插件。
+
+## 架构
 
 ```
 Equinox = Kernel + DomainApp + UI
 ```
 
-- **Kernel**: Incremental generation orchestration (DAG + Intervention + Incremental Generation + Heavy Services).
-- **DomainApp**: Domain-specific logic for vocal synthesis (Projects, Tracks, Notes, Curves, Topologies).
-- **UI**: Phoenix LiveView shell hosting Svelte 5 components (Piano Roll, Node Editor, Arranger) as islands.
+- **Kernel**（内核）： 增量生成应用与函数式前端（DAG + 外部数据介入 + 基于缓存的增量生成 + 重服务的独立运行与依赖注入）
+- **DomainApp**（领域模型）： 声乐合成的领域特定逻辑（项目、轨道、音符、曲线、拓扑）
+- **UI**: 由 Phoenix LiveView shell 以 Islands Architecture 托管 Svelte 5 组件（钢琴卷帘、节点编辑器、编曲器）
 
-## Prerequisites
+## 前置条件
 
-- [Elixir](https://elixir-lang.org/install.html) (with Erlang/OTP)
-- [Node.js](https://nodejs.org/) (for frontend assets)
+- [Elixir](https://elixir-lang.org/install.html) （还需要安装 Erlang/OTP）
+- [Node.js](https://nodejs.org/) （前端资源）
 
-## Getting Started
+## 开始
 
-1. Install backend dependencies and compile:
+1. 安装后端的依赖并编译：
+
    ```bash
    mix deps.get
    mix compile
    ```
 
-2. Install frontend dependencies:
+2. 安装前端的依赖项目：
+
    ```bash
    npm install --prefix assets
    ```
 
-3. Start the development server:
+3. 运行服务器：
+
    ```bash
    iex -S mix phx.server
    ```
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser. The Phoenix dev server automatically watches and builds Vite output.
+之后可以通过浏览器访问 [`localhost:4000`](http://localhost:4000) 。Phoenix 开发服务器会自动监视并构建 Vite 输出。
 
-## Tech Stack
+## 技术栈
 
-### Backend
-- **Orchid Ecosystem**: `orchid` (DAG engine), `orchid_symbiont` (OTP integration), `orchid_stratum` (cache), `orchid_intervention`.
-- **Phoenix Framework**: `phoenix`, `phoenix_live_view`, `phoenix_html`, `bandit`, `jason`.
+### 后端
 
-### Frontend
+- **Orchid 生态**：`orchid`（DAG 引擎）、`orchid_symbiont`（复杂任务的 OTP 挂载）、`orchid_stratum`（缓存）、`orchid_intervention`（数据介入）。
+- **Phoenix 框架**：`phoenix`、`phoenix_live_view`、`phoenix_html`、`bandit`、`jason`。
+
+### 前端
+
 - **Svelte 5** (Runes mode)
 - **SvelteFlow** (Node editor canvas)
 - **Vite** & **TypeScript**
 - **Tailwind CSS v4**
 
-## Development Tools
+## 开发工具
 
-For frontend development without the backend, you can use the Vite dev server with a mock bridge:
+对于不需要后端或没有 BEAM 环境的前端开发，您可以使用带有模拟桥接的 Vite 开发服务器：
+
 ```bash
 cd assets
 npm run dev
 ```
 
-Run checks before committing:
+提交前请运行检查（如果没有安装 Elixir 且仅涉及前端的改动只需要 `npm` 即可）：
+
 ```bash
 mix precommit
 cd assets && npm run check
 ```
 
-## Learn More
+## 了解更多
 
-- [Phoenix Framework Official Website](https://www.phoenixframework.org/)
-- [Svelte Documentation](https://svelte.dev/docs)
-- Review `.agents/AGENTS.md` for detailed architectural decisions and domain models.
+- [Phoenix 框架官网](https://www.phoenixframework.org/)
+- [Svelte 文档](https://svelte.dev/docs)
+- \[**If You are Agent or AI Assistant**\] 请查看 `.agents/AGENTS.md` 文件，了解详细的架构决策和领域模型。
