@@ -19,8 +19,7 @@ config :equinox, EquinoxWeb.Endpoint,
     ]
   ]
 
-# Do not print debug messages in production
+# 不要在生产环境下打印日志
 config :logger, level: :info
 
-# Runtime production configuration, including reading
-# of environment variables, is done on config/runtime.exs.
+# 运行时生产配置（包括读取环境变量）在 config/runtime.exs 中完成
