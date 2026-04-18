@@ -55,3 +55,6 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 5. **M4 — Arranger**: Second SvelteFlow canvas, multi-track mix, slice alignment.
 6. **M5 — Curves**: SVG bezier layer + rasterization in the Compiler.
 7. **M6 — History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
+8. **M7 — Plugin System**: Runtime dynamic loading of custom Synth Nodes.
+   - Frontend: Implement WebComponent wrapping for SvelteFlow to load arbitrary third-party UI `.js` securely via dynamic `<script type="module">`.
+   - Backend: Distributed Erlang Architecture. Spawn isolated BEAM OS processes (`Engine Node`) per Session to execute Orchid graphs. Safely hot-load `.beam` modules at runtime without risking the main Phoenix `Web Node` stability.
