@@ -3,7 +3,15 @@
   import type { Node, Edge } from "@xyflow/svelte";
   import { onMount } from "svelte";
   import type { Position } from "./node/position";
-  import type { EquinoxBridge, ProjectData, EditorContextData, TrackData } from "$lib/bridge";
+  import type {
+    EquinoxBridge,
+    ProjectData,
+    EditorContextData,
+    TrackData,
+    SegmentData,
+    EditorScope,
+  } from "$lib/bridge";
+  import { requestEditorContextChange } from "$lib/editor_context";
 
   if (typeof window !== "undefined" && typeof (window as any).process === "undefined") {
     (window as any).process = { env: { NODE_ENV: "production" } };
@@ -41,6 +49,10 @@
   let project = $state<ProjectData | null>(null);
   let editorContext = $state<EditorContextData | null>(null);
   let arrangerStepDefs = $state<any[]>([]);
+
+  let scopeLabel = $derived(scopeToLabel(editorContext?.scope ?? "track"));
+  let timelineMaxTick = $derived.by(() => resolveTimelineMaxTick(project));
+  let timelineRows = $derived.by(() => buildTimelineRows(project, timelineMaxTick));
 
   const nodeTypes = {
     synth: TrackNode,
@@ -125,8 +137,8 @@
     const edges: EdgeData[] = [];
     let i = 0;
 
-    for (const trackId of Object.keys(currentProject.tracks || {})) {
-      const track = currentProject.tracks[trackId] as TrackData;
+    for (const track of Object.values(currentProject.tracks ?? {}) as TrackData[]) {
+      const trackId = track.id;
       const nodeData = {
         id: trackId,
         type: track.type === "synth" ? "synth" : "external_audio",
@@ -152,7 +164,7 @@
       } else {
         synth_nodes[trackId] = {
           ...nodeData,
-          note_count: Object.values(track.segments ?? {}).reduce(
+          note_count: (Object.values(track.segments ?? {}) as SegmentData[]).reduce(
             (count, segment) => count + (segment.notes?.length ?? 0),
             0
           ),
@@ -255,7 +267,94 @@
 
   function handleNodeClick({ node }: { node: Node }) {
     if (node.id === "output") return;
-    bridge.pushEvent("select_track", { track_id: node.id });
+    focusTrack(node.id);
+  }
+
+  function focusTrack(trackId: string) {
+    if (editorContext?.track_id === trackId && editorContext?.scope === "track") return;
+
+    requestEditorContextChange({
+      track_id: trackId,
+      scope: "track",
+    });
+
+    bridge.pushEvent("select_track", { track_id: trackId });
+  }
+
+  function focusTrackSegment(trackId: string, segmentId: string) {
+    if (
+      editorContext?.track_id === trackId &&
+      editorContext?.segment_id === segmentId &&
+      editorContext?.scope === "segment"
+    ) {
+      return;
+    }
+
+    requestEditorContextChange({
+      track_id: trackId,
+      segment_id: segmentId,
+      scope: "segment",
+    });
+
+    bridge.pushEvent("focus_segment", { track_id: trackId, segment_id: segmentId });
+  }
+
+  function scopeToLabel(scope: EditorScope) {
+    switch (scope) {
+      case "segment":
+        return "Segment Focus";
+      case "track_synth":
+        return "Track Synth";
+      case "project_mix":
+        return "Project Mix";
+      default:
+        return "Track Focus";
+    }
+  }
+
+  function resolveTimelineMaxTick(currentProject: ProjectData | null) {
+    if (!currentProject) return 1920;
+
+    const trackTicks = Object.values(currentProject.tracks ?? {}).flatMap((track) =>
+      Object.values(track.segments ?? {}).map((segment) => segmentEndTick(segment))
+    );
+
+    return Math.max(1920, ...trackTicks);
+  }
+
+  function segmentEndTick(segment: SegmentData) {
+    const noteEndTick = Math.max(
+      480,
+      ...segment.notes.map((note) => (note.start_tick ?? 0) + (note.duration_tick ?? 0))
+    );
+
+    return (segment.offset_tick ?? 0) + noteEndTick;
+  }
+
+  function buildTimelineRows(currentProject: ProjectData | null, maxTick: number) {
+    if (!currentProject) return [];
+
+    return Object.values(currentProject.tracks ?? {}).map((track) => {
+      const segments = Object.values(track.segments ?? {})
+        .sort((left, right) => (left.offset_tick ?? 0) - (right.offset_tick ?? 0))
+        .map((segment) => {
+          const durationTick = Math.max(480, segmentEndTick(segment) - (segment.offset_tick ?? 0));
+
+          return {
+            id: segment.id,
+            name: segment.name || segment.id,
+            leftPct: ((segment.offset_tick ?? 0) / maxTick) * 100,
+            widthPct: Math.max((durationTick / maxTick) * 100, 6),
+          };
+        });
+
+      return {
+        id: track.id,
+        name: track.name,
+        isActive: editorContext?.track_id === track.id,
+        segments,
+      };
+    });
   }
 
   function handleConnect(connection: any) {
@@ -267,7 +366,7 @@
     });
   }
 
-  function handleDelete({ nodes: deletedNodes, edges: deletedEdges }: { nodes: Node[]; edges: Edge[] }) {
+  function handleDelete({ edges: deletedEdges }: { nodes: Node[]; edges: Edge[] }) {
     for (const edge of deletedEdges) {
       bridge.pushEvent("remove_edge", { id: edge.id });
     }
@@ -276,7 +375,10 @@
 
 <div class="p-4 border border-slate-200 rounded-lg font-sans bg-white">
   <div class="flex items-center justify-between mb-3">
-    <h3 class="m-0 text-base text-gray-800">Arranger Mixer</h3>
+    <div>
+      <h3 class="m-0 text-base text-gray-800">Arranger Mixer</h3>
+      <div class="text-[11px] text-slate-500 mt-0.5">{scopeLabel}</div>
+    </div>
     <div class="flex gap-2">
       {#each arrangerStepDefs as step}
         <button
@@ -292,6 +394,62 @@
       >
         + Add Audio Track
       </button>
+    </div>
+  </div>
+  <div class="mb-3 border border-slate-200 rounded-lg overflow-hidden bg-slate-50">
+    <div class="px-3 py-2 border-b border-slate-200 bg-slate-100 text-[11px] text-slate-500">
+      Track Timeline
+    </div>
+    <div class="px-3 py-2 border-b border-slate-200 bg-white">
+      <div class="relative ml-28 h-5">
+        {#each Array.from({ length: 5 }) as _, index}
+          <div
+            class="absolute top-0 bottom-0 border-l border-dashed border-slate-200 text-[10px] text-slate-400"
+            style:left={`${index * 25}%`}
+          >
+            <span class="absolute -top-0.5 left-1">
+              {Math.round((timelineMaxTick / 4) * index)}
+            </span>
+          </div>
+        {/each}
+      </div>
+    </div>
+    <div class="divide-y divide-slate-200">
+      {#each timelineRows as row}
+        <div class="flex items-stretch bg-white">
+          <button
+            class="w-28 shrink-0 px-3 py-3 text-left text-xs border-r transition-colors cursor-pointer {row.isActive
+              ? 'bg-amber-50 border-amber-200 text-amber-900'
+              : 'bg-slate-50 border-slate-200 text-slate-600 hover:bg-slate-100'}"
+            onclick={() => focusTrack(row.id)}
+          >
+            {row.name}
+          </button>
+          <div class="relative flex-1 min-h-16 bg-linear-to-r from-slate-50 to-white">
+            {#each Array.from({ length: 4 }) as _, index}
+              <div
+                class="absolute top-0 bottom-0 border-l border-dashed border-slate-200"
+                style:left={`${(index + 1) * 25}%`}
+              ></div>
+            {/each}
+
+            {#each row.segments as segment}
+              <button
+                class="absolute top-3 h-10 rounded-md border px-2 text-left text-xs cursor-pointer shadow-sm transition-all overflow-hidden {editorContext?.segment_id === segment.id && row.isActive
+                  ? 'bg-amber-200 border-amber-400 text-amber-950 shadow-amber-200/50'
+                  : row.isActive
+                    ? 'bg-sky-100 border-sky-300 text-sky-950 hover:bg-sky-200'
+                    : 'bg-slate-200 border-slate-300 text-slate-700 hover:bg-slate-300'}"
+                style={`left: ${segment.leftPct}%; width: ${segment.widthPct}%`}
+                onclick={() => focusTrackSegment(row.id, segment.id)}
+                title={segment.name}
+              >
+                <span class="block truncate">{segment.name}</span>
+              </button>
+            {/each}
+          </div>
+        </div>
+      {/each}
     </div>
   </div>
   <div class="relative rounded overflow-hidden bg-neutral-800 h-125 text-black">

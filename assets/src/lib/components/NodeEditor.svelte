@@ -11,7 +11,7 @@
     type SFlowNode,
     type SFlowEdge,
   } from "$lib/utils";
-  import type { EquinoxBridge, ProjectData, EditorContextData, TrackData } from "$lib/bridge";
+  import type { EquinoxBridge, ProjectData, EditorContextData, TrackData, EditorScope } from "$lib/bridge";
 
   let { bridge }: { bridge: EquinoxBridge } = $props();
 
@@ -33,6 +33,7 @@
   });
 
   let activeTrackName = $derived(activeTrack?.name ?? "No Track Selected");
+  let scopeLabel = $derived(scopeToLabel(editorContext?.scope ?? "track"));
 
   onMount(() => {
     const unsubNodes = bridge.handleEvent("synth_nodes_available", ({ nodes: defs }: any) => {
@@ -103,6 +104,19 @@
     edges = [...edges, edge];
     scheduleSync();
   }
+
+  function scopeToLabel(scope: EditorScope) {
+    switch (scope) {
+      case "segment":
+        return "Track Synth · Segment Focus";
+      case "track_synth":
+        return "Track Synth";
+      case "project_mix":
+        return "Project Mix";
+      default:
+        return "Track Focus";
+    }
+  }
 </script>
 
 <div class="h-full w-full flex flex-col bg-zinc-800 text-white">
@@ -110,6 +124,7 @@
     <div>
       <h2 class="text-sm font-bold text-amber-500 m-0">Topology Nodes</h2>
       <div class="text-[11px] text-zinc-400 mt-0.5">{activeTrackName}</div>
+      <div class="text-[11px] text-zinc-500 mt-0.5">{scopeLabel}</div>
     </div>
     <div class="flex gap-2">
       {#each stepDefs as step}

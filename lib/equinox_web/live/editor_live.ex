@@ -18,7 +18,8 @@ defmodule EquinoxWeb.EditorLive do
        page_title: "Equinox Editor",
        session_id: "default_session",
        current_track_id: nil,
-       current_segment_id: nil
+       current_segment_id: nil,
+       current_scope: "track"
      )}
   end
 
@@ -76,7 +77,19 @@ defmodule EquinoxWeb.EditorLive do
 
   def handle_info({:select_track, track_id}, socket) do
     project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
-    context = build_editor_context(project, track_id)
+    context = build_editor_context(project, track_id, nil, "track")
+
+    socket =
+      socket
+      |> assign_editor_context(context)
+      |> push_editor_context(context)
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:focus_segment, track_id, segment_id}, socket) do
+    project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
+    context = build_editor_context(project, track_id, segment_id, "segment")
 
     socket =
       socket
@@ -88,7 +101,12 @@ defmodule EquinoxWeb.EditorLive do
 
   def handle_info({:project_updated, project}, socket) do
     context =
-      build_editor_context(project, socket.assigns.current_track_id, socket.assigns.current_segment_id)
+      build_editor_context(
+        project,
+        socket.assigns.current_track_id,
+        socket.assigns.current_segment_id,
+        socket.assigns.current_scope
+      )
 
     socket =
       socket
@@ -127,6 +145,15 @@ defmodule EquinoxWeb.EditorLive do
       Equinox.Session.server(socket.assigns.session_id),
       {:update_project, updated_project}
     )
+
+    socket =
+      socket
+      |> assign(current_scope: "track_synth")
+      |> push_editor_context(%{
+        track_id: track_id,
+        segment_id: socket.assigns.current_segment_id,
+        scope: "track_synth"
+      })
 
     send(self(), {:project_updated, updated_project})
 
@@ -211,15 +238,21 @@ defmodule EquinoxWeb.EditorLive do
   defp assign_editor_context(socket, context) do
     assign(socket,
       current_track_id: context.track_id,
-      current_segment_id: context.segment_id
+      current_segment_id: context.segment_id,
+      current_scope: context.scope
     )
   end
 
-  defp build_editor_context(%Project{} = project, preferred_track_id \\ nil, preferred_segment_id \\ nil) do
+  defp build_editor_context(
+         %Project{} = project,
+         preferred_track_id \\ nil,
+         preferred_segment_id \\ nil,
+         preferred_scope \\ "track"
+       ) do
     track_id = resolve_track_id(project, preferred_track_id)
     segment_id = resolve_segment_id(project, track_id, preferred_segment_id)
 
-    %{track_id: track_id, segment_id: segment_id}
+    %{track_id: track_id, segment_id: segment_id, scope: preferred_scope}
   end
 
   defp resolve_track_id(%Project{} = project, preferred_track_id) do

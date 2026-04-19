@@ -27,7 +27,10 @@ export interface TempoPoint {
 export interface EditorContextData {
   track_id: string | null;
   segment_id: string | null;
+  scope: EditorScope;
 }
+
+export type EditorScope = "track" | "segment" | "track_synth" | "project_mix";
 
 export interface TrackData {
   id: string;

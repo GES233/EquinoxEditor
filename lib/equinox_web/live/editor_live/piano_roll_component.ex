@@ -17,6 +17,11 @@ defmodule EquinoxWeb.EditorLive.PianoRollComponent do
     """
   end
 
+  def handle_event("focus_segment", %{"track_id" => track_id, "segment_id" => seg_id}, socket) do
+    send(self(), {:focus_segment, track_id, seg_id})
+    {:noreply, socket}
+  end
+
   def handle_event(
         "replace_segment_notes",
         %{"track_id" => track_id, "segment_id" => seg_id, "notes" => note_params},

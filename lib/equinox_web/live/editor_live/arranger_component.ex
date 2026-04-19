@@ -22,6 +22,11 @@ defmodule EquinoxWeb.EditorLive.ArrangerComponent do
     {:noreply, socket}
   end
 
+  def handle_event("focus_segment", %{"track_id" => track_id, "segment_id" => segment_id}, socket) do
+    send(self(), {:focus_segment, track_id, segment_id})
+    {:noreply, socket}
+  end
+
   # Arranger hooks
   def handle_event("add_arranger_node", payload, socket) do
     IO.inspect(payload, label: "Arranger Add External Node")
