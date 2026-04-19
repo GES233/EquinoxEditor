@@ -1,6 +1,6 @@
 <script lang="ts">
   import { SvelteFlow, Background, Controls } from "@xyflow/svelte";
-  
+  import { onMount } from "svelte";
   import DynamicNode from "./node/DynamicNode.svelte";
   import { getAllNodeTypes } from "$lib/stores/node_registry";
   import {
@@ -11,10 +11,12 @@
     type SFlowNode,
     type SFlowEdge,
   } from "$lib/utils";
-  import type { EquinoxBridge } from "$lib/bridge";
+  import type { EquinoxBridge, ProjectData, EditorContextData, TrackData } from "$lib/bridge";
 
   let { bridge }: { bridge: EquinoxBridge } = $props();
 
+  let project = $state<ProjectData | null>(null);
+  let editorContext = $state<EditorContextData | null>(null);
   let nodes = $state<SFlowNode[]>([]);
   let edges = $state<SFlowEdge[]>([]);
   let stepDefs = $state<any[]>([]);
@@ -24,36 +26,59 @@
     return { ...registered, dynamic: DynamicNode };
   });
 
-  // Example placeholder definition
-  $effect(() => {
-    if (!bridge) return;
-    bridge.handleEvent("synth_nodes_available", ({ nodes: defs }: any) => {
+  let activeTrack = $derived.by((): TrackData | null => {
+    const trackId = editorContext?.track_id;
+    if (!project || !trackId) return null;
+    return project.tracks[trackId] ?? null;
+  });
+
+  let activeTrackName = $derived(activeTrack?.name ?? "No Track Selected");
+
+  onMount(() => {
+    const unsubNodes = bridge.handleEvent("synth_nodes_available", ({ nodes: defs }: any) => {
       stepDefs = defs;
     });
-    
-    // 监听从后端传来的初始化或更新的数据
-    bridge.handleEvent("project_load", (project: any) => {
-      // 从 project 中提取 track_1 的 synth_graph
-      if (project && project.tracks && project.tracks["track_1"]) {
-        const synthGraph = project.tracks["track_1"].synth_graph;
-        if (synthGraph) {
-          const sflowData = graphPayloadToSFlow(synthGraph);
-          nodes = sflowData.nodes;
-          edges = sflowData.edges;
-        }
-      }
+    const unsubProject = bridge.handleEvent<ProjectData>("project_load", (payload) => {
+      project = payload;
     });
+    const unsubContext = bridge.handleEvent<EditorContextData>("editor_context", (payload) => {
+      editorContext = payload;
+    });
+
+    return () => {
+      unsubNodes();
+      unsubProject();
+      unsubContext();
+    };
+  });
+
+  $effect(() => {
+    const synthGraph = activeTrack?.synth_graph;
+    if (!synthGraph) {
+      nodes = [];
+      edges = [];
+      return;
+    }
+
+    const sflowData = graphPayloadToSFlow(synthGraph);
+    nodes = sflowData.nodes;
+    edges = sflowData.edges;
   });
 
   let syncPending = false;
 
   function scheduleSync() {
+    if (!editorContext?.track_id) return;
     if (syncPending) return;
     syncPending = true;
     queueMicrotask(() => {
       syncPending = false;
       const { nodes: ns, edges: es } = sflowToGraphPayload(nodes, edges);
-      bridge.pushEvent("synth_graph_update", { nodes: ns, edges: es });
+      bridge.pushEvent("synth_graph_update", {
+        track_id: editorContext?.track_id,
+        nodes: ns,
+        edges: es,
+      });
     });
   }
 
@@ -82,7 +107,10 @@
 
 <div class="h-full w-full flex flex-col bg-zinc-800 text-white">
   <div class="p-2 bg-zinc-900 border-b border-zinc-700 flex justify-between items-center">
-    <h2 class="text-sm font-bold text-amber-500 m-0">Topology Nodes</h2>
+    <div>
+      <h2 class="text-sm font-bold text-amber-500 m-0">Topology Nodes</h2>
+      <div class="text-[11px] text-zinc-400 mt-0.5">{activeTrackName}</div>
+    </div>
     <div class="flex gap-2">
       {#each stepDefs as step}
         <button

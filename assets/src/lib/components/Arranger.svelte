@@ -1,8 +1,9 @@
 <script lang="ts">
   import { SvelteFlow, Background, Controls } from "@xyflow/svelte";
   import type { Node, Edge } from "@xyflow/svelte";
+  import { onMount } from "svelte";
   import type { Position } from "./node/position";
-  import type { EquinoxBridge } from "$lib/bridge";
+  import type { EquinoxBridge, ProjectData, EditorContextData, TrackData } from "$lib/bridge";
 
   if (typeof window !== "undefined" && typeof (window as any).process === "undefined") {
     (window as any).process = { env: { NODE_ENV: "production" } };
@@ -11,19 +12,10 @@
   import TrackNode from "./arranger/TrackNode.svelte";
   import OutputNode from "./arranger/OutputNode.svelte";
 
-  let { bridge, payload } = $props();
-
-  let arrangerStepDefs = $state<any[]>([]);
-
-  const nodeTypes = {
-    synth: TrackNode,
-    external_audio: TrackNode,
-    output_with_panel: OutputNode,
-  };
-
   type SynthNodeMap = Record<string, {
     id: string; type: string; label: string; provider_id: string;
     note_count?: number; volume: number; muted: boolean; solo: boolean;
+    isActive: boolean;
     position?: Position;
   }>;
 
@@ -42,6 +34,18 @@
     synth_nodes: SynthNodeMap;
     external_nodes: ExternalNodeMap;
     edges: EdgeData[];
+  };
+
+  let { bridge, payload }: { bridge: EquinoxBridge; payload?: ArrangerState } = $props();
+
+  let project = $state<ProjectData | null>(null);
+  let editorContext = $state<EditorContextData | null>(null);
+  let arrangerStepDefs = $state<any[]>([]);
+
+  const nodeTypes = {
+    synth: TrackNode,
+    external_audio: TrackNode,
+    output_with_panel: OutputNode,
   };
 
   let nodes = $state.raw<Node[]>([]);
@@ -111,9 +115,64 @@
   }
 
   function syncState(state: ArrangerState) {
-    console.log(state);
     nodes = buildNodes(state);
     edges = buildEdges(state);
+  }
+
+  function projectToArrangerState(currentProject: ProjectData, context: EditorContextData | null): ArrangerState {
+    const synth_nodes: SynthNodeMap = {};
+    const external_nodes: ExternalNodeMap = {};
+    const edges: EdgeData[] = [];
+    let i = 0;
+
+    for (const trackId of Object.keys(currentProject.tracks || {})) {
+      const track = currentProject.tracks[trackId] as TrackData;
+      const nodeData = {
+        id: trackId,
+        type: track.type === "synth" ? "synth" : "external_audio",
+        label: track.name || trackId,
+        provider_id: "default",
+        volume: track.gain ?? 1,
+        muted: track.mute || false,
+        solo: track.solo || false,
+        isActive: context?.track_id === trackId,
+        position: track.ui_state?.arranger_position ?? { x: 50, y: i * 160 + 30 },
+      };
+
+      if (track.type === "external_audio") {
+        external_nodes[trackId] = {
+          id: nodeData.id,
+          type: nodeData.type,
+          label: nodeData.label,
+          volume: nodeData.volume,
+          muted: nodeData.muted,
+          solo: nodeData.solo,
+          position: nodeData.position,
+        };
+      } else {
+        synth_nodes[trackId] = {
+          ...nodeData,
+          note_count: Object.values(track.segments ?? {}).reduce(
+            (count, segment) => count + (segment.notes?.length ?? 0),
+            0
+          ),
+        };
+      }
+
+      edges.push({
+        id: `e_${trackId}_output`,
+        source: trackId,
+        target: "output"
+      });
+      i++;
+    }
+
+    return {
+      output_node: { id: "output", label: "Master Output", volume: 1.0, muted: false, position: { x: 400, y: 80 } },
+      synth_nodes,
+      external_nodes,
+      edges
+    };
   }
 
   $effect(() => {
@@ -122,55 +181,40 @@
     }
   });
 
-  $effect(() => {
-    if (!bridge) return;
-    bridge.handleEvent("arranger_nodes_available", ({ nodes: defs }: any) => {
+  onMount(() => {
+    const unsubNodes = bridge.handleEvent("arranger_nodes_available", ({ nodes: defs }: any) => {
       arrangerStepDefs = defs;
     });
-    bridge.handleEvent("state_updated", (state: ArrangerState) => {
+    const unsubProject = bridge.handleEvent("project_load", (payload: ProjectData) => {
+      project = payload;
+    });
+    const unsubContext = bridge.handleEvent("editor_context", (payload: EditorContextData) => {
+      editorContext = payload;
+    });
+    const unsubStateUpdated = bridge.handleEvent("state_updated", (state: ArrangerState) => {
       syncState(state);
     });
-    bridge.handleEvent("mix_result", (result: any) => {
+    const unsubMix = bridge.handleEvent("mix_result", (result: any) => {
       console.log("Mix result:", result);
     });
-    bridge.handleEvent("export_result", (result: any) => {
+    const unsubExport = bridge.handleEvent("export_result", (result: any) => {
       console.log("Export result:", result);
     });
-    bridge.handleEvent("project_load", (project: any) => {
-      console.log("Arranger Project loaded:", project);
-      const synth_nodes: SynthNodeMap = {};
-      const external_nodes: ExternalNodeMap = {};
-      const edges: EdgeData[] = [];
-      let i = 0;
-      
-      for (const trackId of Object.keys(project.tracks || {})) {
-        const track = project.tracks[trackId];
-        synth_nodes[trackId] = {
-          id: trackId,
-          type: track.type === "synth" ? "synth" : "external_audio",
-          label: track.name || trackId,
-          provider_id: "default",
-          volume: 0.8,
-          muted: track.mute || false,
-          solo: track.solo || false,
-          position: { x: 50, y: i * 160 + 30 }
-        };
-        edges.push({
-          id: `e_${trackId}_output`,
-          source: trackId,
-          target: "output"
-        });
-        i++;
-      }
 
-      const state: ArrangerState = {
-        output_node: { id: "output", label: "Master Output", volume: 1.0, muted: false, position: { x: 400, y: 80 } },
-        synth_nodes,
-        external_nodes,
-        edges
-      };
-      syncState(state);
-    });
+    return () => {
+      unsubNodes();
+      unsubProject();
+      unsubContext();
+      unsubStateUpdated();
+      unsubMix();
+      unsubExport();
+    };
+  });
+
+  $effect(() => {
+    if (project) {
+      syncState(projectToArrangerState(project, editorContext));
+    }
   });
 
   function addNode(stepDef: any) {
@@ -207,6 +251,11 @@
       node_id: targetNode.id,
       props: { position: { x: Math.round(pos.x), y: Math.round(pos.y) } },
     });
+  }
+
+  function handleNodeClick({ node }: { node: Node }) {
+    if (node.id === "output") return;
+    bridge.pushEvent("select_track", { track_id: node.id });
   }
 
   function handleConnect(connection: any) {
@@ -251,6 +300,7 @@
       bind:edges
       {nodeTypes}
       onnodedragstop={handleNodeDragStop}
+      onnodeclick={handleNodeClick}
       onconnect={handleConnect}
       ondelete={handleDelete}
       fitView

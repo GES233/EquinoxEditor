@@ -10,6 +10,7 @@
     volume: number;
     muted: boolean;
     solo: boolean;
+    isActive?: boolean;
     deletable?: boolean;
     onDelete?: (id: string) => void;
     onPropertyChange?: (id: string, props: Record<string, any>) => void;
@@ -32,7 +33,9 @@
 </script>
 
 <div
-  class="min-w-48 rounded-lg border border-slate-600 bg-slate-700 text-white shadow-md"
+  class="min-w-48 rounded-lg border text-white shadow-md transition-colors {data.isActive
+    ? 'border-amber-400 bg-slate-700 ring-2 ring-amber-400/40'
+    : 'border-slate-600 bg-slate-700'}"
 >
   <Handle
     type="source"

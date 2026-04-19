@@ -1,81 +1,113 @@
 <script lang="ts">
-  import type { EquinoxBridge, ProjectData, TrackData, SegmentData, NoteData, TempoPoint } from "$lib/bridge";
+  import type {
+    EquinoxBridge,
+    ProjectData,
+    EditorContextData,
+    TrackData,
+    SegmentData,
+    TempoPoint,
+  } from "$lib/bridge";
   import PianoRollInner from "./pianoroll/PianoRoll.svelte";
   import { onMount } from "svelte";
 
   let { bridge }: { bridge: EquinoxBridge } = $props();
 
   let project = $state<ProjectData | null>(null);
-  
-  // For the prototype Piano Roll, we just visualize the first segment of the first track
-  // In a real multi-track DAW, we would have a TrackSelector or Arranger deciding the active context
-  let activeTrackId = $derived(project ? Object.keys(project.tracks)[0] : null);
-  let activeSegmentId = $derived(project && activeTrackId ? Object.keys(project.tracks[activeTrackId].segments)[0] : null);
-  
+  let editorContext = $state<EditorContextData | null>(null);
   let notes = $state<any[]>([]);
-  let tempos = $state<TempoPoint[]>([{tick: 0, bpm: 120}]);
+  let tempos = $state<TempoPoint[]>([{ tick: 0, bpm: 120 }]);
+  let hydratingNotes = false;
+
+  let activeTrack = $derived.by((): TrackData | null => {
+    const trackId = editorContext?.track_id;
+    if (!project || !trackId) return null;
+    return project.tracks[trackId] ?? null;
+  });
+
+  let activeSegment = $derived.by((): SegmentData | null => {
+    const segmentId = editorContext?.segment_id;
+    if (!activeTrack || !segmentId) return null;
+    return activeTrack.segments[segmentId] ?? null;
+  });
+
+  let activeTrackName = $derived(activeTrack?.name ?? "No Track Selected");
+  let activeSegmentName = $derived(activeSegment?.name ?? "No Segment Selected");
 
   onMount(() => {
-    // Listen for the initial or updated project state from the backend
-    const unsub = bridge.handleEvent<ProjectData>("project_load", (payload) => {
-      console.log("Received Project Data:", payload);
+    const unsubProject = bridge.handleEvent<ProjectData>("project_load", (payload) => {
       project = payload;
-      
-      // Map tempos
-      if (project.tempo_map && project.tempo_map.length > 0) {
-        tempos = project.tempo_map;
-      }
-
-      // Map notes from the first segment
-      if (activeTrackId && activeSegmentId) {
-        const activeSegment = project.tracks[activeTrackId].segments[activeSegmentId];
-        // Translate Equinox.Domain.Note shape (start_tick, duration_tick, key) 
-        // to PianoRoll's expected shape if necessary. Our component already uses start_tick, length_tick internally
-        notes = activeSegment.notes.map(n => ({
-          ...n,
-          length_tick: n.duration_tick, // the UI expects length_tick right now, but we can migrate
-          pitch: n.key                  // the UI expects pitch right now
-        }));
-      }
+    });
+    const unsubContext = bridge.handleEvent<EditorContextData>("editor_context", (payload) => {
+      editorContext = payload;
     });
 
-    return unsub;
+    return () => {
+      unsubProject();
+      unsubContext();
+    };
   });
 
-  // We need to carefully sync edits back without creating an infinite loop.
-  // For now, we'll listen for note changes from the PianoRollInner using callback events
-  // instead of a blanket $effect on `notes`, because the user interaction triggers atomic events (add, move, delete).
-  //
-  // NOTE: PianoRollInner currently uses $bindable for notes, which makes fine-grained events tricky.
-  // We'll leave the blanket $effect for now but map it to our new events or refactor PianoRollInner later.
-  
   $effect(() => {
-    if (notes.length > 0 && activeSegmentId) {
-      // Create a snapshot to avoid reacting to our own updates later
-      const currentNotes = $state.snapshot(notes);
-      const segId = activeSegmentId;
-      
-      // Debounce: wait 300ms before pushing to backend
-      const timeout = setTimeout(() => {
-        // In a real app we'd diff the notes or fire specific events on drag-end.
-        // For this PoC, we can just send the whole segment update or mimic the old behaviour
-        bridge.pushEvent("update_note", { 
-          segment_id: segId, 
-          note: currentNotes[0] // just a dummy payload for now
-        });
-      }, 300);
-
-      // This cleanup function will be called if the effect is triggered again
-      // before the timeout completes, effectively debouncing the network request.
-      return () => clearTimeout(timeout);
-    }
+    tempos = project?.tempo_map?.length ? project.tempo_map : [{ tick: 0, bpm: 120 }];
   });
+
+  $effect(() => {
+    hydratingNotes = true;
+    notes = activeSegment ? toPianoRollNotes(activeSegment) : [];
+  });
+
+  $effect(() => {
+    if (hydratingNotes) {
+      hydratingNotes = false;
+      return;
+    }
+    if (!activeTrack || !activeSegment) return;
+
+    const currentNotes = $state.snapshot(notes);
+    const timeout = setTimeout(() => {
+      bridge.pushEvent("replace_segment_notes", {
+        track_id: activeTrack.id,
+        segment_id: activeSegment.id,
+        notes: currentNotes.map(toBackendNote),
+      });
+    }, 300);
+
+    return () => clearTimeout(timeout);
+  });
+
+  function toPianoRollNotes(segment: SegmentData) {
+    return segment.notes.map((note) => ({
+      ...note,
+      length_tick: note.duration_tick,
+      pitch: note.key,
+    }));
+  }
+
+  function toBackendNote(note: Record<string, any>) {
+    return {
+      id: note.id,
+      start_tick: note.start_tick ?? 0,
+      duration_tick: note.duration_tick ?? note.length_tick ?? 480,
+      key: note.key ?? note.pitch ?? 60,
+      lyric: note.lyric ?? "la",
+      phoneme: note.phoneme ?? null,
+      extra: note.extra ?? {},
+    };
+  }
 
 </script>
 
 <div class="h-full w-full">
   {#if project}
-    <PianoRollInner bind:notes bind:tempos />
+    <div class="h-full w-full flex flex-col">
+      <div class="px-3 py-2 border-b border-zinc-800 bg-zinc-950 text-zinc-300 shrink-0">
+        <div class="text-sm font-semibold text-zinc-100">{activeTrackName}</div>
+        <div class="text-[11px] text-zinc-500 mt-0.5">{activeSegmentName}</div>
+      </div>
+      <div class="flex-1 min-h-0">
+        <PianoRollInner bind:notes bind:tempos />
+      </div>
+    </div>
   {:else}
     <div class="flex items-center justify-center h-full w-full text-zinc-500">Loading project...</div>
   {/if}

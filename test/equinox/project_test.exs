@@ -37,11 +37,14 @@ defmodule Equinox.ProjectTest do
               Equinox.Editor.Track.new(%{
                 id: "track_1",
                 name: "Main Vocal",
+                gain: 0.8,
+                ui_state: %{arranger_position: %{x: 50, y: 30}},
                 segments: %{
                   "seg_1" =>
                     Equinox.Editor.Segment.new(%{
                       id: "seg_1",
                       offset_tick: 480,
+                      synth_override: %{provider: "default"},
                       notes: [
                         Equinox.Domain.Note.new(%{
                           start_tick: 0,
@@ -71,9 +74,12 @@ defmodule Equinox.ProjectTest do
 
       track = parsed.tracks[:track_1]
       assert track.name == "Main Vocal"
+      assert track.gain == 0.8
+      assert track.ui_state[:arranger_position][:x] == 50
 
       segment = track.segments[:seg_1]
       assert segment.offset_tick == 480
+      assert segment.synth_override[:provider] == "default"
       assert length(segment.notes) == 2
 
       note = hd(segment.notes)

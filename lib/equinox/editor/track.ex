@@ -16,8 +16,12 @@ defmodule Equinox.Editor.Track do
           topology_ref: String.t() | nil,
           synth_graph: Equinox.Kernel.Graph.t() | nil,
           color: String.t(),
+          gain: float(),
+          pan: float(),
           mute: boolean(),
           solo: boolean(),
+          insert_fx_chain: [map()],
+          ui_state: map(),
           parameters: map(),
           segments: %{Segment.id() => Segment.t()},
           extra: map()
@@ -32,8 +36,12 @@ defmodule Equinox.Editor.Track do
              :topology_ref,
              :synth_graph,
              :color,
+             :gain,
+             :pan,
              :mute,
              :solo,
+             :insert_fx_chain,
+             :ui_state,
              :parameters,
              :segments,
              :extra
@@ -46,8 +54,12 @@ defmodule Equinox.Editor.Track do
     topology_ref: nil,
     synth_graph: nil,
     color: "#3B82F6",
+    gain: 1.0,
+    pan: 0.0,
     mute: false,
     solo: false,
+    insert_fx_chain: [],
+    ui_state: %{},
     parameters: %{},
     segments: %{},
     extra: %{}
@@ -65,8 +77,12 @@ defmodule Equinox.Editor.Track do
       topology_ref: Map.get(attrs, :topology_ref),
       synth_graph: Map.get(attrs, :synth_graph),
       color: Map.get(attrs, :color, "#3B82F6"),
+      gain: Map.get(attrs, :gain, 1.0),
+      pan: Map.get(attrs, :pan, 0.0),
       mute: Map.get(attrs, :mute, false),
       solo: Map.get(attrs, :solo, false),
+      insert_fx_chain: Map.get(attrs, :insert_fx_chain, []),
+      ui_state: Map.get(attrs, :ui_state, %{}),
       parameters: Map.get(attrs, :parameters, %{}),
       segments: Map.get(attrs, :segments, %{}),
       extra: Map.get(attrs, :extra, %{})
@@ -116,17 +132,19 @@ defmodule Equinox.Editor.Track do
     %{track | segments: Map.delete(track.segments, seg_id)}
   end
 
-  @spec get_segment(t(), Segment.id()) :: {:ok, Segment.t()} | :error
+  @spec get_segment(t(), Segment.id()) :: {:ok, Segment.t()} | {:error, :segment_not_found}
   def get_segment(%__MODULE__{} = track, seg_id) do
-    Map.fetch(track.segments, seg_id)
+    with :error <- Map.fetch(track.segments, seg_id) do
+      {:error, :segment_not_found}
+    end
   end
 
   @spec update_segment(t(), Segment.id(), Segment.t() | (Segment.t() -> Segment.t())) ::
-          {:ok, t()} | :error
+          {:ok, t()} | {:error, :segment_not_found}
   def update_segment(%__MODULE__{} = track, seg_id, updater_or_segment) do
     case Map.fetch(track.segments, seg_id) do
       :error ->
-        :error
+        {:error, :segment_not_found}
 
       {:ok, old_seg} ->
         new_seg =
@@ -141,5 +159,23 @@ defmodule Equinox.Editor.Track do
   @spec list_segments(t()) :: [Segment.t()]
   def list_segments(%__MODULE__{} = track) do
     Map.values(track.segments)
+  end
+
+  @spec update_mix(t(), map() | keyword()) :: t()
+  def update_mix(%__MODULE__{} = track, updates) do
+    updates = normalize_keys(updates)
+
+    %{
+      track
+      | gain: Map.get(updates, :gain, track.gain),
+        pan: Map.get(updates, :pan, track.pan),
+        mute: Map.get(updates, :mute, track.mute),
+        solo: Map.get(updates, :solo, track.solo)
+    }
+  end
+
+  @spec put_ui_state(t(), atom() | String.t(), term()) :: t()
+  def put_ui_state(%__MODULE__{} = track, key, value) when is_atom(key) or is_binary(key) do
+    %{track | ui_state: Map.put(track.ui_state, key, value)}
   end
 end

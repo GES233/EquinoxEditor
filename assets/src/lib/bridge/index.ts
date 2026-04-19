@@ -15,6 +15,7 @@ export interface ProjectData {
   tempo_map: TempoPoint[];
   ticks_per_beat: number;
   tracks: Record<string, TrackData>;
+  arranger_graph?: Record<string, any> | null;
   extra: Record<string, any>;
 }
 
@@ -23,15 +24,25 @@ export interface TempoPoint {
   bpm: number;
 }
 
+export interface EditorContextData {
+  track_id: string | null;
+  segment_id: string | null;
+}
+
 export interface TrackData {
   id: string;
   project_id: string | null;
   type: string;
   name: string;
   topology_ref: string | null;
+  synth_graph?: Record<string, any> | null;
   color: string;
+  gain: number;
+  pan: number;
   mute: boolean;
   solo: boolean;
+  insert_fx_chain: Record<string, any>[];
+  ui_state: Record<string, any>;
   parameters: Record<string, any>;
   segments: Record<string, SegmentData>;
   extra: Record<string, any>;
@@ -44,6 +55,7 @@ export interface SegmentData {
   offset_tick: number;
   notes: NoteData[];
   curves: Record<string, any>;
+  synth_override?: Record<string, any> | null;
   extra: Record<string, any>;
 }
 

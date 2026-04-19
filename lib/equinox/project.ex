@@ -115,16 +115,18 @@ defmodule Equinox.Project do
     %{project | tracks: Map.delete(project.tracks, track_id)}
   end
 
-  @spec get_track(t(), Track.id()) :: {:ok, Track.t()} | :error
+  @spec get_track(t(), Track.id()) :: {:ok, Track.t()} | {:error, :track_not_found}
   def get_track(%__MODULE__{} = project, track_id) do
-    Map.fetch(project.tracks, track_id)
+    with :error <- Map.fetch(project.tracks, track_id) do
+      {:error, :track_not_found}
+    end
   end
 
-  @spec update_track(t(), Track.id(), Track.t()) :: {:ok, t()} | :error
+  @spec update_track(t(), Track.id(), Track.t()) :: {:ok, t()} | {:error, :track_not_found}
   def update_track(%__MODULE__{} = project, track_id, %Track{} = new_track) do
     case Map.fetch(project.tracks, track_id) do
       :error ->
-        :error
+        {:error, :track_not_found}
 
       {:ok, _track} ->
         {:ok, %{project | tracks: Map.put(project.tracks, track_id, new_track)}}

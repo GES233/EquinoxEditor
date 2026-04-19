@@ -70,4 +70,43 @@ defmodule Equinox.Editor do
       Project.update_track(project, track_id, updated_track)
     end
   end
+
+  @doc """
+  Updates the mix state of a track without touching segment synthesis content.
+  """
+  @spec update_track_mix(Project.t(), Track.id(), map() | keyword()) ::
+          {:ok, Project.t()} | {:error, atom()}
+  def update_track_mix(%Project{} = project, track_id, updates) do
+    with {:ok, track} <- Project.get_track(project, track_id) do
+      updated_track = Track.update_mix(track, updates)
+      Project.update_track(project, track_id, updated_track)
+    end
+  end
+
+  @doc """
+  Stores Track-scoped UI metadata such as Arranger projection positions.
+  """
+  @spec update_track_ui_state(Project.t(), Track.id(), atom() | String.t(), term()) ::
+          {:ok, Project.t()} | {:error, atom()}
+  def update_track_ui_state(%Project{} = project, track_id, key, value) do
+    with {:ok, track} <- Project.get_track(project, track_id) do
+      updated_track = Track.put_ui_state(track, key, value)
+      Project.update_track(project, track_id, updated_track)
+    end
+  end
+
+  @doc """
+  Replaces the full note set of a segment.
+  This is useful for UI surfaces that edit note collections as a whole snapshot.
+  """
+  @spec replace_segment_notes(Project.t(), Track.id(), Segment.id(), [Note.t()]) ::
+          {:ok, Project.t()} | {:error, atom()}
+  def replace_segment_notes(%Project{} = project, track_id, segment_id, notes) when is_list(notes) do
+    with {:ok, track} <- Project.get_track(project, track_id),
+         {:ok, segment} <- Track.get_segment(track, segment_id) do
+      updated_segment = %{segment | notes: notes}
+      {:ok, updated_track} = Track.update_segment(track, segment_id, updated_segment)
+      Project.update_track(project, track_id, updated_track)
+    end
+  end
 end

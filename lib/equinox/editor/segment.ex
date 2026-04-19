@@ -16,6 +16,7 @@ defmodule Equinox.Editor.Segment do
           offset_tick: non_neg_integer(),
           notes: [Equinox.Domain.Note.t()],
           curves: map(),
+          synth_override: map() | nil,
           graph: Graph.t(Orchid.Step.implementation()) | nil,
           cluster: Cluster.t() | nil,
           extra: map()
@@ -29,6 +30,7 @@ defmodule Equinox.Editor.Segment do
     offset_tick: 0,
     notes: [],
     curves: %{},
+    synth_override: nil,
     graph: nil,
     cluster: nil,
     extra: %{}
@@ -45,6 +47,7 @@ defmodule Equinox.Editor.Segment do
       offset_tick: Map.get(attrs, :offset_tick, 0),
       notes: Map.get(attrs, :notes, []),
       curves: Map.get(attrs, :curves, %{}),
+      synth_override: Map.get(attrs, :synth_override),
       graph: Map.get(attrs, :graph),
       cluster: Map.get(attrs, :cluster),
       extra: Map.get(attrs, :extra, %{})
@@ -86,6 +89,7 @@ defimpl Jason.Encoder, for: Equinox.Editor.Segment do
       offset_tick: segment.offset_tick,
       notes: segment.notes,
       curves: segment.curves,
+      synth_override: segment.synth_override,
       extra: segment.extra
     }
 

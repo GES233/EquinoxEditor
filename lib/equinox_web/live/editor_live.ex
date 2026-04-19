@@ -1,6 +1,8 @@
 defmodule EquinoxWeb.EditorLive do
   use EquinoxWeb, :live_view
 
+  alias Equinox.Project
+
   def mount(_params, _session, socket) do
     if connected?(socket) do
       # 握手时初始化一个 Session
@@ -11,19 +13,27 @@ defmodule EquinoxWeb.EditorLive do
       send(self(), :push_initial_state)
     end
 
-    {:ok, assign(socket, page_title: "Equinox Editor", session_id: "default_session")}
+    {:ok,
+     assign(socket,
+       page_title: "Equinox Editor",
+       session_id: "default_session",
+       current_track_id: nil,
+       current_segment_id: nil
+     )}
   end
 
   def handle_info(:push_initial_state, socket) do
     # 1. Provide project initial state
     project = build_default_proj()
+    context = build_editor_context(project)
+
+    GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:update_project, project})
 
     socket =
       socket
-      # 给本体
-      |> push_event("project_load", project)
-      # 给组件
-      |> push_event("arranger-island:project_load", project)
+      |> assign_editor_context(context)
+      |> push_project_state(project)
+      |> push_editor_context(context)
 
     # 2. Fetch nodes from registry
     all_nodes = Equinox.Kernel.StepRegistry.list_all()
@@ -64,9 +74,35 @@ defmodule EquinoxWeb.EditorLive do
     {:noreply, socket}
   end
 
+  def handle_info({:select_track, track_id}, socket) do
+    project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
+    context = build_editor_context(project, track_id)
+
+    socket =
+      socket
+      |> assign_editor_context(context)
+      |> push_editor_context(context)
+
+    {:noreply, socket}
+  end
+
+  def handle_info({:project_updated, project}, socket) do
+    context =
+      build_editor_context(project, socket.assigns.current_track_id, socket.assigns.current_segment_id)
+
+    socket =
+      socket
+      |> assign_editor_context(context)
+      |> push_project_state(project)
+      |> push_editor_context(context)
+
+    {:noreply, socket}
+  end
+
   def handle_event("synth_graph_update", payload, socket) do
     IO.puts("Received topology update from NodeEditor:")
 
+    track_id = Map.get(payload, "track_id", socket.assigns.current_track_id)
     nodes = Map.get(payload, "nodes", [])
     edges = Map.get(payload, "edges", [])
 
@@ -76,13 +112,13 @@ defmodule EquinoxWeb.EditorLive do
     project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
 
     updated_project =
-      case Equinox.Project.get_track(project, "track_1") do
+      case Project.get_track(project, track_id) do
         {:ok, track} ->
           updated_track = %{track | synth_graph: synth_graph}
-          {:ok, new_proj} = Equinox.Project.update_track(project, "track_1", updated_track)
+          {:ok, new_proj} = Project.update_track(project, track_id, updated_track)
           new_proj
 
-        :error ->
+        {:error, _} ->
           project
       end
 
@@ -91,6 +127,8 @@ defmodule EquinoxWeb.EditorLive do
       Equinox.Session.server(socket.assigns.session_id),
       {:update_project, updated_project}
     )
+
+    send(self(), {:project_updated, updated_project})
 
     {:noreply, socket}
   end
@@ -162,6 +200,60 @@ defmodule EquinoxWeb.EditorLive do
 
   ## 一些 Private functions
 
+  defp push_project_state(socket, %Project{} = project) do
+    push_event(socket, "project_load", project)
+  end
+
+  defp push_editor_context(socket, context) do
+    push_event(socket, "editor_context", context)
+  end
+
+  defp assign_editor_context(socket, context) do
+    assign(socket,
+      current_track_id: context.track_id,
+      current_segment_id: context.segment_id
+    )
+  end
+
+  defp build_editor_context(%Project{} = project, preferred_track_id \\ nil, preferred_segment_id \\ nil) do
+    track_id = resolve_track_id(project, preferred_track_id)
+    segment_id = resolve_segment_id(project, track_id, preferred_segment_id)
+
+    %{track_id: track_id, segment_id: segment_id}
+  end
+
+  defp resolve_track_id(%Project{} = project, preferred_track_id) do
+    case preferred_track_id && Project.get_track(project, preferred_track_id) do
+      {:ok, _track} ->
+        preferred_track_id
+
+      _ ->
+        project.tracks
+        |> Map.keys()
+        |> Enum.sort_by(&to_string/1)
+        |> List.first()
+    end
+  end
+
+  defp resolve_segment_id(_project, nil, _preferred_segment_id), do: nil
+
+  defp resolve_segment_id(%Project{} = project, track_id, preferred_segment_id) do
+    with {:ok, track} <- Project.get_track(project, track_id) do
+      case preferred_segment_id && Map.fetch(track.segments, preferred_segment_id) do
+        {:ok, _segment} ->
+          preferred_segment_id
+
+        _ ->
+          track.segments
+          |> Map.keys()
+          |> Enum.sort_by(&to_string/1)
+          |> List.first()
+      end
+    else
+      {:error, _} -> nil
+    end
+  end
+
   defp build_default_proj do
     Equinox.Project.new(%{
       name: "Equinox Default Session",
@@ -171,10 +263,13 @@ defmodule EquinoxWeb.EditorLive do
             id: "track_1",
             type: "synth",
             name: "Main Vocal",
+            gain: 0.8,
+            ui_state: %{arranger_position: %{x: 50, y: 30}},
             segments: %{
               "seg_1" =>
                 Equinox.Editor.Segment.new(%{
                   id: "seg_1",
+                  track_id: "track_1",
                   offset_tick: 480,
                   notes: [
                     Equinox.Domain.Note.new(%{
