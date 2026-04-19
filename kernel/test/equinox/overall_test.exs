@@ -53,7 +53,9 @@ defmodule Equinox.OverallTest do
       Editor.update_note(project, "track_1", "segment_1", "note_1", %{lyric: "lu"})
 
     {:ok, project} = Editor.update_track_mix(project, "track_1", gain: 0.75, pan: -0.2)
-    {:ok, project} = Editor.update_track_ui_state(project, "track_1", :focused_segment_id, "segment_1")
+
+    {:ok, project} =
+      Editor.update_track_ui_state(project, "track_1", :focused_segment_id, "segment_1")
 
     {:ok, track} = Project.get_track(project, "track_1")
     {:ok, segment} = Track.get_segment(track, "segment_1")

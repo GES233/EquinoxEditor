@@ -4,7 +4,19 @@ defmodule Equinox.Kernel.OrchidFlowTest do
   alias Equinox.Domain.Note
   alias Equinox.Track
   alias Equinox.Editor.Segment
-  alias Equinox.Kernel.{Blackboard, Dispatcher, Graph, Graph.Edge, Graph.Node, GraphBuilder, Planner, RecipeBundle}
+
+  alias Equinox.Kernel.{
+    Blackboard,
+    Compiler,
+    Dispatcher,
+    Graph,
+    Graph.Edge,
+    Graph.Node,
+    GraphBuilder,
+    Planner,
+    RecipeBundle
+  }
+
   alias Equinox.Project
   alias Equinox.Session.{Context, Storage}
 
@@ -67,6 +79,46 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     end
   end
 
+  test "compile_to_recipes/2 reuses cached compiled segments" do
+    graph =
+      Graph.new()
+      |> Graph.add_node(%Node{
+        id: :source,
+        container: SourceStep,
+        inputs: [:note],
+        outputs: [:note],
+        options: []
+      })
+      |> Graph.add_node(%Node{
+        id: :decorate,
+        container: DecorateStep,
+        inputs: [:note],
+        outputs: [:audio],
+        options: [extra_hooks_stack: [OrchidSymbiont.Hooks.Injector]]
+      })
+      |> Graph.add_edge(Edge.new(:source, :note, :decorate, :note))
+
+    segment =
+      Segment.new(%{
+        id: "segment_cached",
+        track_id: "track_flow",
+        notes: [
+          Note.new(%{id: "note_cached", start_tick: 0, duration_tick: 480, key: 60, lyric: "la"})
+        ],
+        graph: graph
+      })
+
+    assert {:ok, {"segment_cached", cached_graph, cached_interventions, cached_bundles}} =
+             Compiler.compile_segment(segment)
+
+    cache = %{"segment_cached" => {cached_graph, cached_interventions, cached_bundles}}
+
+    assert {:ok, [{"segment_cached", compiled_bundles}]} =
+             Compiler.compile_to_recipes([segment], cache)
+
+    assert compiled_bundles == cached_bundles
+  end
+
   test "graph compiles into orchid recipes and dispatches into blackboard with symbiont-backed step" do
     session_id = "orchid-flow-session"
     assert {:ok, _pid} = OrchidSymbiont.Runtime.start_link(scope_id: session_id)
@@ -83,7 +135,13 @@ defmodule Equinox.Kernel.OrchidFlowTest do
 
     graph =
       Graph.new()
-      |> Graph.add_node(%Node{id: :source, container: SourceStep, inputs: [:note], outputs: [:note], options: []})
+      |> Graph.add_node(%Node{
+        id: :source,
+        container: SourceStep,
+        inputs: [:note],
+        outputs: [:note],
+        options: []
+      })
       |> Graph.add_node(%Node{
         id: :decorate,
         container: DecorateStep,
@@ -97,7 +155,9 @@ defmodule Equinox.Kernel.OrchidFlowTest do
       Segment.new(%{
         id: "segment_flow",
         track_id: "track_flow",
-        notes: [Note.new(%{id: "note_1", start_tick: 0, duration_tick: 480, key: 60, lyric: "la"})],
+        notes: [
+          Note.new(%{id: "note_1", start_tick: 0, duration_tick: 480, key: 60, lyric: "la"})
+        ],
         graph: graph
       })
 
@@ -111,13 +171,19 @@ defmodule Equinox.Kernel.OrchidFlowTest do
 
     storage = Storage.new()
     {context, plan} = Context.dispatch_to_plans(Context.new(session_id, project, storage))
-    assert %Planner.Plan{total_tasks: 1, stages: [%Planner.Stage{tasks: [{"segment_flow", _bundle}]}]} = plan
+
+    assert %Planner.Plan{
+             total_tasks: 1,
+             stages: [%Planner.Stage{tasks: [{"segment_flow", _bundle}]}]
+           } = plan
 
     note_input = hd(segment.notes)
 
     blackboard =
       Blackboard.new()
-      |> Blackboard.put(%{{"segment_flow", "source|note"} => %{lyric: note_input.lyric, key: note_input.key}})
+      |> Blackboard.put(%{
+        {"segment_flow", "source|note"} => %{lyric: note_input.lyric, key: note_input.key}
+      })
 
     assert {:ok, executed_blackboard} =
              Dispatcher.dispatch(plan, blackboard,
@@ -131,10 +197,13 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     assert %Storage{meta_conf: {_, meta_ref}, blob_conf: {_, blob_ref}} = context.storage
     assert %{{"segment_flow", "decorate|audio"} => {:ref, {_, ^blob_ref}, _}} = segment_outputs
     assert length(:ets.tab2list(meta_ref)) == 2
+
     assert Enum.sort(:ets.tab2list(blob_ref)) ==
              Enum.sort([
-               {elem(segment_outputs[{"segment_flow", "source|note"}], 2), %{key: 60, lyric: "la"}},
-               {elem(segment_outputs[{"segment_flow", "decorate|audio"}], 2), %{audio: "rendered:la", key: 60}}
+               {elem(segment_outputs[{"segment_flow", "source|note"}], 2),
+                %{key: 60, lyric: "la"}},
+               {elem(segment_outputs[{"segment_flow", "decorate|audio"}], 2),
+                %{audio: "rendered:la", key: 60}}
              ])
   end
 end

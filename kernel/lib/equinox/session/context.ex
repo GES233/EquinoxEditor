@@ -6,10 +6,9 @@ defmodule Equinox.Session.Context do
 
   alias Equinox.Project
   alias Equinox.Session.Storage
-  alias Equinox.Kernel.Graph
+  alias Equinox.Kernel.{Blackboard, Compiler, Graph, Planner, RecipeBundle}
   alias Equinox.Track
   alias Equinox.Editor.Segment
-  alias Equinox.Kernel.{Blackboard, Planner, RecipeBundle}
 
   @type static_bundles_cache :: %{
           Segment.id() => {Graph.t(), RecipeBundle.interventions_map(), [RecipeBundle.t()]}
@@ -54,15 +53,18 @@ defmodule Equinox.Session.Context do
         {ctx, error}
 
       _ ->
+        successful_results =
+          Enum.map(compiled_results, fn {:ok, compiled_result} -> compiled_result end)
+
         {:ok, plan} =
-          compiled_results
+          successful_results
           |> Enum.map(fn {id, _, _, bundle} -> {id, bundle} end)
           |> Planner.build()
 
         new_ctx = %{
           ctx
           | static_bundles_cache:
-              Map.new(compiled_results, fn {id, graph, intervention, bundle} ->
+              Map.new(successful_results, fn {id, graph, intervention, bundle} ->
                 {id, {graph, intervention, bundle}}
               end)
         }
@@ -72,26 +74,6 @@ defmodule Equinox.Session.Context do
   end
 
   defp compile_segment(%Segment{} = seg, cache) do
-    # History resolution is moving to Project/Editor level.
-    # For now, we assume the Segment's graph is already the effective graph.
-    # We will pass empty interventions until we fully integrate the Domain.Note/Curve translator.
-    effective_graph = seg.graph || %Equinox.Kernel.Graph{}
-    interventions = %{}
-
-    with :error <- Map.fetch(cache, seg.id),
-         {:error, _} = err <-
-           Equinox.Kernel.GraphBuilder.compile_graph(
-             effective_graph,
-             seg.cluster || %Equinox.Kernel.Graph.Cluster{}
-           ) do
-      err
-    else
-      {:ok, {cached_graph, cached_interventions, cached_recipe_bundles}} ->
-        {seg.id, cached_graph, cached_interventions, cached_recipe_bundles}
-
-      {:ok, recipe_bundles} ->
-        recipe_bundle = RecipeBundle.bind_interventions(recipe_bundles, interventions)
-        {seg.id, effective_graph, interventions, recipe_bundle}
-    end
+    Compiler.compile_segment(seg, cache)
   end
 end

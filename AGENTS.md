@@ -26,6 +26,7 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 - **Pure Data**: `Project`, `Track`, and `Segment` are pure data structures (JSON serializable). No Ecto schemas, no executable closures inside them.
 - **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte.
+- **Slicer Model**: Keep slicing as pure data derived from note boundaries. Add `slice_flag` to `Equinox.Domain.Note` with shape `{:on_start, slice_id} | :on_end | nil`. Automatic defaults come from rest-gap detection, but users may override them manually. Slice suggestions stay pure; applying them to `Track`/`Segment` is a separate editor/session responsibility.
 - **UI Layout Hierarchy**:
   - `EditorLive` (Main Shell) -> Top-level dispatcher.
   - `TrackList` -> Vertical stack for mute/solo.
@@ -50,12 +51,18 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 ## Current Milestones & Focus
 
 1. ~~**M0 — Skeleton**: Umbrella scaffolded, Vite ↔ Phoenix wiring verified on Windows, `MockBridge` + `LiveBridge` both render an empty PianoRoll.~~
-2. ~~**M1 — Piano Roll parity**: Port notes/viewport/grid/slicer overlay from KinoBayanroll.~~
+2. ~~**M1 — Piano Roll parity**: Port notes/viewport/grid from KinoBayanroll.~~
 3. ~~**M2 — Node Editor parity**: SvelteFlow-based Synth editor, StepRegistry-driven palette, graph persistence via `Equinox.Project`.~~
-4. (Current)**M3 — Kernel integration**: End-to-end render using Orchid.
-5. **M4 — Arranger**: Second SvelteFlow canvas, multi-track mix, slice alignment.
-6. **M5 — Curves**: SVG bezier layer + rasterization in the Compiler.
-7. **M6 — History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
-8. **M7 — Plugin System**: Runtime dynamic loading of custom Synth Nodes.
+4. ~~**M3 — Kernel compile/runtime decoupling**: `Compiler`, `Planner`, `Session.Context`, and OrchidStratum-backed session storage are wired into the render path.~~
+5. **M4 — Slicer semantics & segment application**: Finalize `Note.slice_flag` model, automatic rest-gap slicing, user overrides, and the editor/session flow that materializes slices into `Segment` updates.
+6. **M5 — Arranger**: Second SvelteFlow canvas, multi-track mix, slice/segment alignment, and slice-aware editing affordances.
+7. **M6 — Curves**: SVG bezier layer + rasterization in the Compiler.
+8. **M7 — History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
+9. **M8 — Plugin System**: Runtime dynamic loading of custom Synth Nodes.
    - Frontend: Implement WebComponent wrapping for SvelteFlow to load arbitrary third-party UI `.js` securely via dynamic `<script type="module">`.
    - Backend: Distributed Erlang Architecture. Spawn isolated BEAM OS processes (`Engine Node`) per Session to execute Orchid graphs. Safely hot-load `.beam` modules at runtime without risking the main Phoenix `Web Node` stability.
+
+## Next Session Starting Point
+
+- Decide the exact automatic slicing invariants for `Note.slice_flag`, especially how `{:on_start, slice_id}`, `{:mono, slide_id}`(temporary when a slice has only one note) and `:on_end` are repaired during split/merge/tail-append edits.
+- Decide whether `slice_id` is a stable logical grouping id only, or whether/how it maps onto persisted `Segment.id` during materialization.
