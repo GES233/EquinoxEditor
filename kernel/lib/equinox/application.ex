@@ -70,5 +70,4 @@ defmodule Equinox.Application do
       options: []
     })
   end
-
 end

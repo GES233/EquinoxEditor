@@ -66,7 +66,7 @@ defmodule Equinox.OverallTest do
 
     session_id = "overall-session"
     assert {:error, :session_not_found} = Session.resolve(session_id)
-    assert {:ok, _pid} = Session.start(session_id, project: project, enable_cache: false)
+    assert {:ok, _pid} = Session.start(session_id, project: project)
 
     on_exit(fn ->
       Session.stop(session_id)

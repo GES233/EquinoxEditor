@@ -1,4 +1,3 @@
 [
-  plugins: [Phoenix.LiveView.HTMLFormatter],
-  inputs: ["{config,lib,test}/**/*.{heex,ex,exs}"]
+  inputs: ["{mix,.formatter}.exs", "{config,lib,test}/**/*.{ex,exs}"]
 ]

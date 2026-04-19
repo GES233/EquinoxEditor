@@ -102,7 +102,8 @@ defmodule Equinox.Editor do
   """
   @spec replace_segment_notes(Project.t(), Track.id(), Segment.id(), [Note.t()]) ::
           {:ok, Project.t()} | {:error, atom()}
-  def replace_segment_notes(%Project{} = project, track_id, segment_id, notes) when is_list(notes) do
+  def replace_segment_notes(%Project{} = project, track_id, segment_id, notes)
+      when is_list(notes) do
     with {:ok, track} <- Project.get_track(project, track_id),
          {:ok, segment} <- Track.get_segment(track, segment_id) do
       updated_segment = %{segment | notes: notes}

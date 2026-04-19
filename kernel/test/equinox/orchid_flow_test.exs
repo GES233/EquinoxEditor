@@ -6,7 +6,7 @@ defmodule Equinox.Kernel.OrchidFlowTest do
   alias Equinox.Editor.Segment
   alias Equinox.Kernel.{Blackboard, Dispatcher, Graph, Graph.Edge, Graph.Node, GraphBuilder, Planner, RecipeBundle}
   alias Equinox.Project
-  alias Equinox.Session.Context
+  alias Equinox.Session.{Context, Storage}
 
   defmodule MockSymbiontWorker do
     use GenServer
@@ -53,6 +53,20 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     end
   end
 
+  defmodule StratumPlugin do
+    @behaviour Equinox.Kernel.Plugin
+
+    @impl true
+    def apply_plugin({recipe, opts}, %Storage{meta_conf: meta_conf, blob_conf: blob_conf}) do
+      orchid_opts =
+        Keyword.update(opts, :baggage, %{meta_store: nil, blob_store: nil}, fn baggage ->
+          Map.merge(%{meta_store: nil, blob_store: nil}, baggage)
+        end)
+
+      OrchidStratum.apply_cache(recipe, meta_conf, blob_conf, orchid_opts)
+    end
+  end
+
   test "graph compiles into orchid recipes and dispatches into blackboard with symbiont-backed step" do
     session_id = "orchid-flow-session"
     assert {:ok, _pid} = OrchidSymbiont.Runtime.start_link(scope_id: session_id)
@@ -95,7 +109,8 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     assert recipe_bundle.requires == ["source|note"]
     assert recipe_bundle.exports == ["decorate|audio"]
 
-    {context, plan} = Context.dispatch_to_plans(Context.new(session_id, project, nil))
+    storage = Storage.new()
+    {context, plan} = Context.dispatch_to_plans(Context.new(session_id, project, storage))
     assert %Planner.Plan{total_tasks: 1, stages: [%Planner.Stage{tasks: [{"segment_flow", _bundle}]}]} = plan
 
     note_input = hd(segment.notes)
@@ -105,11 +120,21 @@ defmodule Equinox.Kernel.OrchidFlowTest do
       |> Blackboard.put(%{{"segment_flow", "source|note"} => %{lyric: note_input.lyric, key: note_input.key}})
 
     assert {:ok, executed_blackboard} =
-             Dispatcher.dispatch(plan, blackboard, orchid_baggage: [scope_id: session_id])
+             Dispatcher.dispatch(plan, blackboard,
+               orchid_baggage: [scope_id: session_id],
+               plugins: [{StratumPlugin, context.storage}]
+             )
 
-    assert %{{"segment_flow", "decorate|audio"} => %{audio: "rendered:la", key: 60}} =
-             Blackboard.fetch_via_segment(executed_blackboard, "segment_flow")
+    segment_outputs = Blackboard.fetch_via_segment(executed_blackboard, "segment_flow")
 
     assert context.static_bundles_cache["segment_flow"]
+    assert %Storage{meta_conf: {_, meta_ref}, blob_conf: {_, blob_ref}} = context.storage
+    assert %{{"segment_flow", "decorate|audio"} => {:ref, {_, ^blob_ref}, _}} = segment_outputs
+    assert length(:ets.tab2list(meta_ref)) == 2
+    assert Enum.sort(:ets.tab2list(blob_ref)) ==
+             Enum.sort([
+               {elem(segment_outputs[{"segment_flow", "source|note"}], 2), %{key: 60, lyric: "la"}},
+               {elem(segment_outputs[{"segment_flow", "decorate|audio"}], 2), %{audio: "rendered:la", key: 60}}
+             ])
   end
 end
