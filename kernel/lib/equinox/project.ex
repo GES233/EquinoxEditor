@@ -4,7 +4,7 @@ defmodule Equinox.Project do
   拥有节拍图、轨道列表。完全可以通过 JSON 序列化和反序列化。
   """
 
-  alias Equinox.Editor.Track
+  alias Equinox.Track
 
   @type id :: atom() | String.t()
   @type tempo_point :: %{tick: non_neg_integer(), bpm: number()}

@@ -1,6 +1,6 @@
-defmodule Equinox.Editor.TrackTest do
+defmodule Equinox.TrackTest do
   use ExUnit.Case, async: true
-  alias Equinox.Editor.Track
+  alias Equinox.Track
 
   describe "Track" do
     test "new/1 creates a track with default values" do

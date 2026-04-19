@@ -7,7 +7,8 @@ defmodule Equinox.Session.Context do
   alias Equinox.Project
   alias Equinox.Session.Storage
   alias Equinox.Kernel.Graph
-  alias Equinox.Editor.{Track, Segment}
+  alias Equinox.Track
+  alias Equinox.Editor.Segment
   alias Equinox.Kernel.{Blackboard, Planner, RecipeBundle}
 
   @type static_bundles_cache :: %{

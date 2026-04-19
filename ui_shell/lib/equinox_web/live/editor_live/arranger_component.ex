@@ -1,8 +1,7 @@
 defmodule EquinoxWeb.EditorLive.ArrangerComponent do
   use EquinoxWeb, :live_component
 
-  alias Equinox.{Editor, Project}
-  alias Equinox.Editor.Track
+  alias Equinox.{Editor, Project, Track}
 
   def render(assigns) do
     ~H"""

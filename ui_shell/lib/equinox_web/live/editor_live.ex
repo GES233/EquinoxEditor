@@ -3,6 +3,12 @@ defmodule EquinoxWeb.EditorLive do
 
   alias Equinox.Project
 
+  @graph_translator Application.compile_env(
+                    :equinox_ui_shell,
+                    :graph_translator,
+                    EquinoxUiShell.SvelteFlowGraphTranslator
+                  )
+
   def mount(_params, _session, socket) do
     if connected?(socket) do
       # 握手时初始化一个 Session
@@ -124,7 +130,7 @@ defmodule EquinoxWeb.EditorLive do
     nodes = Map.get(payload, "nodes", [])
     edges = Map.get(payload, "edges", [])
 
-    {:ok, synth_graph} = Equinox.Kernel.SvelteFlowTranslator.from_svelte_payload(nodes, edges)
+    {:ok, synth_graph} = @graph_translator.to_graph(nodes, edges)
 
     # 更新 Session/Project (这里临时只推入 default_session)
     project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
@@ -292,7 +298,7 @@ defmodule EquinoxWeb.EditorLive do
       name: "Equinox Default Session",
       tracks: %{
         "track_1" =>
-          Equinox.Editor.Track.new(
+          Equinox.Track.new(
             id: "track_1",
             type: "synth",
             name: "Main Vocal",

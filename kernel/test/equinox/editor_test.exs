@@ -2,7 +2,8 @@ defmodule Equinox.EditorTest do
   use ExUnit.Case, async: true
   alias Equinox.Project
   alias Equinox.Editor
-  alias Equinox.Editor.{Track, Segment}
+  alias Equinox.Track
+  alias Equinox.Editor.Segment
   alias Equinox.Domain.Note
 
   setup do

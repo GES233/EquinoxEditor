@@ -34,7 +34,7 @@ defmodule Equinox.ProjectTest do
           tempo_map: [%{tick: 0, bpm: 110.0}, %{tick: 1920, bpm: 125.0}],
           tracks: %{
             "track_1" =>
-              Equinox.Editor.Track.new(%{
+              Equinox.Track.new(%{
                 id: "track_1",
                 name: "Main Vocal",
                 gain: 0.8,
