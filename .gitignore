@@ -1,11 +1,17 @@
 # The directory Mix will write compiled artifacts to.
 /_build/
+/kernel/_build/
+/ui_shell/_build/
 
 # If you run "mix test --cover", coverage assets end up here.
 /cover/
+/kernel/cover/
+/ui_shell/cover/
 
 # The directory Mix downloads your dependencies sources to.
 /deps/
+/kernel/deps/
+/ui_shell/deps/
 
 # Where 3rd-party dependencies like ExDoc output generated docs.
 /doc/
@@ -26,12 +32,12 @@ erl_crash.dump
 equinox-*.tar
 
 # Ignore assets that are produced by build tools.
-/priv/static/assets/
+/ui_shell/priv/static/assets/
 
 # Ignore digested assets cache.
-/priv/static/cache_manifest.json
+/ui_shell/priv/static/cache_manifest.json
 
 # In case you use Node.js/npm, you want to ignore these.
 npm-debug.log
-/assets/node_modules/
-
+node_modules/
+/ui_shell/assets/node_modules/

@@ -2,7 +2,7 @@ import Config
 
 # We don't run a server during test. If one is required,
 # you can enable the server option below.
-config :equinox, EquinoxWeb.Endpoint,
+config :equinox_ui_shell, EquinoxWeb.Endpoint,
   http: [ip: {127, 0, 0, 1}, port: 4002],
   secret_key_base: "V4OkXwSSJVaaOFOt5GO054C7FH6gZIear2AY8eIbeFj9c/bta4JElOGkXWO+0W+k",
   server: false

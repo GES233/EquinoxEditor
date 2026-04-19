@@ -6,25 +6,15 @@ defmodule Equinox.Application do
   @impl true
   def start(_type, _args) do
     children = [
-      # Phoenix 脚手架
-      EquinoxWeb.Telemetry,
-      {DNSCluster, query: Application.get_env(:equinox, :dns_cluster_query) || :ignore},
-      {Phoenix.PubSub, name: Equinox.PubSub},
-
-      # 编辑器本体相关
       Equinox.Session.Registry,
       {Task.Supervisor, name: Equinox.RenderTaskSupervisor},
       {DynamicSupervisor, name: Equinox.Session.DynamicSupervisor, strategy: :one_for_one},
-      Equinox.Kernel.StepRegistry,
-
-      # 启动响应请求的服务，一般放在最后
-      EquinoxWeb.Endpoint
+      Equinox.Kernel.StepRegistry
     ]
 
     opts = [strategy: :one_for_one, name: Equinox.Supervisor]
     result = Supervisor.start_link(children, opts)
 
-    # 注册内建
     register_builtin_steps()
 
     result
@@ -81,10 +71,4 @@ defmodule Equinox.Application do
     })
   end
 
-  # 告诉 Phoenix 在应用更新时也更新终端配置。
-  @impl true
-  def config_change(changed, _new, removed) do
-    EquinoxWeb.Endpoint.config_change(changed, removed)
-    :ok
-  end
 end

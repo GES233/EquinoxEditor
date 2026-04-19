@@ -2,7 +2,7 @@
 
 ## 1. Project Overview & Tech Stack
 
-**Equinox** is a vocal synthesis editor (DAW-like) built in Elixir and Svelte.
+**Equinox** is a vocal synthesis editor (DAW-like) split into a standalone kernel and a UI shell.
 
 - **Backend**: Phoenix 1.8, LiveView 1.1, Bandit, Orchid ecosystem (DAG orchestration).
 - **Frontend**: Svelte 5 (Runes mode strictly), SvelteFlow, Tailwind CSS v4, TypeScript, Vite.
@@ -41,9 +41,10 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 ## 6. Essential Commands
 
-- Elixir: `mix deps.get`, `iex -S mix phx.server`
-- Frontend (`cd assets`): `npm run dev`, `npm run build`, `npm run check`
-- Pre-commit: `mix precommit`
+- Kernel (`cd kernel`): `mix deps.get`, `mix test`
+- UI Shell (`cd ui_shell`): `mix deps.get`, `iex -S mix phx.server`
+- Frontend (`cd ui_shell/assets`): `npm run dev`, `npm run build`, `npm run check`
+- Pre-commit: `cd kernel && mix precommit`, `cd ui_shell && mix precommit`
 
 
 ## Current Milestones & Focus

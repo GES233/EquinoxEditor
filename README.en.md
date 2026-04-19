@@ -10,74 +10,65 @@ This repository is the successor to two prior prototypes:
 
 Equinox consolidates those lessons into a single **Phoenix + Svelte** application, abandoning Livebook/Kino hosting entirely.
 
-## Architecture
+Equinox now uses two folders instead of umbrella apps: `kernel/` and `ui_shell/`.
 
-```
-Equinox = Kernel + DomainApp + UI
+## Layout
+
+```text
+kernel/    # standalone editor kernel, domain model, Orchid orchestration
+ui_shell/  # Phoenix LiveView shell + Svelte 5 islands
 ```
 
-- **Kernel**: Incremental generation orchestration (DAG + Intervention + Incremental Generation + Heavy Services).
-- **DomainApp**: Domain-specific logic for vocal synthesis (Projects, Tracks, Notes, Curves, Topologies).
-- **UI**: Phoenix LiveView shell hosting Svelte 5 components (Piano Roll, Node Editor, Arranger) as islands.
+- **Kernel**: core editor logic, sessions, project model, render dispatch.
+- **UI Shell**: browser-facing shell that depends on `kernel/` via a local path dependency.
+- The repository root now keeps repo-level docs and conventions only.
 
 ## Prerequisites
 
 - [Elixir](https://elixir-lang.org/install.html) (with Erlang/OTP)
 - [Node.js](https://nodejs.org/) (for frontend assets)
 
-## Getting Started
+## Development
 
-1. Install backend dependencies and compile:
+### Kernel
 
-   ```bash
-   mix deps.get
-   mix compile
-   ```
+```bash
+cd kernel
+mix deps.get
+mix test
+```
 
-2. Install frontend dependencies:
+### UI Shell
 
-   ```bash
-   npm install --prefix assets
-   ```
+```bash
+cd ui_shell
+mix deps.get
+cd assets && npm install
+mix phx.server
+```
 
-3. Start the development server:
+During UI shell development, Vite watches `ui_shell/assets` and writes bundles into `ui_shell/priv/static/assets`.
 
-   ```bash
-   iex -S mix phx.server
-   ```
+### Checks
 
-Now you can visit [`localhost:4000`](http://localhost:4000) from your browser. The Phoenix dev server automatically watches and builds Vite output.
+```bash
+cd kernel && mix precommit
+cd ui_shell && mix precommit
+cd ui_shell/assets && npm run check
+```
 
-## Tech Stack
+## Architecture
 
-### Backend
-- **Orchid Ecosystem**: `orchid` (DAG engine), `orchid_symbiont` (OTP integration), `orchid_stratum` (cache), `orchid_intervention`.
-- **Phoenix Framework**: `phoenix`, `phoenix_live_view`, `phoenix_html`, `bandit`, `jason`.
+```text
+Equinox = Kernel + UI Shell
+```
 
-### Frontend
-- **Svelte 5** (Runes mode)
-- **SvelteFlow** (Node editor canvas)
-- **Vite** & **TypeScript**
-- **Tailwind CSS v4**
-
-## Development Tools
-
-For frontend development without the backend, you can use the Vite dev server with a mock bridge:
-
-   ```bash
-   cd assets
-   npm run dev
-   ```
-
-Run checks before committing:
-
-   ```bash
-   mix precommit
-   cd assets && npm run check
-   ```
+- **Kernel**: incremental generation, DAG orchestration, intervention, cache, heavy services.
+- **UI Shell**: Phoenix LiveView shell hosting Svelte 5 components for Piano Roll, Node Editor, and Arranger.
 
 ## Learn More
 
-- [Phoenix Framework Official Website](https://www.phoenixframework.org/)
-- [Svelte Documentation](https://svelte.dev/docs)
-- Review `./AGENTS.md` for detailed architectural decisions and domain models.
+- [Phoenix Framework](https://www.phoenixframework.org/)
+- [Svelte Docs](https://svelte.dev/docs)
+- [Orchid](https://hex.pm/packages/orchid)
+- Review `./AGENTS.md` for architectural conventions.

@@ -4,7 +4,7 @@ import Config
 #
 # 监视器配置可用于运行应用程序的外部监视器。
 # 例如，我们可以使用它来打包 .js 和 .css 源文件。
-config :equinox, EquinoxWeb.Endpoint,
+config :equinox_ui_shell, EquinoxWeb.Endpoint,
   # 绑定到环回 IPv4 地址（127.0.0.1）会阻止其他机器访问。
   # 请将其更改为 `ip: {0, 0, 0, 0}` 以允许其他机器访问。
   http: [ip: {127, 0, 0, 1}],
@@ -45,7 +45,7 @@ config :equinox, EquinoxWeb.Endpoint,
 # different ports.
 
 # 当匹配的文件发生更改时，请重新加载浏览器标签页。
-config :equinox, EquinoxWeb.Endpoint,
+config :equinox_ui_shell, EquinoxWeb.Endpoint,
   live_reload: [
     web_console_logger: true,
     patterns: [
@@ -58,7 +58,7 @@ config :equinox, EquinoxWeb.Endpoint,
   ]
 
 # 启用开发路由（可用于仪表盘）。
-config :equinox, dev_routes: true
+config :equinox_ui_shell, dev_routes: true
 
 # 开发日志中不要包含元数据或时间戳。
 config :logger, :default_formatter, format: "[$level] $message\n"

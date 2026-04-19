@@ -17,10 +17,10 @@ import Config
 # Alternatively, you can use `mix phx.gen.release` to generate a `bin/server`
 # script that automatically sets the env var above.
 if System.get_env("PHX_SERVER") do
-  config :equinox, EquinoxWeb.Endpoint, server: true
+  config :equinox_ui_shell, EquinoxWeb.Endpoint, server: true
 end
 
-config :equinox, EquinoxWeb.Endpoint,
+config :equinox_ui_shell, EquinoxWeb.Endpoint,
   http: [port: String.to_integer(System.get_env("PORT", "4000"))]
 
 if config_env() == :prod do
@@ -38,9 +38,9 @@ if config_env() == :prod do
 
   host = System.get_env("PHX_HOST") || "example.com"
 
-  config :equinox, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
+  config :equinox_ui_shell, :dns_cluster_query, System.get_env("DNS_CLUSTER_QUERY")
 
-  config :equinox, EquinoxWeb.Endpoint,
+  config :equinox_ui_shell, EquinoxWeb.Endpoint,
     url: [host: host, port: 443, scheme: "https"],
     http: [
       # Enable IPv6 and bind on all interfaces.

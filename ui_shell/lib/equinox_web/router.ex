@@ -26,7 +26,7 @@ defmodule EquinoxWeb.Router do
   # end
 
   # 在开发中启用 LiveDashboard
-  if Application.compile_env(:equinox, :dev_routes) do
+  if Application.compile_env(:equinox_ui_shell, :dev_routes) do
     # 如果想在生产环境中使用 LiveDashboard，则应进行身份验证，且允许管理员访问。
     # 如果应用尚未设置仅限管理员访问的部分，则可以使用 Plug.BasicAuth
     # 设置一些基本身份验证，只要也部署了 SSL（无论如何都应该使用）。

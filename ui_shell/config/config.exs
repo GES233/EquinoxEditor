@@ -5,14 +5,14 @@
 # 通用应用配置
 import Config
 
-config :equinox,
+config :equinox_ui_shell,
   generators: [timestamp_type: :utc_datetime]
 
 # 不显示报警（因为 Windows 需要管理员权限使用 symlink）
 config :phoenix_live_view, :colocated_js, disable_symlink_warning: true
 
 # 配置端点
-config :equinox, EquinoxWeb.Endpoint,
+config :equinox_ui_shell, EquinoxWeb.Endpoint,
   url: [host: "localhost"],
   adapter: Bandit.PhoenixAdapter,
   render_errors: [

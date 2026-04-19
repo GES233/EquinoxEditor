@@ -1,5 +1,5 @@
 defmodule EquinoxWeb.Endpoint do
-  use Phoenix.Endpoint, otp_app: :equinox
+  use Phoenix.Endpoint, otp_app: :equinox_ui_shell
 
   # Session 将在 cookie 中保存并被签名，这意味着它的内容可以被阅读
   # 却无法被篡改。 如果你想要加密的话可以设置 :encryption_salt 。
@@ -20,7 +20,7 @@ defmodule EquinoxWeb.Endpoint do
   # 选项来提供通过运行 "phx.digest" 生成的压缩静态文件。
   plug Plug.Static,
     at: "/",
-    from: :equinox,
+    from: :equinox_ui_shell,
     gzip: not code_reloading?,
     only: EquinoxWeb.static_paths(),
     raise_on_missing_only: code_reloading?
