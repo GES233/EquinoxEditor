@@ -4,7 +4,7 @@ defmodule Equinox.Kernel.Planner do
   """
 
   alias Equinox.Kernel.Compiler
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
   alias Equinox.Kernel.RecipeBundle
 
   defmodule Stage do

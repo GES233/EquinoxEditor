@@ -3,7 +3,7 @@ defmodule Equinox.Kernel.OrchidFlowTest do
 
   alias Equinox.Domain.Note
   alias Equinox.Track
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
 
   alias Equinox.Kernel.{
     Blackboard,

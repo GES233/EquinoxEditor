@@ -1,6 +1,7 @@
-defmodule Equinox.Editor.Segment do
+defmodule Equinox.Domain.Segment do
   @moduledoc """
-  增量生成的最小单元 (Pure Data)。
+  增量生成的最小单元 (VO)。
+
   持有 Notes 和 Curves （extra interventions），供编译器生成 Orchid Graph。
   如果作为特殊 Override，可选持有 graph 结构（但序列化时会忽略）。
   """
@@ -24,11 +25,10 @@ defmodule Equinox.Editor.Segment do
           extra: map()
         }
 
-  # 这里不使用 @derive，而是使用 defimpl 手动丢弃 graph 和 cluster
   defstruct [
     :id,
     :track_id,
-    name: "New Segment",
+    :name,
     offset_tick: 0,
     notes: [],
     curves: %{},
@@ -38,12 +38,12 @@ defmodule Equinox.Editor.Segment do
     extra: %{}
   ]
 
-  @spec new(map() | keyword()) :: t()
+  @spec new(Equinox.Util.Attrs.attributes()) :: t()
   def new(attrs \\ %{}) do
-    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
+    attrs = Equinox.Util.Attrs.normalize(attrs)
 
     %__MODULE__{
-      id: Map.get(attrs, :id, Equinox.Utils.ID.generate()),
+      id: Map.get(attrs, :id, Equinox.Util.Id.generate()),
       track_id: Map.get(attrs, :track_id),
       name: Map.get(attrs, :name, "New Segment"),
       offset_tick: Map.get(attrs, :offset_tick, 0),
@@ -58,7 +58,7 @@ defmodule Equinox.Editor.Segment do
 
   @doc "从 JSON Map 反序列化并构造嵌套结构体"
   def from_attrs(attrs) do
-    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
+    attrs = Equinox.Util.Attrs.normalize(attrs)
 
     notes =
       Map.get(attrs, :notes, [])
@@ -70,7 +70,7 @@ defmodule Equinox.Editor.Segment do
   end
 end
 
-defimpl Jason.Encoder, for: Equinox.Editor.Segment do
+defimpl Jason.Encoder, for: Equinox.Domain.Segment do
   def encode(segment, opts) do
     # 明确指定需要序列化的纯数据字段
     map = %{

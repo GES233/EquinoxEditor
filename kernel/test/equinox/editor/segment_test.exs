@@ -1,6 +1,6 @@
-defmodule Equinox.Editor.SegmentTest do
+defmodule Equinox.Domain.SegmentTest do
   use ExUnit.Case, async: true
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
 
   describe "Segment" do
     test "new/1 creates a segment with default values" do

@@ -6,7 +6,7 @@ defmodule Equinox.Editor do
 
   alias Equinox.Project
   alias Equinox.Track
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
   alias Equinox.Domain.Note
 
   @doc """

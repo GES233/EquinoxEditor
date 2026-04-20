@@ -8,7 +8,7 @@ defmodule Equinox.Session.Context do
   alias Equinox.Session.Storage
   alias Equinox.Kernel.{Blackboard, Compiler, Graph, Planner, RecipeBundle}
   alias Equinox.Track
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
 
   @type static_bundles_cache :: %{
           Segment.id() => {Graph.t(), RecipeBundle.interventions_map(), [RecipeBundle.t()]}

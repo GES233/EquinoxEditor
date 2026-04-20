@@ -3,7 +3,7 @@ defmodule Equinox.EditorTest do
   alias Equinox.Project
   alias Equinox.Editor
   alias Equinox.Track
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
   alias Equinox.Domain.Note
 
   setup do

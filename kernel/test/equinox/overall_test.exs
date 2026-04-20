@@ -4,7 +4,7 @@ defmodule Equinox.OverallTest do
   alias Equinox.Domain.Note
   alias Equinox.Editor
   alias Equinox.Track
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
   alias Equinox.Kernel.StepRegistry
   alias Equinox.Project
   alias Equinox.Session
@@ -108,6 +108,7 @@ defmodule Equinox.OverallTest do
              )
 
     assert :ok = GenServer.stop(server_pid)
+    # 这个断言偶尔会因为编译缓存的关系报错
     assert {:error, :session_not_found} = Session.resolve(session_id)
   end
 end

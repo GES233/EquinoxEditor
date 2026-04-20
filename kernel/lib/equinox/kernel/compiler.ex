@@ -4,7 +4,8 @@ defmodule Equinox.Kernel.Compiler do
   将有效的 DAG 翻译为 Orchid.Recipe 序列。
   """
 
-  alias Equinox.Editor.{History, Segment}
+  alias Equinox.Editor.History
+  alias Equinox.Domain.Segment
   alias Equinox.Kernel.{Graph, RecipeBundle}
 
   @type compiled_segment ::

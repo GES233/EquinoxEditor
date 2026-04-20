@@ -307,7 +307,7 @@ defmodule EquinoxWeb.EditorLive do
             ui_state: %{arranger_position: %{x: 50, y: 30}},
             segments: %{
               "seg_1" =>
-                Equinox.Editor.Segment.new(%{
+                Equinox.Domain.Segment.new(%{
                   id: "seg_1",
                   track_id: "track_1",
                   offset_tick: 480,

@@ -4,7 +4,7 @@ defmodule Equinox.Kernel.Blackboard do
   作为 Worker 和底层存储之间的读写接口。
   """
 
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
 
   @type addr :: {Segment.id(), Orchid.Step.io_key()}
 

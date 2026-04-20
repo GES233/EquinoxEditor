@@ -5,7 +5,7 @@ defmodule Equinox.Kernel.Engine do
   """
 
   alias Equinox.Kernel.{RecipeBundle, Graph.PortRef, Blackboard, Configurator}
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
 
   @spec run(
           Segment.id(),
