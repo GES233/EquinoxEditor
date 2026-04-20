@@ -1,6 +1,7 @@
 # Equinox
 
 [English](README.en.md)
+
 Equinox 是基于 Orchid 源于开发者高中时想法（节点编辑图+可编辑/介入数据）的概念验证。
 
 因为技术栈，此应用会成为以 WebUI 为主的一个类似于 OpenUTAU 的轻（jian）量（lou）应用。
