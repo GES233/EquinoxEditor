@@ -62,7 +62,71 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
    - Frontend: Implement WebComponent wrapping for SvelteFlow to load arbitrary third-party UI `.js` securely via dynamic `<script type="module">`.
    - Backend: Distributed Erlang Architecture. Spawn isolated BEAM OS processes (`Engine Node`) per Session to execute Orchid graphs. Safely hot-load `.beam` modules at runtime without risking the main Phoenix `Web Node` stability.
 
+## M4 — Slicer Semantics & Note Editing
+
+### Slicer Scenarios
+
+- **Continuous Notes Import**: MIDI/ustx import produces dense note sequences. Default behavior: derive initial slice boundaries from rest-gap detection (`min_rest_ticks` threshold). This covers the majority of initial modeling.
+- **Manual Override**: User can explicitly mark a note as slice start/end, overriding automatic derivation.
+- **Edit Repair**: After split/merge/drag/time-change operations, locally recalculate and repair `slice_flag` to ensure slices don't dangle or overlap.
+- **Materialization**: Slice semantics are note-level; generating/updating `Segment` is a separate step.
+
+### `slice_flag` Design
+
+Define `slice_flag` on `Equinox.Domain.Note` as:
+
+```elixir
+@type slice_flag :: {:on_start, slice_id :: String.t()} | :on_end | nil
+```
+
+- `{:on_start, slice_id}`: marks the start of a new slice
+- `:on_end`: marks the end of current slice
+- `nil`: note is inside a slice (not a boundary)
+- Single-note slice: both `{:on_start, slice_id}` and `:on_end` on the same note
+
+`slice_id` is a stable logical grouping identifier. During materialization, it maps onto persisted `Segment.id` via a session-level registry.
+
+### Note Editing Functions (`Equinox.Domain.Note`)
+
+Note-local transforms:
+
+- `new/1(attrs)` - create a new note
+- `update/2(note, attrs)` - update note fields
+- `merge/2(note1, note2)` - merge two overlapping notes
+- `split/3(note, split_tick, attrs)` - split note at a tick position
+
+### Track Editing Functions (`Equinox.Track`)
+
+Track orchestrates note operations and repairs slice boundaries:
+
+- `insert_note/3(track, note, opts)` - insert and repair affected slice
+- `delete_note/2(track, note_id)` - delete and repair affected slice
+- `split_note/3(track, note_id, split_tick)` - split and repair
+- `merge_notes/3(track, note_id1, note_id2)` - merge and repair
+- `update_note/3(track, note_id, attrs)` - update and repair if timing changed
+- `apply_slice_flag/3(track, note_id, slice_flag)` - manual override
+
+### Slice Repair Rules
+
+After each track edit, repair algorithm:
+
+1. Identify affected interval (expanded to cover adjacent slice boundaries)
+2. Reset slice flags in affected interval to `nil`
+3. Re-run rest-gap detection to assign `{:on_start, slice_id}` and `:on_end`
+4. Preserve user manual overrides where possible
+5. Ensure consistency: every `:on_end` has a preceding `{:on_start, _}`
+
+### Materialization Flow
+
+Editor/Session layer:
+
+1. Track edits update `track.notes` with repaired `slice_flag`
+2. Session materializes slices into `Segment` updates:
+   - For each slice, create/update `Segment` with slice's note references
+   - Maintain `slice_id -> Segment.id` mapping
+3. Compiler renders from `Segment` level
+
 ## Next Session Starting Point
 
-- Decide the exact automatic slicing invariants for `Note.slice_flag`, especially how `{:on_start, slice_id}`, `{:mono, slide_id}`(temporary when a slice has only one note) and `:on_end` are repaired during split/merge/tail-append edits.
+- Decide the exact automatic slicing invariants for `Note.slice_flag`, especially how `{:on_start, slice_id}`, `:on_end` are repaired during split/merge/tail-append edits.
 - Decide whether `slice_id` is a stable logical grouping id only, or whether/how it maps onto persisted `Segment.id` during materialization.

@@ -1,72 +1,190 @@
 defmodule Equinox.Domain.Slicer do
   @moduledoc """
-  将一条完整的轨道（Track）中的 Notes 根据休止符间隔拆分成多个 Segment 的范围。
+  将一条完整的轨道（Track）中的 Notes 根据休止符间隔拆分成多个 Slice 或 Segment 候选。
   """
 
   alias Equinox.Domain.Note
+  alias Equinox.Editor.Segment
+  alias Equinox.Track
+
+  @default_min_rest_ticks 960
+
+  @type id :: String.t()
 
   @type slice :: %{
+          id: id(),
           start_tick: non_neg_integer(),
           end_tick: non_neg_integer(),
           notes: [Note.t()]
         }
 
-  @doc """
-  将 `notes` 列表（必须按 `start_tick` 排序）切片。
-  `min_rest_ticks` 决定了多长的休止符才会触发拆段。
-  """
   @spec slice([Note.t()], non_neg_integer()) :: [slice()]
-  # 默认 960 ticks = 半个 4/4 拍 (假设 1 beat = 480 ticks)
-  # 可以改成相邻有空（不考虑休止符，那样太 UTAU 了）的那些音符
-  def slice(notes, min_rest_ticks \\ 960)
+  def slice(notes, min_rest_ticks \\ @default_min_rest_ticks) do
+    notes
+    |> repair_slice_flags(min_rest_ticks)
+    |> slices_from_flags()
+  end
 
-  def slice([], _min_rest), do: []
+  @spec repair_slice_flags([Note.t()], non_neg_integer()) :: [Note.t()]
+  def repair_slice_flags(notes, min_rest_ticks \\ @default_min_rest_ticks) do
+    notes
+    |> sort_notes()
+    |> partition_notes(min_rest_ticks)
+    |> Enum.flat_map(&apply_slice_flags/1)
+  end
 
-  def slice([first | rest], min_rest_ticks) do
-    do_slice(
-      rest,
-      min_rest_ticks,
-      [first],
-      first.start_tick,
-      first.start_tick + first.duration_tick,
-      []
-    )
+  @spec slices_from_flags([Note.t()]) :: [slice()]
+  def slices_from_flags(notes) do
+    notes
+    |> sort_notes()
+    |> Enum.reduce({[], nil}, fn note, {acc, current} ->
+      case {note.slice_flag, current} do
+        {{:on_start, slice_id}, nil} ->
+          {acc, begin_slice(slice_id, note)}
+
+        {{:on_start, slice_id}, %{notes: current_notes} = open_slice} when current_notes != [] ->
+          finished = finalize_slice(open_slice)
+          {[finished | acc], begin_slice(slice_id, note)}
+
+        {:on_end, nil} ->
+          {acc, begin_slice(generate_id(), note)}
+
+        {:on_end, open_slice} ->
+          finished = open_slice |> append_note(note) |> finalize_slice()
+          {[finished | acc], nil}
+
+        {_, nil} ->
+          {acc, begin_slice(generate_id(), note)}
+
+        {_, open_slice} ->
+          {acc, append_note(open_slice, note)}
+      end
+    end)
+    |> finalize_open_slice()
     |> Enum.reverse()
   end
 
-  defp do_slice([], _min_rest, current_chunk, start_t, end_t, acc) do
-    finished_slice = %{
-      start_tick: start_t,
-      end_tick: end_t,
-      notes: Enum.reverse(current_chunk)
-    }
+  @spec materialize_segments(Track.id(), [Note.t()], keyword()) :: [Segment.t()]
+  def materialize_segments(track_id, notes, opts \\ []) do
+    min_rest_ticks = Keyword.get(opts, :min_rest_ticks, @default_min_rest_ticks)
+    segment_ids = opts |> Keyword.get(:segment_ids, %{}) |> normalize_keys()
+    name_prefix = Keyword.get(opts, :name_prefix, "Slice")
 
-    [finished_slice | acc]
+    notes
+    |> slice(min_rest_ticks)
+    |> Enum.with_index(1)
+    |> Enum.map(fn {slice, index} ->
+      segment_id = Map.get(segment_ids, slice.id, slice.id)
+
+      Segment.new(%{
+        id: segment_id,
+        track_id: track_id,
+        name: "#{name_prefix} #{index}",
+        offset_tick: slice.start_tick,
+        notes: Enum.map(slice.notes, &normalize_segment_note(&1, slice.start_tick)),
+        extra: %{slice_id: slice.id}
+      })
+    end)
   end
 
-  defp do_slice([note | rest], min_rest_ticks, current_chunk, start_t, end_t, acc) do
-    gap = note.start_tick - end_t
+  defp partition_notes([], _min_rest_ticks), do: []
 
-    if gap >= min_rest_ticks do
-      # 触发拆段
-      finished_slice = %{
-        start_tick: start_t,
-        end_tick: end_t,
-        notes: Enum.reverse(current_chunk)
-      }
+  defp partition_notes([first | rest], min_rest_ticks) do
+    {groups, current_group, _previous_note} =
+      Enum.reduce(rest, {[], [first], first}, fn note, {groups, current_group, previous_note} ->
+        if split_before_note?(previous_note, note, min_rest_ticks) do
+          {[Enum.reverse(current_group) | groups], [note], note}
+        else
+          {groups, [note | current_group], note}
+        end
+      end)
 
-      do_slice(
-        rest,
-        min_rest_ticks,
-        [note],
-        note.start_tick,
-        note.start_tick + note.duration_tick,
-        [finished_slice | acc]
-      )
-    else
-      # 继续堆叠
-      new_end = max(end_t, note.start_tick + note.duration_tick)
-      do_slice(rest, min_rest_ticks, [note | current_chunk], start_t, new_end, acc)
+    Enum.reverse([Enum.reverse(current_group) | groups])
+  end
+
+  defp apply_slice_flags(notes) do
+    slice_id = choose_slice_id(notes)
+
+    case notes do
+      [single_note] ->
+        [%{single_note | slice_flag: {:on_start, slice_id}}]
+
+      [first_note | rest] ->
+        last_index = length(rest) - 1
+
+        rest
+        |> Enum.with_index()
+        |> Enum.map(fn
+          {note, ^last_index} -> %{note | slice_flag: :on_end}
+          {note, _index} -> %{note | slice_flag: nil}
+        end)
+        |> List.insert_at(0, %{first_note | slice_flag: {:on_start, slice_id}})
     end
+  end
+
+  defp split_before_note?(previous_note, note, min_rest_ticks) do
+    gap = note.start_tick - Note.end_tick(previous_note)
+
+    gap >= min_rest_ticks or manual_slice_start?(note) or manual_slice_end?(previous_note)
+  end
+
+  defp manual_slice_start?(%Note{} = note) do
+    match?({:on_start, _slice_id}, Note.manual_slice_flag(note))
+  end
+
+  defp manual_slice_end?(%Note{} = note) do
+    Note.manual_slice_flag(note) == :on_end
+  end
+
+  defp choose_slice_id([first_note | _rest]) do
+    cond do
+      match?({:on_start, _slice_id}, Note.manual_slice_flag(first_note)) ->
+        {:on_start, slice_id} = Note.manual_slice_flag(first_note)
+        slice_id
+
+      match?({:on_start, _slice_id}, first_note.slice_flag) ->
+        {:on_start, slice_id} = first_note.slice_flag
+        slice_id
+
+      true ->
+        generate_id()
+    end
+  end
+
+  defp begin_slice(slice_id, note) do
+    %{
+      id: slice_id,
+      start_tick: note.start_tick,
+      end_tick: Note.end_tick(note),
+      notes: [note]
+    }
+  end
+
+  defp append_note(slice, note) do
+    %{slice | end_tick: max(slice.end_tick, Note.end_tick(note)), notes: slice.notes ++ [note]}
+  end
+
+  defp finalize_slice(slice), do: slice
+
+  defp finalize_open_slice({acc, nil}), do: acc
+  defp finalize_open_slice({acc, open_slice}), do: [finalize_slice(open_slice) | acc]
+
+  defp normalize_segment_note(note, offset_tick) do
+    %{note | start_tick: note.start_tick - offset_tick}
+  end
+
+  defp sort_notes(notes) do
+    Enum.sort_by(notes, &{&1.start_tick, Note.end_tick(&1), &1.id})
+  end
+
+  defp generate_id, do: :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
+
+  defp normalize_keys(map_or_kw) do
+    map_or_kw
+    |> Enum.into(%{})
+    |> Map.new(fn
+      {k, v} when is_binary(k) -> {k, v}
+      {k, v} when is_atom(k) -> {to_string(k), v}
+    end)
   end
 end
