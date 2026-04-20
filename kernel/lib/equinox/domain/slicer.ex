@@ -67,7 +67,16 @@ defmodule Equinox.Domain.Slicer do
   @spec materialize_segments(Track.id(), [Note.t()], keyword()) :: [Segment.t()]
   def materialize_segments(track_id, notes, opts \\ []) do
     min_rest_ticks = Keyword.get(opts, :min_rest_ticks, @default_min_rest_ticks)
-    segment_ids = opts |> Keyword.get(:segment_ids, %{}) |> Equinox.Utils.AttributesHelper.normalize(:string)
+
+    segment_ids =
+      opts
+      |> Keyword.get(:segment_ids, %{})
+      |> Enum.into(%{})
+      |> Map.new(fn
+        {k, v} when is_binary(k) -> {k, v}
+        {k, v} when is_atom(k) -> {Atom.to_string(k), v}
+      end)
+
     name_prefix = Keyword.get(opts, :name_prefix, "Slice")
 
     notes
@@ -125,7 +134,8 @@ defmodule Equinox.Domain.Slicer do
   defp split_before_note?(previous_note, note, min_rest_ticks) do
     gap = note.start_tick - Note.end_tick(previous_note)
 
-    gap >= min_rest_ticks or Note.manual_slice_start?(note) or Note.manual_slice_end?(previous_note)
+    gap >= min_rest_ticks or Note.manual_slice_start?(note) or
+      Note.manual_slice_end?(previous_note)
   end
 
   defp choose_slice_id([first_note | _rest]) do
