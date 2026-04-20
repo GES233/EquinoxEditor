@@ -3,7 +3,7 @@ defmodule Equinox.Track do
   音轨的纯数据声明。
   """
 
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.Segment
 
   @type id :: atom() | String.t()
   @type track_type :: String.t() | atom()
@@ -67,10 +67,10 @@ defmodule Equinox.Track do
 
   @spec new(map() | keyword()) :: t()
   def new(attrs \\ %{}) do
-    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
+    attrs = Equinox.Util.Attrs.normalize(attrs)
 
     %__MODULE__{
-      id: Map.get(attrs, :id, Equinox.Utils.ID.generate()),
+      id: Map.get(attrs, :id, Equinox.Util.Id.generate()),
       project_id: Map.get(attrs, :project_id),
       type: Map.get(attrs, :type, "synth"),
       name: Map.get(attrs, :name, "New Track"),
@@ -91,7 +91,7 @@ defmodule Equinox.Track do
 
   @doc "从 JSON Map 反序列化并构造嵌套结构体"
   def from_attrs(attrs) do
-    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
+    attrs = Equinox.Util.Attrs.normalize(attrs)
 
     segments =
       Map.get(attrs, :segments, %{})
@@ -150,7 +150,7 @@ defmodule Equinox.Track do
 
   @spec update_mix(t(), map() | keyword()) :: t()
   def update_mix(%__MODULE__{} = track, updates) do
-    updates = Equinox.Utils.AttributesHelper.normalize(updates)
+    updates = Equinox.Util.Attrs.normalize(updates)
 
     %{
       track

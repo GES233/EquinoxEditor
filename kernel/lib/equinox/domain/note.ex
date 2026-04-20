@@ -25,11 +25,11 @@ defmodule Equinox.Domain.Note do
 
   @spec new(map() | keyword()) :: t()
   def new(attrs \\ %{}) do
-    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
+    attrs = Equinox.Util.Attrs.normalize(attrs)
 
     %__MODULE__{}
     |> struct!(%{
-      id: Map.get(attrs, :id, Equinox.Utils.ID.generate()),
+      id: Map.get(attrs, :id, Equinox.Util.Id.generate()),
       start_tick: Map.get(attrs, :start_tick, 0),
       duration_tick: Map.get(attrs, :duration_tick, 480),
       key: Map.get(attrs, :key, 60),
@@ -42,10 +42,9 @@ defmodule Equinox.Domain.Note do
 
   @spec update(t(), map() | keyword()) :: t()
   def update(%__MODULE__{} = note, attrs) do
-    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
-
     updates =
       attrs
+      |> Equinox.Util.Attrs.normalize()
       |> Map.take([:start_tick, :duration_tick, :key, :lyric, :phoneme, :slice_flag, :extra])
       |> Map.update(:slice_flag, note.slice_flag, &normalize_slice_flag/1)
       |> Map.update(:extra, note.extra, &Map.merge(note.extra, &1))
@@ -76,15 +75,15 @@ defmodule Equinox.Domain.Note do
 
   @spec split(t(), integer(), map() | keyword()) :: {:ok, {t(), t()}} | {:error, :invalid_split_tick}
   def split(%__MODULE__{} = note, split_tick, attrs \\ %{}) when is_integer(split_tick) do
-    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
+    attrs = Equinox.Util.Attrs.normalize(attrs)
 
     if split_tick <= note.start_tick or split_tick >= end_tick(note) do
       {:error, :invalid_split_tick}
     else
       left_duration = split_tick - note.start_tick
       right_duration = end_tick(note) - split_tick
-      left_attrs = Equinox.Utils.AttributesHelper.normalize(Map.get(attrs, :left, %{}))
-      right_attrs = Equinox.Utils.AttributesHelper.normalize(Map.get(attrs, :right, %{}))
+      left_attrs = Equinox.Util.Attrs.normalize(Map.get(attrs, :left, %{}))
+      right_attrs = Equinox.Util.Attrs.normalize(Map.get(attrs, :right, %{}))
 
       left_note =
         note
@@ -95,7 +94,7 @@ defmodule Equinox.Domain.Note do
         %__MODULE__{}
         |> struct!(%{
           note
-          | id: Map.get(right_attrs, :id, Equinox.Utils.ID.generate()),
+          | id: Map.get(right_attrs, :id, Equinox.Util.Id.generate()),
             start_tick: split_tick,
             duration_tick: right_duration,
             slice_flag: nil

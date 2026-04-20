@@ -45,10 +45,10 @@ defmodule Equinox.Project do
   @doc "创建新 Project，接受 Map 或 Keyword List"
   @spec new(map() | keyword()) :: t()
   def new(attrs \\ %{}) do
-    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
+    attrs = Equinox.Util.Attrs.normalize(attrs)
 
     %__MODULE__{
-      id: Map.get(attrs, :id, Equinox.Utils.ID.generate()),
+      id: Map.get(attrs, :id, Equinox.Util.Id.generate()),
       name: Map.get(attrs, :name, "Untitled Project"),
       version: Map.get(attrs, :version, 1),
       tempo_map: Map.get(attrs, :tempo_map, [%{tick: 0, bpm: 120.0}]),

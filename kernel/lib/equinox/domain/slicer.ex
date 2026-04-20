@@ -47,14 +47,14 @@ defmodule Equinox.Domain.Slicer do
           {[finished | acc], begin_slice(slice_id, note)}
 
         {:on_end, nil} ->
-          {acc, begin_slice(Equinox.Utils.ID.generate(), note)}
+          {acc, begin_slice(Equinox.Util.Id.generate(), note)}
 
         {:on_end, open_slice} ->
           finished = open_slice |> append_note(note) |> finalize_slice()
           {[finished | acc], nil}
 
         {_, nil} ->
-          {acc, begin_slice(Equinox.Utils.ID.generate(), note)}
+          {acc, begin_slice(Equinox.Util.Id.generate(), note)}
 
         {_, open_slice} ->
           {acc, append_note(open_slice, note)}
@@ -147,7 +147,7 @@ defmodule Equinox.Domain.Slicer do
         Note.slice_start_id(first_note.slice_flag)
 
       true ->
-        Equinox.Utils.ID.generate()
+        Equinox.Util.Id.generate()
     end
   end
 
