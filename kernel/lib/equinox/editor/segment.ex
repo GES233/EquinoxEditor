@@ -1,7 +1,7 @@
 defmodule Equinox.Editor.Segment do
   @moduledoc """
   增量生成的最小单元 (Pure Data)。
-  持有 Notes 和 Curves，供编译器生成 Orchid Graph。
+  持有 Notes 和 Curves （extra interventions），供编译器生成 Orchid Graph。
   如果作为特殊 Override，可选持有 graph 结构（但序列化时会忽略）。
   """
 
@@ -16,6 +16,8 @@ defmodule Equinox.Editor.Segment do
           offset_tick: non_neg_integer(),
           notes: [Equinox.Domain.Note.t()],
           curves: map(),
+          # 这个 `synth_override` 貌似可以作为
+          # 相比于此 Track 的 diff （以 History record 的形式记录）。
           synth_override: map() | nil,
           graph: Graph.t(Orchid.Step.implementation()) | nil,
           cluster: Cluster.t() | nil,
