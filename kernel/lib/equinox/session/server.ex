@@ -5,23 +5,33 @@ defmodule Equinox.Session.Server do
   use GenServer
   require Logger
 
-  alias Equinox.Session.{Storage, Context}
-  alias Equinox.Session
+  alias Equinox.Session.Context
   alias Equinox.Project
   alias Equinox.Kernel.Dispatcher
 
   def start_link(opts) do
     with {:ok, session_id} <- Keyword.fetch(opts, :session_id) do
-      GenServer.start_link(__MODULE__, opts, name: Session.server(session_id))
+      server_name = Keyword.get(opts, :name, session_id)
+      GenServer.start_link(__MODULE__, opts, name: server_name)
     end
+  end
+
+  def child_spec(opts) do
+    session_id = Keyword.fetch!(opts, :session_id)
+
+    %{
+      id: Keyword.get(opts, :id, {__MODULE__, session_id}),
+      start: {__MODULE__, :start_link, [opts]}
+    }
   end
 
   @impl true
   def init(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
     project = Keyword.get(opts, :project, Project.new(id: session_id))
-    storage = if Keyword.get(opts, :enable_cache, true), do: Storage.new(), else: nil
-    {:ok, Context.new(session_id, project, storage)}
+    storage = Keyword.get(opts, :storage)
+    task_supervisor = Keyword.fetch!(opts, :task_supervisor)
+    {:ok, Context.new(session_id, project, storage, task_supervisor)}
   end
 
   @impl true
@@ -73,13 +83,13 @@ defmodule Equinox.Session.Server do
 
   defp cancel_pending_task(%Context{render_tasks: nil}), do: :ok
 
-  defp cancel_pending_task(%Context{render_tasks: %{pid: pid}} = state) do
-    Task.Supervisor.terminate_child(Session.task_sup(state.session_id), pid)
+  defp cancel_pending_task(%Context{render_tasks: %{pid: pid}, task_supervisor: task_supervisor}) do
+    Task.Supervisor.terminate_child(task_supervisor, pid)
   end
 
-  defp start_render_task(%Context{} = state, plan, opts) do
+  defp start_render_task(%Context{task_supervisor: task_supervisor} = state, plan, opts) do
     Task.Supervisor.async_nolink(
-      Session.task_sup(state.session_id),
+      task_supervisor,
       fn -> Dispatcher.dispatch(plan, state.blackboard, opts) end
     )
   end

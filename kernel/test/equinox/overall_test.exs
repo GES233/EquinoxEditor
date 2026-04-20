@@ -8,6 +8,7 @@ defmodule Equinox.OverallTest do
   alias Equinox.Kernel.StepRegistry
   alias Equinox.Project
   alias Equinox.Session
+  alias Equinox.Session.Server
 
   test "overall kernel flow covers registry, editor operations, and session lifecycle" do
     assert {:ok, phonemizer_spec} = StepRegistry.lookup(:phonemizer)
@@ -68,14 +69,28 @@ defmodule Equinox.OverallTest do
 
     session_id = "overall-session"
     assert {:error, :session_not_found} = Session.resolve(session_id)
-    assert {:ok, _pid} = Session.start(session_id, project: project)
+
+    task_supervisor = start_supervised!({Task.Supervisor, name: Session.task_sup(session_id)})
+
+    server_pid =
+      start_supervised!(
+        Server.child_spec(
+          session_id: session_id,
+          name: Session.server(session_id),
+          project: project,
+          storage: nil,
+          task_supervisor: task_supervisor
+        )
+      )
 
     on_exit(fn ->
-      Session.stop(session_id)
+      if Process.alive?(server_pid) do
+        GenServer.stop(server_pid)
+      end
     end)
 
-    assert {:ok, server_pid} = Session.resolve(session_id)
-    assert is_pid(server_pid)
+    assert {:ok, server_pid_from_registry} = Session.resolve(session_id)
+    assert is_pid(server_pid_from_registry)
     project_in_session = GenServer.call(Session.server(session_id), {:get_project})
     assert project_in_session.name == "Overall Flow"
 
@@ -85,8 +100,14 @@ defmodule Equinox.OverallTest do
     project_in_session = GenServer.call(Session.server(session_id), {:get_project})
     assert project_in_session.name == "Overall Flow Updated"
 
-    assert {:error, {:already_started, _pid}} = Session.start(session_id, project: project)
-    assert :ok = Session.stop(session_id)
+    assert {:error, {:already_started, _pid}} =
+             Server.start_link(
+               session_id: session_id,
+               name: Session.server(session_id),
+               task_supervisor: task_supervisor
+             )
+
+    assert :ok = GenServer.stop(server_pid)
     assert {:error, :session_not_found} = Session.resolve(session_id)
   end
 end

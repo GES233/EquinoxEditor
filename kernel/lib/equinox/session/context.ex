@@ -20,23 +20,26 @@ defmodule Equinox.Session.Context do
           static_bundles_cache: static_bundles_cache(),
           blackboard: Blackboard.t(),
           storage: Storage.t() | nil,
+          task_supervisor: pid() | atom(),
           render_tasks: Task.t() | nil
         }
   defstruct [
     :session_id,
     :project,
     :storage,
+    :task_supervisor,
     static_bundles_cache: %{},
     blackboard: nil,
     render_tasks: nil
   ]
 
-  @spec new(atom() | String.t(), Project.t(), Storage.t() | nil) :: t()
-  def new(session_id, project, storage) do
+  @spec new(atom() | String.t(), Project.t(), Storage.t() | nil, pid() | atom()) :: t()
+  def new(session_id, project, storage, task_supervisor) do
     %__MODULE__{
       session_id: session_id,
       project: project,
       storage: storage,
+      task_supervisor: task_supervisor,
       blackboard: Blackboard.new()
     }
   end

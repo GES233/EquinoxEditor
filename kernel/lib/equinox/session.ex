@@ -1,33 +1,11 @@
 defmodule Equinox.Session do
   @moduledoc """
-  管理项目运行状态及会话树。
+  管理项目运行状态及会话定位。
   """
   import Equinox.Session.Registry
 
-  def start(session_id, opts \\ []) do
-    case Registry.lookup(Equinox.Session.Registry, instance_sup(session_id, :key)) do
-      [{pid, _}] ->
-        {:error, {:already_started, pid}}
-
-      [] ->
-        session_supervisor_spec = %{
-          id: session_id,
-          start: {Equinox.Session.Supervisor, :start_link, [session_id, opts]}
-        }
-
-        DynamicSupervisor.start_child(Equinox.Session.DynamicSupervisor, session_supervisor_spec)
-    end
-  end
-
-  def stop(session_id) do
-    case Registry.lookup(Equinox.Session.Registry, instance_sup(session_id, :key)) do
-      [{pid, _}] -> DynamicSupervisor.terminate_child(Equinox.Session.DynamicSupervisor, pid)
-      [] -> {:error, :session_not_found}
-    end
-  end
-
-  def resolve(session_id) do
-    case Registry.lookup(Equinox.Session.Registry, server(session_id, :key)) do
+  def resolve(session_id, registry \\ Equinox.Session.Registry) do
+    case Registry.lookup(registry, server(session_id, :key)) do
       [{pid, _}] -> {:ok, pid}
       [] -> {:error, :session_not_found}
     end

@@ -2,6 +2,7 @@ defmodule EquinoxWeb.EditorLive do
   use EquinoxWeb, :live_view
 
   alias Equinox.Project
+  alias EquinoxUiShell.SessionHost
 
   @graph_translator Application.compile_env(
                     :equinox_ui_shell,
@@ -13,7 +14,7 @@ defmodule EquinoxWeb.EditorLive do
     if connected?(socket) do
       # 握手时初始化一个 Session
       session_id = "default_session"
-      Equinox.Session.start(session_id)
+      SessionHost.start_session(session_id)
       # 这里可以按需 subscribe 等待 engine 的事件
 
       send(self(), :push_initial_state)

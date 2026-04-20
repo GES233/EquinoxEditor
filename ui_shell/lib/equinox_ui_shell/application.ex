@@ -7,6 +7,7 @@ defmodule EquinoxUiShell.Application do
       EquinoxWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:equinox_ui_shell, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Equinox.PubSub},
+      EquinoxUiShell.SessionHost,
       EquinoxWeb.Endpoint
     ]
 

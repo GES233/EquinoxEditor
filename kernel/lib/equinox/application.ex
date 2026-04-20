@@ -7,8 +7,6 @@ defmodule Equinox.Application do
   def start(_type, _args) do
     children = [
       Equinox.Session.Registry,
-      {Task.Supervisor, name: Equinox.RenderTaskSupervisor},
-      {DynamicSupervisor, name: Equinox.Session.DynamicSupervisor, strategy: :one_for_one},
       Equinox.Kernel.StepRegistry
     ]
 
