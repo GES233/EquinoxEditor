@@ -40,10 +40,10 @@ defmodule Equinox.Editor.Segment do
 
   @spec new(map() | keyword()) :: t()
   def new(attrs \\ %{}) do
-    attrs = normalize_keys(attrs)
+    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
 
     %__MODULE__{
-      id: Map.get(attrs, :id, generate_id()),
+      id: Map.get(attrs, :id, Equinox.Utils.ID.generate()),
       track_id: Map.get(attrs, :track_id),
       name: Map.get(attrs, :name, "New Segment"),
       offset_tick: Map.get(attrs, :offset_tick, 0),
@@ -58,7 +58,7 @@ defmodule Equinox.Editor.Segment do
 
   @doc "从 JSON Map 反序列化并构造嵌套结构体"
   def from_attrs(attrs) do
-    attrs = normalize_keys(attrs)
+    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
 
     notes =
       Map.get(attrs, :notes, [])
@@ -67,17 +67,6 @@ defmodule Equinox.Editor.Segment do
     attrs
     |> Map.put(:notes, notes)
     |> new()
-  end
-
-  defp generate_id, do: :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
-
-  defp normalize_keys(map_or_kw) do
-    map_or_kw
-    |> Enum.into(%{})
-    |> Map.new(fn
-      {k, v} when is_binary(k) -> {String.to_atom(k), v}
-      {k, v} when is_atom(k) -> {k, v}
-    end)
   end
 end
 

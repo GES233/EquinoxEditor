@@ -67,10 +67,10 @@ defmodule Equinox.Track do
 
   @spec new(map() | keyword()) :: t()
   def new(attrs \\ %{}) do
-    attrs = normalize_keys(attrs)
+    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
 
     %__MODULE__{
-      id: Map.get(attrs, :id, generate_id()),
+      id: Map.get(attrs, :id, Equinox.Utils.ID.generate()),
       project_id: Map.get(attrs, :project_id),
       type: Map.get(attrs, :type, "synth"),
       name: Map.get(attrs, :name, "New Track"),
@@ -91,7 +91,7 @@ defmodule Equinox.Track do
 
   @doc "从 JSON Map 反序列化并构造嵌套结构体"
   def from_attrs(attrs) do
-    attrs = normalize_keys(attrs)
+    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
 
     segments =
       Map.get(attrs, :segments, %{})
@@ -103,17 +103,6 @@ defmodule Equinox.Track do
     |> Map.put(:segments, segments)
     |> Map.put(:synth_graph, synth_graph)
     |> new()
-  end
-
-  defp generate_id, do: :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
-
-  defp normalize_keys(map_or_kw) do
-    map_or_kw
-    |> Enum.into(%{})
-    |> Map.new(fn
-      {k, v} when is_binary(k) -> {String.to_atom(k), v}
-      {k, v} when is_atom(k) -> {k, v}
-    end)
   end
 
   @spec add_segment(t(), Segment.t()) :: {:ok, t()} | {:error, :already_exists}
@@ -161,7 +150,7 @@ defmodule Equinox.Track do
 
   @spec update_mix(t(), map() | keyword()) :: t()
   def update_mix(%__MODULE__{} = track, updates) do
-    updates = normalize_keys(updates)
+    updates = Equinox.Utils.AttributesHelper.normalize(updates)
 
     %{
       track

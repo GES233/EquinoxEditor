@@ -4,10 +4,9 @@ defmodule Equinox.Domain.Note do
   采用 Tick 作为绝对时间单位。
   """
 
-  alias Equinox.Domain.Slicer
-
   @type id :: String.t()
-  @type slice_flag :: {:on_start, Slicer.id()} | :on_end | nil
+  @type slice_id :: String.t()
+  @type slice_flag :: {:on_start, slice_id()} | :on_end | nil
 
   @type t :: %__MODULE__{
           id: id(),
@@ -26,11 +25,11 @@ defmodule Equinox.Domain.Note do
 
   @spec new(map() | keyword()) :: t()
   def new(attrs \\ %{}) do
-    attrs = normalize_keys(attrs)
+    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
 
     %__MODULE__{}
     |> struct!(%{
-      id: Map.get(attrs, :id, generate_id()),
+      id: Map.get(attrs, :id, Equinox.Utils.ID.generate()),
       start_tick: Map.get(attrs, :start_tick, 0),
       duration_tick: Map.get(attrs, :duration_tick, 480),
       key: Map.get(attrs, :key, 60),
@@ -43,7 +42,7 @@ defmodule Equinox.Domain.Note do
 
   @spec update(t(), map() | keyword()) :: t()
   def update(%__MODULE__{} = note, attrs) do
-    attrs = normalize_keys(attrs)
+    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
 
     updates =
       attrs
@@ -77,15 +76,15 @@ defmodule Equinox.Domain.Note do
 
   @spec split(t(), integer(), map() | keyword()) :: {:ok, {t(), t()}} | {:error, :invalid_split_tick}
   def split(%__MODULE__{} = note, split_tick, attrs \\ %{}) when is_integer(split_tick) do
-    attrs = normalize_keys(attrs)
+    attrs = Equinox.Utils.AttributesHelper.normalize(attrs)
 
     if split_tick <= note.start_tick or split_tick >= end_tick(note) do
       {:error, :invalid_split_tick}
     else
       left_duration = split_tick - note.start_tick
       right_duration = end_tick(note) - split_tick
-      left_attrs = normalize_keys(Map.get(attrs, :left, %{}))
-      right_attrs = normalize_keys(Map.get(attrs, :right, %{}))
+      left_attrs = Equinox.Utils.AttributesHelper.normalize(Map.get(attrs, :left, %{}))
+      right_attrs = Equinox.Utils.AttributesHelper.normalize(Map.get(attrs, :right, %{}))
 
       left_note =
         note
@@ -96,7 +95,7 @@ defmodule Equinox.Domain.Note do
         %__MODULE__{}
         |> struct!(%{
           note
-          | id: Map.get(right_attrs, :id, generate_id()),
+          | id: Map.get(right_attrs, :id, Equinox.Utils.ID.generate()),
             start_tick: split_tick,
             duration_tick: right_duration,
             slice_flag: nil
@@ -123,6 +122,20 @@ defmodule Equinox.Domain.Note do
     |> Map.get(:manual_slice_flag, Map.get(note.extra, "manual_slice_flag"))
     |> normalize_slice_flag()
   end
+
+  @spec slice_start?(slice_flag()) :: boolean()
+  def slice_start?({:on_start, slice_id}) when is_binary(slice_id), do: true
+  def slice_start?(_slice_flag), do: false
+
+  @spec slice_start_id(slice_flag()) :: slice_id() | nil
+  def slice_start_id({:on_start, slice_id}) when is_binary(slice_id), do: slice_id
+  def slice_start_id(_slice_flag), do: nil
+
+  @spec manual_slice_start?(t()) :: boolean()
+  def manual_slice_start?(%__MODULE__{} = note), do: slice_start?(manual_slice_flag(note))
+
+  @spec manual_slice_end?(t()) :: boolean()
+  def manual_slice_end?(%__MODULE__{} = note), do: manual_slice_flag(note) == :on_end
 
   defp put_extra_manual_slice_flag(extra, nil) do
     extra
@@ -170,15 +183,4 @@ defmodule Equinox.Domain.Note do
   end
 
   def preserve_single_note_slice_start?(_current_flag, _repaired_flag), do: false
-
-  defp generate_id, do: :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
-
-  defp normalize_keys(map_or_kw) do
-    map_or_kw
-    |> Enum.into(%{})
-    |> Map.new(fn
-      {k, v} when is_binary(k) -> {String.to_atom(k), v}
-      {k, v} when is_atom(k) -> {k, v}
-    end)
-  end
 end

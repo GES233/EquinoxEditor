@@ -28,7 +28,7 @@ defmodule Equinox.Domain.Slicer do
   @spec repair_slice_flags([Note.t()], non_neg_integer()) :: [Note.t()]
   def repair_slice_flags(notes, min_rest_ticks \\ @default_min_rest_ticks) do
     notes
-    |> sort_notes()
+    |> Enum.sort_by(&{&1.start_tick, Note.end_tick(&1), &1.id})
     |> partition_notes(min_rest_ticks)
     |> Enum.flat_map(&apply_slice_flags/1)
   end
@@ -36,7 +36,7 @@ defmodule Equinox.Domain.Slicer do
   @spec slices_from_flags([Note.t()]) :: [slice()]
   def slices_from_flags(notes) do
     notes
-    |> sort_notes()
+    |> Enum.sort_by(&{&1.start_tick, Note.end_tick(&1), &1.id})
     |> Enum.reduce({[], nil}, fn note, {acc, current} ->
       case {note.slice_flag, current} do
         {{:on_start, slice_id}, nil} ->
@@ -47,14 +47,14 @@ defmodule Equinox.Domain.Slicer do
           {[finished | acc], begin_slice(slice_id, note)}
 
         {:on_end, nil} ->
-          {acc, begin_slice(generate_id(), note)}
+          {acc, begin_slice(Equinox.Utils.ID.generate(), note)}
 
         {:on_end, open_slice} ->
           finished = open_slice |> append_note(note) |> finalize_slice()
           {[finished | acc], nil}
 
         {_, nil} ->
-          {acc, begin_slice(generate_id(), note)}
+          {acc, begin_slice(Equinox.Utils.ID.generate(), note)}
 
         {_, open_slice} ->
           {acc, append_note(open_slice, note)}
@@ -67,7 +67,7 @@ defmodule Equinox.Domain.Slicer do
   @spec materialize_segments(Track.id(), [Note.t()], keyword()) :: [Segment.t()]
   def materialize_segments(track_id, notes, opts \\ []) do
     min_rest_ticks = Keyword.get(opts, :min_rest_ticks, @default_min_rest_ticks)
-    segment_ids = opts |> Keyword.get(:segment_ids, %{}) |> normalize_keys()
+    segment_ids = opts |> Keyword.get(:segment_ids, %{}) |> Equinox.Utils.AttributesHelper.normalize(:string)
     name_prefix = Keyword.get(opts, :name_prefix, "Slice")
 
     notes
@@ -81,7 +81,7 @@ defmodule Equinox.Domain.Slicer do
         track_id: track_id,
         name: "#{name_prefix} #{index}",
         offset_tick: slice.start_tick,
-        notes: Enum.map(slice.notes, &normalize_segment_note(&1, slice.start_tick)),
+        notes: Enum.map(slice.notes, &%{&1 | start_tick: &1.start_tick - slice.start_tick}),
         extra: %{slice_id: slice.id}
       })
     end)
@@ -125,29 +125,19 @@ defmodule Equinox.Domain.Slicer do
   defp split_before_note?(previous_note, note, min_rest_ticks) do
     gap = note.start_tick - Note.end_tick(previous_note)
 
-    gap >= min_rest_ticks or manual_slice_start?(note) or manual_slice_end?(previous_note)
-  end
-
-  defp manual_slice_start?(%Note{} = note) do
-    match?({:on_start, _slice_id}, Note.manual_slice_flag(note))
-  end
-
-  defp manual_slice_end?(%Note{} = note) do
-    Note.manual_slice_flag(note) == :on_end
+    gap >= min_rest_ticks or Note.manual_slice_start?(note) or Note.manual_slice_end?(previous_note)
   end
 
   defp choose_slice_id([first_note | _rest]) do
     cond do
-      match?({:on_start, _slice_id}, Note.manual_slice_flag(first_note)) ->
-        {:on_start, slice_id} = Note.manual_slice_flag(first_note)
-        slice_id
+      Note.manual_slice_start?(first_note) ->
+        Note.slice_start_id(Note.manual_slice_flag(first_note))
 
-      match?({:on_start, _slice_id}, first_note.slice_flag) ->
-        {:on_start, slice_id} = first_note.slice_flag
-        slice_id
+      Note.slice_start?(first_note.slice_flag) ->
+        Note.slice_start_id(first_note.slice_flag)
 
       true ->
-        generate_id()
+        Equinox.Utils.ID.generate()
     end
   end
 
@@ -168,23 +158,4 @@ defmodule Equinox.Domain.Slicer do
 
   defp finalize_open_slice({acc, nil}), do: acc
   defp finalize_open_slice({acc, open_slice}), do: [finalize_slice(open_slice) | acc]
-
-  defp normalize_segment_note(note, offset_tick) do
-    %{note | start_tick: note.start_tick - offset_tick}
-  end
-
-  defp sort_notes(notes) do
-    Enum.sort_by(notes, &{&1.start_tick, Note.end_tick(&1), &1.id})
-  end
-
-  defp generate_id, do: :crypto.strong_rand_bytes(8) |> Base.encode16(case: :lower)
-
-  defp normalize_keys(map_or_kw) do
-    map_or_kw
-    |> Enum.into(%{})
-    |> Map.new(fn
-      {k, v} when is_binary(k) -> {k, v}
-      {k, v} when is_atom(k) -> {to_string(k), v}
-    end)
-  end
 end
