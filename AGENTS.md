@@ -218,7 +218,7 @@ kernel/lib/equinox/
 
 ### Segment Shrinkage
 
-After M6, `%Equinox.Editor.Segment{}` keeps only: `id, track_id, name, offset_tick, notes, extra`.
+After M6, `%Equinox.Domain.Segment{}` keeps only: `id, track_id, name, offset_tick, notes, extra`.
 Removed: `curves`, `synth_override`, `graph`, `cluster`.
 
 A legacy loader path in `Project.from_json/1` should tolerate old payloads containing the removed fields (skip them or emit a one-time migration notice).
@@ -292,6 +292,43 @@ Configurator.new(
 ```
 
 Kernel does not ship a reference Hook. M6 delivers the contract and payload shape; the first concrete Hook lives outside Kernel (userland or a sibling package).
+
+## Refactor In Progress — Vibe Cleanup + M6 Phase 4 Prep
+
+Ongoing cleanup sweep; pick up here on resume.
+
+### Done
+
+- `Equinox.Util.Id.generate/0` extracted; 5 duplicated `generate_id/0` call sites replaced.
+- `Equinox.Util.Attrs.normalize/1` extracted (string→atom direction only). Slicer's reverse-direction `segment_ids` key normalization is inlined at the call site on purpose — it is a `slice_id → segment_id` map, not attrs.
+- `%Equinox.Editor.Segment{}` relocated to `%Equinox.Domain.Segment{}`; all references updated (kernel, tests, `ui_shell`).
+- `Equinox.Util.Attrs` moduledoc carries a TODO about atom-table leak via `String.to_atom/1` (revisit with `to_existing_atom/1` or a field whitelist).
+
+### Open — Segment Shrinkage (M6 Phase 4 early)
+
+Target: remove `curves / synth_override / graph / cluster` from `%Segment{}`. Held back pending Worker's architectural review.
+
+When resuming:
+
+- Shrink `defstruct`, `@type t`, `new/1`, `from_attrs/1`, and the `Jason.Encoder` impl in `kernel/lib/equinox/domain/segment.ex`.
+- Tolerate reads in `Equinox.Kernel.Compiler` temporarily via `Map.get(segment, :graph, %Graph{})` / `Map.get(segment, :cluster, %Graph.Cluster{})` / `Map.get(segment, :data_interventions, %{})`. Mark each such site with a comment pointing to M6 Phase 4 / `SegmentContext`. Current concrete sites:
+  - `compiler.ex:77` — `Enum.group_by(resolved_items, &{&1.graph, &1.segment.cluster})`
+  - `compiler.ex` `resolve_effective_state/1` — reads `segment.graph`
+  - `compiler.ex` `apply_bundles` closure — reads `segment.data_interventions` (already `Map.get/3`, keep)
+- `Project.from_json/1`: drop removed fields silently, `Logger.debug/1` a one-line notice. Do not crash on legacy payloads.
+- If tests depend on the removed fields, list them for review before deleting.
+
+### Known Smells Not Yet Addressed
+
+Ordered roughly by priority; do not fix opportunistically without a matching commit plan.
+
+1. `Track.remove_segment/2` and `Project.remove_track/2` fail silently — contract mismatch with §5.
+2. `Editor.add_note/4` hard-matches `{:ok, _} = Track.update_segment(...)` — violates §5.
+3. Comment language mixed: `Equinox.Editor` module is all English (AI smell), rest is Chinese. Standardize to Chinese.
+4. `Equinox.Editor` misnamed — does not emit `History.Operation`; `History` is effectively orphaned. Needs an architectural decision before any rename/merge.
+5. `Session.Server.handle_info/2` only handles task success; failures get swallowed by `Logger.warning("unknown message")`. Bug.
+6. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
+7. `Compiler.compile_cache` typespec disagrees with actual shape.
 
 ## Next Session Starting Point
 
