@@ -12,15 +12,17 @@ Equinox 是基于 Orchid 源于开发者高中时想法（节点编辑图+可编
 - **Quincunx**： 验证了前端友好的 Node-Edge-based 工作流的可行性以及整合了 Orchid 生态一系列的插件。 
 - **KinoBayanroll**： 花费了开发者数十美元（中转站按量计费 SOTA 模型的开销）已验证 Svelte5 + SvelteFlow 的可行性的一个基于 Livebook 的 Kino 插件。
 
-Equinox 现在按类似 Nx 的结构拆为 `kernel/` 与 `ui_shell/`。
+Equinox 现在按类似 Nx 的结构拆为 `/domain` 、 `kernel/` 与 `ui_shell/`。
 
 ## 目录
 
 ```text
-kernel/    # 可独立运行的编辑器内核、领域模型、Orchid 调度
+domain/    # 领域模型本体
+kernel/    # 可独立运行的编辑器内核、调用领域模型、整合 Orchid 调度
 ui_shell/  # Phoenix LiveView shell + Svelte 5 前端岛
 ```
 
+- **Domain**：无外部依赖的纯领域模型。
 - **Kernel**：纯编辑器内核、会话、项目模型、渲染调度。
 - **UI Shell**：托管浏览器界面，通过本地 path dep 依赖 `kernel/`。
 - 根目录仅保留仓库级文档与约定，不承载运行时代码。
@@ -31,6 +33,13 @@ ui_shell/  # Phoenix LiveView shell + Svelte 5 前端岛
 - [Node.js](https://nodejs.org/) （前端资源）
 
 ## 开发
+
+### Domain
+
+```bash
+cd domain
+mix test
+```
 
 ### Kernel
 
