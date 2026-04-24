@@ -1,17 +1,17 @@
 # Mix 写入编译产物的目录。
-_build/
+/_build/
 
 # 如果运行 "mix test --cover"，覆盖率报告会生成在这里。
-cover/
+/cover/
 
 # Mix 下载依赖源码的目录。
-deps/
+/deps/
 
 # 第三方依赖（如 ExDoc）生成文档的输出目录。
-doc/
+/doc/
 
 # 忽略 .fetch 文件，方便本地编辑项目依赖。
-.fetch
+/.fetch
 
 # 如果 VM 崩溃，会生成转储文件，同样忽略。
 erl_crash.dump
@@ -20,18 +20,17 @@ erl_crash.dump
 *.ez
 
 # 临时文件，例如来自测试。
-tmp/
+/tmp/
 
 # 忽略包tar包（通过 "mix hex.build" 构建）。
 equinox*.tar
 
 # 忽略构建工具生成的资源文件。
-/ui_shell/priv/static/assets/
+priv/static/assets/
 
 # 忽略摘要资源缓存。
-/ui_shell/priv/static/cache_manifest.json
+priv/static/cache_manifest.json
 
 # 如果使用 Node.js/npm，需要忽略这些。
 npm-debug.log
-node_modules/
-/ui_shell/assets/node_modules/
+assets/node_modules/
