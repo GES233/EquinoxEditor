@@ -1,5 +1,7 @@
 defmodule EquinoxDomain.Model do
   @moduledoc """
+  领域模型。
+
   通过 `use EquinoxDomain.Model, keys: [...], id_prefix: "xxx"` 自动生成：
 
   - 结构体定义
@@ -14,6 +16,8 @@ defmodule EquinoxDomain.Model do
     id_prefix = Keyword.get(opts, :id_prefix)
 
     quote do
+      import EquinoxDomain.Helpers
+
       @keys unquote(keys)
       defstruct @keys
 
@@ -21,67 +25,34 @@ defmodule EquinoxDomain.Model do
 
       @doc """
       根据属性创建新的结构体。
+
       `attrs` 可以是 map 或 keyword list，键可以使用原子或字符串。
       如果未提供 `:id`，会自动调用 `generate_id/0` 生成 ID。
       """
       def new(attrs) do
         attrs
         |> normalize_attrs(@keys)
-        |> Map.pop(:id, generate_id())
+        |> Map.pop(:id, generate_id(unquote(id_prefix)))
         |> then(fn {id, attrs} -> struct!(__MODULE__, Map.merge(attrs, %{id: id})) end)
       end
 
       @doc """
-      修改已有结构体的属性（不能修改 `:id`）。
+      修改已有结构体的属性（不允许修改 `:id`）。
+
       `attrs` 格式同 `new/1`。
       """
       def update(note, attrs) do
-        {_id, attrs} =
+        {id, attrs} =
           attrs
           |> normalize_attrs(@keys)
           |> Map.pop(:id)
 
-        Map.merge(note, attrs)
-      end
-
-      # ---- 私有辅助函数 ----
-
-      defp normalize_attrs(map_or_kw, fields) do
-        allowed_set =
-          MapSet.new(fields, fn
-            {k, _} when is_atom(k) ->
-              Atom.to_string(k)
-
-            k when is_atom(k) ->
-              Atom.to_string(k)
-
-            other ->
-              raise ArgumentError, "field must be atom or {atom, default}, got: #{inspect(other)}"
-          end)
-
-        for {k, v} <- map_or_kw,
-            key_str = if(is_atom(k), do: Atom.to_string(k), else: k),
-            key_str in allowed_set,
-            into: %{} do
-          {String.to_existing_atom(key_str), v}
-        end
-      end
-
-      unquote(
-        if id_prefix do
-          quote do
-            defp generate_id do
-              unquote(id_prefix) <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-            end
-          end
+        with nil <- id do
+          {:ok, Map.merge(note, attrs)}
         else
-          quote do
-            defp generate_id do
-              Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-            end
-          end
+          _ -> {:error, :id_immutable}
         end
-      )
+      end
     end
   end
 end
