@@ -4,7 +4,8 @@ defmodule EquinoxDomain.Project do
     :name,
     tempo_map: [],
     time_sig_map: [],
-    tracks: %{},   # %{track_id => Track}
+    # %{track_id => Track}
+    tracks: %{},
     metadata: %{}
   ]
 end
