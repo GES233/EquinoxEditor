@@ -10,7 +10,5 @@ defmodule EquinoxDomain.MixProject do
     ]
   end
 
-  def application do
-    []
-  end
+  def application, do: []
 end
