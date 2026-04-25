@@ -73,7 +73,8 @@ defmodule EquinoxDomain.Note do
   end
 
   # 修改附属的元数据
-  # update_metadata
+  # def update_metadata(note, new_metadata_kw)
+    # 通过合并并入 current_metadata
 
   # 根据部分片段切开音符
   # split(note, split_tick) -> {:ok, [note_1, note_2]} | err

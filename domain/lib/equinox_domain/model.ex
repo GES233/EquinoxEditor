@@ -8,7 +8,7 @@ defmodule EquinoxDomain.Model do
   - `new/1`
   - `update/2`
 
-  以及必要的辅助函数（属性标准化、ID 生成）。
+  以及加载必要的辅助函数（属性标准化、ID 生成）。
   """
 
   defmacro __using__(opts) do
@@ -16,7 +16,7 @@ defmodule EquinoxDomain.Model do
     id_prefix = Keyword.get(opts, :id_prefix)
 
     quote do
-      import EquinoxDomain.Helpers
+      import EquinoxDomain.Helpers, only: [generate_id: 1, normalize_attrs: 2]
 
       @keys unquote(keys)
       defstruct @keys
