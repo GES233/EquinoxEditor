@@ -10,6 +10,13 @@ defmodule EquinoxDomain.Model do
 
   以及加载必要的辅助函数（属性标准化、ID 生成）。
   """
+  defmodule Pickle do
+    @moduledoc "序列化与反序列化的行为。"
+
+    @callback serialize(term(), keyword()) :: {:ok, term()} | {:error, term()}
+
+    @callback deserialize(term(), keyword()) :: {:ok, term()} | {:error, term()}
+  end
 
   defmacro __using__(opts) do
     keys = Keyword.fetch!(opts, :keys)

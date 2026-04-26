@@ -5,7 +5,7 @@ defmodule EquinoxDomain.Note do
   alias EquinoxDomain.{Util.ID, Timeline.Tick, Key}
 
   use EquinoxDomain.Model,
-    keys: [:id, :start_tick, :duration_tick, :key, :lyric, :slice_flag, :annotation, extra: %{}],
+    keys: [:id, :start_tick, :duration_tick, :key, :lyric, :slice_flag, :annotation, metadata: %{}],
     id_prefix: "Note_"
 
   # 类型需要自己写
@@ -17,13 +17,13 @@ defmodule EquinoxDomain.Note do
           lyric: String.t() | nil,
           slice_flag: term(),
           annotation: String.t() | nil,
-          extra: %{}
+          metadata: %{}
         }
 
   # ---- 业务函数 ----
   # 业务函数返回 {:ok, result} 或 {:error, reason}
 
-  # 拖拽音符到新的高度与 start_tick
+  @doc "拖拽音符到新的高度与 start_tick"
   @spec drag_note(
           t(),
           %{optional(:start_tick) => Tick.t(), optional(:key) => Key.t()}
@@ -42,7 +42,7 @@ defmodule EquinoxDomain.Note do
     end
   end
 
-  # 拖拽时长
+  @doc "拖拽时长"
   @spec drag_duration(t(), non_neg_integer()) :: {:ok, t()} | {:error, term()}
   def drag_duration(note, new_duraion) do
     with true <- new_duraion >= 0 do
@@ -52,7 +52,7 @@ defmodule EquinoxDomain.Note do
     end
   end
 
-  # 修改歌词
+  @doc "修改歌词"
   @spec update_lyric(t(), String.t() | nil) :: {:ok, t()} | {:error, term()}
   def update_lyric(note, new_lyric) do
     case new_lyric do
@@ -62,7 +62,7 @@ defmodule EquinoxDomain.Note do
     end
   end
 
-  # 修改标注
+  @doc "修改标注"
   @spec update_annotation(t(), String.t() | nil) :: {:ok, t()} | {:error, term()}
   def update_annotation(note, new_annotation) do
     case new_annotation do
@@ -76,15 +76,30 @@ defmodule EquinoxDomain.Note do
   # def update_metadata(note, new_metadata_kw)
     # 通过合并并入 current_metadata
 
+  # 移除元数据（应用于插件生命周期结束或序列化）
+  def remove_metadata(note, :all), do: %{note | metadata: %{}}
+  # def remove_metadata(note, metadata_keys) when is_list(metadata_keys) do
+
   # 根据部分片段切开音符
   # split(note, split_tick) -> {:ok, [note_1, note_2]} | err
 
-  # 合并同音高相邻的音符 => 怎么界定「相邻」？
+  # 合并同音高相邻的音符 => 怎么界定「相邻」？在 opts 内设定「容忍 gap tick」
   # merge(note1, note2, opts) -> {:ok, note} | err
 
   # ---- 序列化与反序列化 ---
+  # @behaviour EquinoxDomain.Model.Pickle
 
-  # serialize
+  # TODO: tick 以及 key 等类型需要实现对应的协议
+  @spec serialize(t()) :: {:ok, map()}
+  def serialize(note) do
+    %{
+      "type" => "Note",
+      "id" => note.id,
+      "start" => note.start_tick,
+      "duration" => note.duration_tick,
+      "key" => note.key,
+    }
+  end
 
-  # deserialze
+  # @spec deserialze(map()) :: {:ok, t()} | {:error, term()}
 end
