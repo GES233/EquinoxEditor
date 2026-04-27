@@ -17,6 +17,8 @@ defmodule EquinoxDomain.Timeline do
   # │  特点：送给音频引擎的最终坐标                   │
   # └─────────────────────────────────────────────────┘
 
+  @type physical_time :: float()
+
   defmodule Tick do
     # 刻
     @type t :: non_neg_integer()
@@ -25,15 +27,6 @@ defmodule EquinoxDomain.Timeline do
     @ticks_per_quarter_note 480
 
     def ticks_per_quarter_note, do: @ticks_per_quarter_note
-  end
-
-  defmodule TempoSegment do
-    @moduledoc "速度段的行为定义，支持阶梯、线性、甚至曲线。"
-
-    @callback duration_sec(segment :: struct()) :: float()
-    @callback tick_to_sec(segment :: struct(), tick_offset :: non_neg_integer()) :: float()
-
-    # integrate(start_tick, end_tick, tempo_fn)
   end
 
   defmodule TimeSig do
