@@ -1,6 +1,6 @@
 defmodule DomainTest do
   use ExUnit.Case
-  doctest Domain
+  doctest EquinoxDomain
 
   test "greets the world" do
     assert 1 + 1 == 2

@@ -5,7 +5,16 @@ defmodule EquinoxDomain.Note do
   alias EquinoxDomain.{Util.ID, Timeline.Tick, Key}
 
   use EquinoxDomain.Model,
-    keys: [:id, :start_tick, :duration_tick, :key, :lyric, :slice_flag, :annotation, metadata: %{}],
+    keys: [
+      :id,
+      :start_tick,
+      :duration_tick,
+      :key,
+      :lyric,
+      :slice_flag,
+      :annotation,
+      metadata: %{}
+    ],
     id_prefix: "Note_"
 
   # 类型需要自己写
@@ -74,7 +83,7 @@ defmodule EquinoxDomain.Note do
 
   # 修改附属的元数据
   # def update_metadata(note, new_metadata_kw)
-    # 通过合并并入 current_metadata
+  # 通过合并并入 current_metadata
 
   # 移除元数据（应用于插件生命周期结束或序列化）
   def remove_metadata(note, :all), do: %{note | metadata: %{}}
@@ -86,7 +95,7 @@ defmodule EquinoxDomain.Note do
   # 合并同音高相邻的音符 => 怎么界定「相邻」？在 opts 内设定「容忍 gap tick」
   # merge(note1, note2, opts) -> {:ok, note} | err
 
-  # ---- 序列化与反序列化 ---
+  # ---- 序列化与反序列化 ----
   # @behaviour EquinoxDomain.Model.Pickle
 
   # TODO: tick 以及 key 等类型需要实现对应的协议
@@ -97,9 +106,11 @@ defmodule EquinoxDomain.Note do
       "id" => note.id,
       "start" => note.start_tick,
       "duration" => note.duration_tick,
-      "key" => note.key,
+      "key" => note.key
     }
   end
 
   # @spec deserialze(map()) :: {:ok, t()} | {:error, term()}
+
+  # ---- 作为音符的属性 ----
 end

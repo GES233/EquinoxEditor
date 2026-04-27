@@ -27,24 +27,38 @@ defmodule EquinoxDomain.Timeline do
     def ticks_per_quarter_note, do: @ticks_per_quarter_note
   end
 
-  defmodule TempoSegments do
-    # tick 与现实时间的转换
+  defmodule TempoSegment do
+    @moduledoc "速度段的行为定义，支持阶梯、线性、甚至曲线。"
 
-    defstruct [:start, :end, :duraing_tempo_fn]
-
-    # 先预留个模块，后续可能适配以下情形：
-    # 全局一致
-    # 阶梯变换
-    # 渐变速度/曲线速度
+    @callback duration_sec(segment :: struct()) :: float()
+    @callback tick_to_sec(segment :: struct(), tick_offset :: non_neg_integer()) :: float()
 
     # integrate(start_tick, end_tick, tempo_fn)
   end
 
   defmodule TimeSig do
+    @moduledoc "拍号系统的领域模型"
+
+    alias EquinoxDomain.Timeline.Tick, as: Tk
     # 时间标注/拍号/etc.
 
-    # {a, b} | {a, b, ...} （混合拍子） | :san（散拍子）
+    @type standard :: {:standard, numerator :: pos_integer(), denominator :: pos_integer()}
+    @type compound :: {:compound, groupings :: [pos_integer()], denominator :: pos_integer()}
+    # 散拍子
+    @type free :: :san
 
-    # 根据拍子以及 Tick.ticks_per_quarter_note/0 得到本小节的 tick 。
+    @type t :: standard() | compound() | free()
+
+    @doc "获取一个完整小节的 Tick 长度"
+    def ticks_per_bar({:standard, num, den}) do
+      div(Tk.ticks_per_quarter_note() * 4 * num, den)
+    end
+
+    def ticks_per_bar({:compound, groupings, den}) do
+      num = Enum.sum(groupings)
+      div(Tk.ticks_per_quarter_note() * 4 * num, den)
+    end
+
+    def ticks_per_bar(:san), do: nil
   end
 end
