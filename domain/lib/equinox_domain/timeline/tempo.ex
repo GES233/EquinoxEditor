@@ -46,4 +46,19 @@ defmodule EquinoxDomain.Timeline.Tempo do
 
   # 应用曲线
   defmodule Curve, do: nil
+
+  # ---- 工具函数 ----
+  # 直接应用 Tempo.blabla(segment, ticks)
+
+  @spec tick_to_sec(Segment.segment(), Tick.t()) :: Segment.duration()
+  def tick_to_sec(segment, ticks) do
+    impl(segment).tick_to_sec(segment, ticks)
+  end
+
+  @spec duration_sec(Segment.segment(), Tick.t()) :: Segment.duration()
+  def duration_sec(segment) do
+    impl(segment).duration_sec(segment)
+  end
+
+  defp impl(%module{}), do: module
 end

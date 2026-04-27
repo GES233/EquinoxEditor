@@ -1,10 +1,10 @@
-defmodule EquinoxDomain.Note do
+defmodule EquinoxDomain.Score.Note do
   @moduledoc """
   有关音符的领域模型。
   """
-  alias EquinoxDomain.{Util.ID, Timeline.Tick, Key}
+  alias EquinoxDomain.{Util.ID, Timeline.Tick, Score.Key}
 
-  use EquinoxDomain.Model,
+  use EquinoxDomain.Util.Model,
     keys: [
       :id,
       :start_tick,
@@ -96,7 +96,7 @@ defmodule EquinoxDomain.Note do
   # merge(note1, note2, opts) -> {:ok, note} | err
 
   # ---- 序列化与反序列化 ----
-  # @behaviour EquinoxDomain.Model.Pickle
+  # @behaviour EquinoxDomain.Util.Model.Pickle
 
   # TODO:  key 等类型需要实现对应的协议
   @spec serialize(t()) :: {:ok, map()}

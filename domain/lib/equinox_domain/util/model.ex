@@ -1,8 +1,8 @@
-defmodule EquinoxDomain.Model do
+defmodule EquinoxDomain.Util.Model do
   @moduledoc """
   领域模型。
 
-  通过 `use EquinoxDomain.Model, keys: [...], id_prefix: "xxx"` 自动生成：
+  通过 `use EquinoxDomain.Util.Model, keys: [...], id_prefix: "xxx"` 自动生成：
 
   - 结构体定义
   - `new/1`
