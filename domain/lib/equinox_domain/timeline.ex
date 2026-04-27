@@ -31,10 +31,10 @@ defmodule EquinoxDomain.Timeline do
     def ticks_per_quarter_note, do: @ticks_per_quarter_note
 
     @impl true
-    def serialize(tick, _), do: tick
+    def serialize(tick), do: tick
 
     @impl true
-    def deserialize(tick, _), do: tick
+    def deserialize(tick), do: tick
   end
 
   defmodule TimeSig do
