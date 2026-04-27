@@ -2,15 +2,9 @@
 
 [English](README.en.md)
 
-Equinox 是基于 Orchid 源于开发者高中时想法（节点编辑图+可编辑/介入数据）的概念验证。
+Equinox 是一个基于 Elixir/Phoenix LiveView 与 Svelte 5 的歌声合成编辑器原型，目标是探索可视化节点调度、增量生成缓存、外部数据介入和可编辑中间参数在 SVS/DAW-like 工作流中的结合。
 
-因为技术栈，此应用会成为以 WebUI 为主的一个类似于 OpenUTAU 的轻（jian）量（lou）应用。
-
-本项目是以下几个项目精神上的继承者：
-
-- **QyEditor**： 本项目最早的原型，计划整合贝塞尔曲线与 DAG 自组织与调度。
-- **Quincunx**： 验证了前端友好的 Node-Edge-based 工作流的可行性以及整合了 Orchid 生态一系列的插件。 
-- **KinoBayanroll**： 花费了开发者数十美元（中转站按量计费 SOTA 模型的开销）已验证 Svelte5 + SvelteFlow 的可行性的一个基于 Livebook 的 Kino 插件。
+它基于 Orchid 生态构建渲染与调度内核，并在前端提供类似 OpenUTAU 的轻量级 WebUI。
 
 Equinox 现在按类似 Nx 的结构拆为 `/domain` 、 `kernel/` 与 `ui_shell/`。
 
