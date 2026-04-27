@@ -1,8 +1,8 @@
-defmodule DomainTest do
+defmodule EquinoxDomainTest do
   use ExUnit.Case
   doctest EquinoxDomain
 
-  test "greets the world" do
+  test "模板" do
     assert 1 + 1 == 2
   end
 end

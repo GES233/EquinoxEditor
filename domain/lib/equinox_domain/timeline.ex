@@ -20,6 +20,8 @@ defmodule EquinoxDomain.Timeline do
   @type physical_time :: float()
 
   defmodule Tick do
+    @behaviour EquinoxDomain.Model.Pickle
+
     # 刻
     @type t :: non_neg_integer()
 
@@ -27,6 +29,12 @@ defmodule EquinoxDomain.Timeline do
     @ticks_per_quarter_note 480
 
     def ticks_per_quarter_note, do: @ticks_per_quarter_note
+
+    @impl true
+    def serialize(tick, _), do: tick
+
+    @impl true
+    def deserialize(tick, _), do: tick
   end
 
   defmodule TimeSig do

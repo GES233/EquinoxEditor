@@ -98,14 +98,14 @@ defmodule EquinoxDomain.Note do
   # ---- 序列化与反序列化 ----
   # @behaviour EquinoxDomain.Model.Pickle
 
-  # TODO: tick 以及 key 等类型需要实现对应的协议
+  # TODO:  key 等类型需要实现对应的协议
   @spec serialize(t()) :: {:ok, map()}
   def serialize(note) do
     %{
       "type" => "Note",
       "id" => note.id,
-      "start" => note.start_tick,
-      "duration" => note.duration_tick,
+      "start" => Tick.serialize(note.start_tick),
+      "duration" => Tick.serialize(note.duration_tick),
       "key" => note.key
     }
   end
@@ -113,4 +113,8 @@ defmodule EquinoxDomain.Note do
   # @spec deserialze(map()) :: {:ok, t()} | {:error, term()}
 
   # ---- 作为音符的属性 ----
+  # Note:
+  # 【关于时长】
+  # 需要和 merge/3 一样，引入容忍程度
+  # 以兼容手绘音符与从乐谱转换的音符的差异
 end

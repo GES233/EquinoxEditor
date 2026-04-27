@@ -1,4 +1,5 @@
 defmodule EquinoxDomain.Timeline.Tempo do
+  @moduledoc false
   alias EquinoxDomain.Timeline.Tick
 
   defmodule Segment do
