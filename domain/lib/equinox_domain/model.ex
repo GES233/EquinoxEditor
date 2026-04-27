@@ -12,10 +12,11 @@ defmodule EquinoxDomain.Model do
   """
   defmodule Pickle do
     @moduledoc "序列化与反序列化的行为。"
+    # 先不考虑 options 了
 
-    @callback serialize(term(), keyword()) :: {:ok, term()} | {:error, term()}
+    @callback serialize(term()) :: {:ok, term()} | {:error, term()}
 
-    @callback deserialize(term(), keyword()) :: {:ok, term()} | {:error, term()}
+    @callback deserialize(term()) :: {:ok, term()} | {:error, term()}
   end
 
   defmacro __using__(opts) do
