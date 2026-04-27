@@ -2,9 +2,9 @@ defmodule EquinoxDomain.Score.Note do
   @moduledoc """
   有关音符的领域模型。
   """
-  alias EquinoxDomain.{Util.ID, Timeline.Tick, Score.Key}
+  alias EquinoxDomain.{Util.ID, Util.Model, Timeline.Tick, Score.Key}
 
-  use EquinoxDomain.Util.Model,
+  use Model,
     keys: [
       :id,
       :start_tick,
@@ -98,19 +98,25 @@ defmodule EquinoxDomain.Score.Note do
   # ---- 序列化与反序列化 ----
   # @behaviour EquinoxDomain.Util.Model.Pickle
 
-  # TODO:  key 等类型需要实现对应的协议
-  @spec serialize(t()) :: {:ok, map()}
+  @spec serialize(t()) :: {:ok, Model.Pickle.serialized()} | {:error, term()}
   def serialize(note) do
-    %{
-      "type" => "Note",
-      "id" => note.id,
-      "start" => Tick.serialize(note.start_tick),
-      "duration" => Tick.serialize(note.duration_tick),
-      "key" => note.key
-    }
+    with {:ok, start_tick} <- Tick.serialize(note.start_tick),
+         {:ok, duration_tick} <- Tick.serialize(note.duration_tick) do
+      # TODO:
+      # key 等类型需要实现对应的协议
+      # 确定 slice_flag 以及 matadata
+      {:ok,
+       %{
+         "type" => "Note",
+         "id" => note.id,
+         "start" => start_tick,
+         "duration" => duration_tick,
+         "key" => note.key
+       }}
+    end
   end
 
-  # @spec deserialze(map()) :: {:ok, t()} | {:error, term()}
+  # @spec deserialze(Model.Pickle.serialized()) :: {:ok, t()} | {:error, term()}
 
   # ---- 作为音符的属性 ----
   # Note:

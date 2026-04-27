@@ -10,13 +10,26 @@ defmodule EquinoxDomain.Util.Model do
 
   以及加载必要的辅助函数（属性标准化、ID 生成）。
   """
+
   defmodule Pickle do
     @moduledoc "序列化与反序列化的行为。"
     # 先不考虑 options 了
 
-    @callback serialize(term()) :: {:ok, term()} | {:error, term()}
+    # 待序列化的结构体或数据
+    @type model :: term()
 
-    @callback deserialize(term()) :: {:ok, term()} | {:error, term()}
+    @typedoc "可持久化的基本标量。"
+    @type scalar :: nil | boolean() | integer() | float() | binary()
+
+    @typedoc "可序列化结构。"
+    @type serialized ::
+            scalar()
+            | [serialized()]
+            | %{optional(binary() | atom()) => serialized()}
+
+    @callback serialize(model()) :: {:ok, serialized()} | {:error, term()}
+
+    @callback deserialize(serialized()) :: {:ok, model()} | {:error, term()}
   end
 
   defmacro __using__(opts) do
@@ -49,14 +62,14 @@ defmodule EquinoxDomain.Util.Model do
 
       `attrs` 格式同 `new/1`。
       """
-      def update(note, attrs) do
+      def update(model, attrs) do
         {id, attrs} =
           attrs
           |> normalize_attrs(@keys)
           |> Map.pop(:id)
 
         with nil <- id do
-          {:ok, Map.merge(note, attrs)}
+          {:ok, struct!(model, attrs)}
         else
           _ -> {:error, :id_immutable}
         end

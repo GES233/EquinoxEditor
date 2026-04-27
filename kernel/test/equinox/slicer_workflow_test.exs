@@ -51,7 +51,9 @@ defmodule Equinox.SlicerWorkflowTest do
     ]
 
     repaired_initial_notes = Slicer.repair_slice_flags(initial_notes, 960)
-    [first_segment] = Slicer.materialize_segments("track-1", repaired_initial_notes, min_rest_ticks: 960)
+
+    [first_segment] =
+      Slicer.materialize_segments("track-1", repaired_initial_notes, min_rest_ticks: 960)
 
     assert first_segment.offset_tick == 0
     assert Enum.map(first_segment.notes, & &1.id) == ["n1"]

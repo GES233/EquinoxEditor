@@ -99,12 +99,14 @@ defmodule EquinoxWeb.EditorLive.ArrangerComponent do
       |> maybe_put(:solo, Map.get(props, "solo"))
 
     with {:ok, project} <- maybe_update_track_mix(project, track_id, mix_updates),
-         {:ok, project} <- maybe_update_track_position(project, track_id, Map.get(props, "position")) do
+         {:ok, project} <-
+           maybe_update_track_position(project, track_id, Map.get(props, "position")) do
       {:ok, project}
     end
   end
 
-  defp maybe_update_track_mix(project, _track_id, updates) when map_size(updates) == 0, do: {:ok, project}
+  defp maybe_update_track_mix(project, _track_id, updates) when map_size(updates) == 0,
+    do: {:ok, project}
 
   defp maybe_update_track_mix(project, track_id, updates) do
     Editor.update_track_mix(project, track_id, updates)

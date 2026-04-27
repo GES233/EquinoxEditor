@@ -14,14 +14,24 @@ defmodule EquinoxDomain.Helpers do
       end)
 
     for {k, v} <- map_or_kw,
-        k in allowed_set,
+        normalized_key = normalize_key(k),
+        normalized_key in allowed_set,
         into: %{} do
-      case k do
-        k when is_atom(k) -> {k, v}
-        k when is_binary(k) -> {String.to_existing_atom(k), v}
-      end
+      {normalized_key, v}
     end
   end
+
+  defp normalize_key(k) when is_atom(k), do: k
+
+  defp normalize_key(k) when is_binary(k) do
+    try do
+      String.to_existing_atom(k)
+    rescue
+      ArgumentError -> nil
+    end
+  end
+
+  defp normalize_key(_), do: nil
 
   # 仅用于 Entity
   def generate_id(id_prefix) do

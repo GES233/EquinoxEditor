@@ -171,10 +171,9 @@ defmodule Equinox.Kernel.OrchidFlowTest do
 
     storage = Storage.new()
     task_supervisor = start_supervised!({Task.Supervisor, name: :orchid_flow_task_supervisor})
+
     {context, plan} =
-      Context.dispatch_to_plans(
-        Context.new(session_id, project, storage, task_supervisor)
-      )
+      Context.dispatch_to_plans(Context.new(session_id, project, storage, task_supervisor))
 
     assert %Planner.Plan{
              total_tasks: 1,

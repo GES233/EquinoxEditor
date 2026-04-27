@@ -87,7 +87,12 @@ defmodule Equinox.Domain.SlicerTest do
 
     test "reuses provided segment ids by slice id" do
       notes = [
-        Note.new(%{id: "n1", start_tick: 0, duration_tick: 480, slice_flag: {:on_start, "slice-a"}}),
+        Note.new(%{
+          id: "n1",
+          start_tick: 0,
+          duration_tick: 480,
+          slice_flag: {:on_start, "slice-a"}
+        }),
         Note.new(%{id: "n2", start_tick: 480, duration_tick: 480, slice_flag: :on_end})
       ]
 

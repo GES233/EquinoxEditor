@@ -5,10 +5,10 @@ defmodule EquinoxWeb.EditorLive do
   alias EquinoxUiShell.SessionHost
 
   @graph_translator Application.compile_env(
-                    :equinox_ui_shell,
-                    :graph_translator,
-                    EquinoxUiShell.SvelteFlowGraphTranslator
-                  )
+                      :equinox_ui_shell,
+                      :graph_translator,
+                      EquinoxUiShell.SvelteFlowGraphTranslator
+                    )
 
   def mount(_params, _session, socket) do
     if connected?(socket) do

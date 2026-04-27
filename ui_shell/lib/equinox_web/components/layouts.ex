@@ -6,5 +6,5 @@ defmodule EquinoxWeb.Layouts do
 
   # 将 layouts/* 中的所有文件嵌入此模块。
   # 默认的 root.html.heex 文件包含应用程序的 HTML 框架，即 HTML 标头和其他静态内容
-  embed_templates "layouts/*"
+  embed_templates("layouts/*")
 end

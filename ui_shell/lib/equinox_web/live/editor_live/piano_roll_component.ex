@@ -49,7 +49,8 @@ defmodule EquinoxWeb.EditorLive.PianoRollComponent do
     Note.new(%{
       id: Map.get(note_params, "id"),
       start_tick: Map.get(note_params, "start_tick", 0),
-      duration_tick: Map.get(note_params, "duration_tick", Map.get(note_params, "length_tick", 480)),
+      duration_tick:
+        Map.get(note_params, "duration_tick", Map.get(note_params, "length_tick", 480)),
       key: Map.get(note_params, "key", Map.get(note_params, "pitch", 60)),
       lyric: Map.get(note_params, "lyric", "la"),
       phoneme: Map.get(note_params, "phoneme"),

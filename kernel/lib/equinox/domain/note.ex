@@ -71,7 +71,8 @@ defmodule Equinox.Domain.Note do
     end
   end
 
-  @spec split(t(), integer(), map() | keyword()) :: {:ok, {t(), t()}} | {:error, :invalid_split_tick}
+  @spec split(t(), integer(), map() | keyword()) ::
+          {:ok, {t(), t()}} | {:error, :invalid_split_tick}
   def split(%__MODULE__{} = note, split_tick, attrs \\ %{}) when is_integer(split_tick) do
     attrs = Equinox.Util.Attrs.normalize(attrs)
 
@@ -153,7 +154,9 @@ defmodule Equinox.Domain.Note do
     end
   end
 
-  defp normalize_slice_flag({:on_start, slice_id}) when is_binary(slice_id), do: {:on_start, slice_id}
+  defp normalize_slice_flag({:on_start, slice_id}) when is_binary(slice_id),
+    do: {:on_start, slice_id}
+
   defp normalize_slice_flag(:on_end), do: :on_end
   defp normalize_slice_flag(nil), do: nil
 

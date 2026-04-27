@@ -18,9 +18,13 @@ defmodule EquinoxUiShell.SessionHostTest do
 
     assert {:ok, server_pid} = Session.resolve(session_id)
     assert is_pid(server_pid)
-    assert %Project{name: "UI Shell Session"} = GenServer.call(Session.server(session_id), {:get_project})
 
-    assert {:error, {:already_started, _}} = SessionHost.start_session(session_id, project: project)
+    assert %Project{name: "UI Shell Session"} =
+             GenServer.call(Session.server(session_id), {:get_project})
+
+    assert {:error, {:already_started, _}} =
+             SessionHost.start_session(session_id, project: project)
+
     assert :ok = SessionHost.stop_session(session_id)
     assert {:error, :session_not_found} = Session.resolve(session_id)
   end

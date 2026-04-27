@@ -10,42 +10,46 @@ defmodule EquinoxWeb.Endpoint do
     same_site: "Lax"
   ]
 
-  socket "/live", Phoenix.LiveView.Socket,
+  socket("/live", Phoenix.LiveView.Socket,
     websocket: [connect_info: [session: @session_options]],
     longpoll: [connect_info: [session: @session_options]]
+  )
 
   # 在生产环境下，如果你在运行 phx.digest 你应该把 gzip 设为真。
   #
   # 当代码重新加载被禁用时（例如生产环境），将启用 "gzip"
   # 选项来提供通过运行 "phx.digest" 生成的压缩静态文件。
-  plug Plug.Static,
+  plug(Plug.Static,
     at: "/",
     from: :equinox_ui_shell,
     gzip: not code_reloading?,
     only: EquinoxWeb.static_paths(),
     raise_on_missing_only: code_reloading?
+  )
 
   # 代码重载能够在你的端点的 :code_reloader 配置被显式地启用。
   if code_reloading? do
-    socket "/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket
-    plug Phoenix.LiveReloader
-    plug Phoenix.CodeReloader
+    socket("/phoenix/live_reload/socket", Phoenix.LiveReloader.Socket)
+    plug(Phoenix.LiveReloader)
+    plug(Phoenix.CodeReloader)
   end
 
-  plug Phoenix.LiveDashboard.RequestLogger,
+  plug(Phoenix.LiveDashboard.RequestLogger,
     param_key: "request_logger",
     cookie_key: "request_logger"
+  )
 
-  plug Plug.RequestId
-  plug Plug.Telemetry, event_prefix: [:phoenix, :endpoint]
+  plug(Plug.RequestId)
+  plug(Plug.Telemetry, event_prefix: [:phoenix, :endpoint])
 
-  plug Plug.Parsers,
+  plug(Plug.Parsers,
     parsers: [:urlencoded, :multipart, :json],
     pass: ["*/*"],
     json_decoder: Phoenix.json_library()
+  )
 
-  plug Plug.MethodOverride
-  plug Plug.Head
-  plug Plug.Session, @session_options
-  plug EquinoxWeb.Router
+  plug(Plug.MethodOverride)
+  plug(Plug.Head)
+  plug(Plug.Session, @session_options)
+  plug(EquinoxWeb.Router)
 end
