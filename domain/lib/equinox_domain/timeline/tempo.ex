@@ -2,6 +2,9 @@ defmodule EquinoxDomain.Timeline.Tempo do
   @moduledoc false
   alias EquinoxDomain.Timeline.Tick
 
+  @type tempo_event :: {Tick.t(), struct()}
+  @type tempo_events :: [tempo_event()]
+
   defmodule Segment do
     @moduledoc "速度段的行为定义，支持阶梯、线性、甚至曲线。"
 

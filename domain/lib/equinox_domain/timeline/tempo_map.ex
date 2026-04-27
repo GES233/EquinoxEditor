@@ -12,20 +12,21 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   """
 
   alias EquinoxDomain.{Timeline, Timeline.Tick}
-  alias EquinoxDomain.Timeline.Tempo.Segment, as: TempoSegment
+  alias EquinoxDomain.Timeline.Tempo
 
-  @type event :: %{
+  @type compiled_event :: %{
           start_tick: Tick.t(),
           end_tick: Tick.t(),
           start_sec: Timeline.physical_time(),
-          strategy: TempoSegment.segment()
+          strategy: Tempo.Segment.segment()
         }
 
-  @type t :: [event()]
+  @type t :: [compiled_event()]
 
   @doc "当速度事件发生变化时，重新编译时间线"
-  def compile(_tempo_events) do
+  def compile(_tempo_events, _init_tick \\ 0) do
     # 遍历事件，累加各个 segment 的 duration_sec，
+    # &Tempo.duration_sec/1
     # 填充每个 segment 的 start_sec 绝对物理时间戳。
   end
 
