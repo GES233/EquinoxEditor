@@ -20,6 +20,31 @@ defmodule EquinoxDomain.Timeline do
   defmodule Tick do
     # 刻
     @type t :: non_neg_integer()
-    # @ticks_per_quarter_note 480
+
+    # 按照习惯来
+    @ticks_per_quarter_note 480
+
+    def ticks_per_quarter_note, do: @ticks_per_quarter_note
+  end
+
+  defmodule TempoSegments do
+    # tick 与现实时间的转换
+
+    defstruct [:start, :end, :duraing_tempo_fn]
+
+    # 先预留个模块，后续可能适配以下情形：
+    # 全局一致
+    # 阶梯变换
+    # 渐变速度/曲线速度
+
+    # integrate(start_tick, end_tick, tempo_fn)
+  end
+
+  defmodule TimeSig do
+    # 时间标注/拍号/etc.
+
+    # {a, b} | {a, b, ...} （混合拍子） | :san（散拍子）
+
+    # 根据拍子以及 Tick.ticks_per_quarter_note/0 得到本小节的 tick 。
   end
 end
