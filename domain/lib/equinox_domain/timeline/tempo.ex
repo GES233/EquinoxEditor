@@ -55,7 +55,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
     impl(segment).tick_to_sec(segment, ticks)
   end
 
-  @spec duration_sec(Segment.segment(), Tick.t()) :: Segment.duration()
+  @spec duration_sec(Segment.segment()) :: Segment.duration()
   def duration_sec(segment) do
     impl(segment).duration_sec(segment)
   end
