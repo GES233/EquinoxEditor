@@ -1,13 +1,16 @@
 defmodule EquinoxDomain.Timeline.Tempo do
-  @moduledoc "时长工具的入口。"
+  @moduledoc """
+  时长工具的入口。
+  """
   alias EquinoxDomain.Timeline.Tick
 
   defmodule Event do
     @moduledoc "速度变化事件"
 
+    @type context :: term()
     @type t :: %__MODULE__{
             module: module(),
-            context: term()
+            context: context()
           }
     defstruct [:module, :context]
   end
@@ -36,7 +39,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
     @callback build_from_event(
                 start_tick :: Tick.t(),
                 end_tick :: Tick.t(),
-                event :: EquinoxDomain.Timeline.Tempo.Event.t()
+                event :: EquinoxDomain.Timeline.Tempo.Event.context()
               ) :: {:ok, segment()} | {:error, reason :: term()}
 
     @doc "该片段的持续时间。"
