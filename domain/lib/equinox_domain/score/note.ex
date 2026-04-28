@@ -4,6 +4,14 @@ defmodule EquinoxDomain.Score.Note do
   """
   alias EquinoxDomain.{Util.ID, Util.Model, Timeline.Tick, Score.Key}
 
+  # 切片操作逻辑
+  # 默认交给 Slicer 根据休止时间自动判断
+  # 强制操作为该音符和【后面的】
+  @type slice_flag ::
+          :auto
+          | :force_slice
+          | :force_merge
+
   use Model,
     keys: [
       :id,
@@ -11,8 +19,8 @@ defmodule EquinoxDomain.Score.Note do
       :duration_tick,
       :key,
       :lyric,
-      :slice_flag,
-      :annotation,
+      slice_flag: :auto,
+      annotation: nil,
       metadata: %{}
     ],
     id_prefix: "Note_"
@@ -24,7 +32,7 @@ defmodule EquinoxDomain.Score.Note do
           duration_tick: Tick.t(),
           key: Key.t(),
           lyric: String.t() | nil,
-          slice_flag: term(),
+          slice_flag: slice_flag(),
           annotation: String.t() | nil,
           metadata: %{}
         }

@@ -177,7 +177,7 @@ defmodule EquinoxDomain.Timeline.TempoMap do
     mid = div(low + high, 2)
     seg = elem(tuple, mid)
 
-    seg_end_sec =seg.start_sec + Tempo.duration_sec(seg.strategy)
+    seg_end_sec = seg.start_sec + Tempo.duration_sec(seg.strategy)
 
     cond do
       target_sec < seg.start_sec ->
