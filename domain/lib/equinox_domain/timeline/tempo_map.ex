@@ -122,9 +122,9 @@ defmodule EquinoxDomain.Timeline.TempoMap do
     end
   end
 
+  # 构建片段载荷
   defp build_compiled_event(start_tick, end_tick, event, current_sec) do
-    with :ok <- segment_range_valid?(start_tick, end_tick),
-         {:ok, strategy} <-
+    with {:ok, strategy} <-
            Tempo.build_segment_from_event(
              event.module,
              start_tick,
@@ -140,15 +140,4 @@ defmodule EquinoxDomain.Timeline.TempoMap do
        }}
     end
   end
-
-  defp segment_range_valid?(start_tick, end_tick)
-       when is_numeric_tick(start_tick) and is_dynamic_tick(end_tick), do: :ok
-
-  defp segment_range_valid?(start_tick, end_tick)
-       when is_numeric_tick(start_tick) and is_numeric_tick(end_tick) and
-              start_tick < end_tick,
-       do: :ok
-
-  defp segment_range_valid?(start_tick, end_tick),
-    do: {:error, {:invalid_segment_range, %{start_tick: start_tick, end_tick: end_tick}}}
 end
