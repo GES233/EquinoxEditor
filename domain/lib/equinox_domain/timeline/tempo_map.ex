@@ -110,9 +110,6 @@ defmodule EquinoxDomain.Timeline.TempoMap do
 
       do_compile([next | rest], last_tick, next_sec, [compiled | acc])
     else
-      :infinity ->
-        {:error, {:unexpected_infinite_duration, %{start_tick: start_tick, end_tick: end_tick}}}
-
       {:error, reason} ->
         {:error, reason}
     end
@@ -180,18 +177,13 @@ defmodule EquinoxDomain.Timeline.TempoMap do
     mid = div(low + high, 2)
     seg = elem(tuple, mid)
 
-    seg_end_sec =
-      if seg.end_tick == Tick.get_dynamic_tick() do
-        :infinity
-      else
-        seg.start_sec + Tempo.duration_sec(seg.strategy)
-      end
+    seg_end_sec =seg.start_sec + Tempo.duration_sec(seg.strategy)
 
     cond do
       target_sec < seg.start_sec ->
         find_segment_by_sec(tuple, target_sec, low, mid - 1)
 
-      seg_end_sec != :infinity and target_sec >= seg_end_sec ->
+      is_number(seg_end_sec) and target_sec >= seg_end_sec ->
         find_segment_by_sec(tuple, target_sec, mid + 1, high)
 
       true ->
