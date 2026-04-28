@@ -3,6 +3,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
   时长工具的入口。
   """
   alias EquinoxDomain.Timeline.Tick
+  import EquinoxDomain.Timeline.Tick
 
   defmodule Event do
     @moduledoc "速度变化事件"
@@ -16,9 +17,8 @@ defmodule EquinoxDomain.Timeline.Tempo do
   end
 
   @typedoc "自第 x 刻开始，有了 XXX 速度段。"
-  @type tempo_event :: {Tick.t(), Event.t()}
+  @type tempo_event :: {Tick.numeric_tick(), Event.t()}
 
-  # 可能包含结束的片段 last(最后一个音符结束, 最后的音频结束, 用户声明)
   @type tempo_events :: [tempo_event()] | {[tempo_event()], last :: Tick.t()}
 
   defmodule Segment do
@@ -26,18 +26,19 @@ defmodule EquinoxDomain.Timeline.Tempo do
     速度段的行为定义，支持阶梯、线性、甚至曲线。
 
     不允许时间逆流或停止（无论如何 BPM 一定大于零）；
-    Tick 要大于等于 0；
+    开始 Tick 要大于等于 0；
+    ……
     """
 
     @typedoc "实现速度段的结构体。"
     @type segment :: struct()
 
     @typedoc "实际运行的时间长度。"
-    @type duration :: float()
+    @type duration :: float() | :infinity
 
     @doc "从事件以及时间线构建出当前的片段。"
     @callback build_from_event(
-                start_tick :: Tick.t(),
+                start_tick :: Tick.numeric_tick(),
                 end_tick :: Tick.t(),
                 event :: EquinoxDomain.Timeline.Tempo.Event.context()
               ) :: {:ok, segment()} | {:error, reason :: term()}
@@ -46,7 +47,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
     @callback duration_sec(segment) :: duration()
 
     @doc "该片段从开始到第 `tick_offset` 刻的持续时间。"
-    @callback tick_to_sec(segment, tick_offset :: non_neg_integer()) :: duration()
+    @callback tick_to_sec(segment, tick_offset :: Tick.numeric_tick()) :: duration()
   end
 
   defmodule Step do
@@ -68,6 +69,8 @@ defmodule EquinoxDomain.Timeline.Tempo do
       do: {:ok, %__MODULE__{start_tick: start_tick, end_tick: end_tick, bpm: bpm}}
 
     @impl true
+    def duration_sec(%{end_tick: end_tick}) when is_dynamic_tick(end_tick), do: :infinity
+
     def duration_sec(seg) do
       tick_to_sec(seg, seg.end_tick - seg.start_tick)
     end
@@ -89,10 +92,14 @@ defmodule EquinoxDomain.Timeline.Tempo do
   # 可以直接应用 Tempo.blabla(segment_or_module, blabla)
 
   @doc "根据模块、刻以及上下文构建片段的函数。"
-  def build_segment_from_event(_module, start_tick, _, _) when start_tick <= 0,
+  def build_segment_from_event(_module, start_tick, _, _) when start_tick < 0,
     do: {:error, {:tick_invalid, %{start_tick: start_tick}}}
 
-  def build_segment_from_event(_module, start_tick, end_tick, _) when start_tick <= end_tick,
+  def build_segment_from_event(module, start_tick, end_tick, payload)
+      when is_dynamic_tick(end_tick),
+      do: module.build_from_event(start_tick, end_tick, payload)
+
+  def build_segment_from_event(_module, start_tick, end_tick, _) when start_tick >= end_tick,
     do: {:error, {:tick_invalid, %{start_tick: start_tick, end_tick: end_tick}}}
 
   def build_segment_from_event(module, start_tick, end_tick, payload),
