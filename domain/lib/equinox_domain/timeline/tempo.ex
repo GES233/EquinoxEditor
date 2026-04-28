@@ -1,9 +1,22 @@
 defmodule EquinoxDomain.Timeline.Tempo do
-  @moduledoc false
+  @moduledoc "时长工具的入口。"
   alias EquinoxDomain.Timeline.Tick
 
-  @type tempo_event :: {Tick.t(), struct()}
-  @type tempo_events :: [tempo_event()]
+  defmodule Event do
+    @moduledoc "速度变化事件"
+
+    @type t :: %__MODULE__{
+            module: module(),
+            context: term()
+          }
+    defstruct [:module, :context]
+  end
+
+  @typedoc "自第 x 刻开始，有了 XXX 速度段。"
+  @type tempo_event :: {Tick.t(), Event.t()}
+
+  # 可能包含结束的片段 last(最后一个音符结束, 最后的音频结束, 用户声明)
+  @type tempo_events :: [tempo_event()] | {[tempo_event()], last :: Tick.t()}
 
   defmodule Segment do
     @moduledoc "速度段的行为定义，支持阶梯、线性、甚至曲线。"
@@ -13,6 +26,13 @@ defmodule EquinoxDomain.Timeline.Tempo do
 
     @typedoc "实际运行的时间长度。"
     @type duration :: float()
+
+    @doc "从事件以及时间线构建出当前的片段。"
+    @callback build_from_event(
+                start_tick :: Tick.t(),
+                end_tick :: Tick.t(),
+                event :: EquinoxDomain.Timeline.Tempo.Event.t()
+              ) :: segment()
 
     @doc "该片段的持续时间。"
     @callback duration_sec(segment) :: duration()
@@ -33,6 +53,11 @@ defmodule EquinoxDomain.Timeline.Tempo do
     defstruct [:start_tick, :end_tick, :bpm]
 
     @impl true
+    def build_from_event(start_tick, end_tick, %{bpm: bpm}) do
+      %__MODULE__{start_tick: start_tick, end_tick: end_tick, bpm: bpm}
+    end
+
+    @impl true
     def duration_sec(seg) do
       tick_to_sec(seg, seg.end_tick - seg.start_tick)
     end
@@ -51,13 +76,15 @@ defmodule EquinoxDomain.Timeline.Tempo do
   defmodule Curve, do: nil
 
   # ---- 工具函数 ----
-  # 直接应用 Tempo.blabla(segment, ticks)
+  # 可以直接应用 Tempo.blabla(segment, ticks)
 
+  @doc "得到该片段自开始到 tick 刻的持续时间。"
   @spec tick_to_sec(Segment.segment(), Tick.t()) :: Segment.duration()
-  def tick_to_sec(segment, ticks) do
-    impl(segment).tick_to_sec(segment, ticks)
+  def tick_to_sec(segment, tick) do
+    impl(segment).tick_to_sec(segment, tick)
   end
 
+  @doc "得到该片段的持续时间。"
   @spec duration_sec(Segment.segment()) :: Segment.duration()
   def duration_sec(segment) do
     impl(segment).duration_sec(segment)

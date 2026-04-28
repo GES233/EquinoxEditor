@@ -12,14 +12,9 @@ defmodule EquinoxDomain.Timeline.TimeSig do
   @type t :: standard() | compound() | free()
 
   @doc "获取一个完整小节的 Tick 长度"
-  def ticks_per_bar({:standard, num, den}) do
-    div(Tk.ticks_per_quarter_note() * 4 * num, den)
-  end
-
-  def ticks_per_bar({:compound, groupings, den}) do
-    num = Enum.sum(groupings)
-    div(Tk.ticks_per_quarter_note() * 4 * num, den)
-  end
-
+  def ticks_per_bar({:standard, num, den}), do: div(total_notes(num), den)
+  def ticks_per_bar({:compound, groupings, den}), do: div(total_notes(Enum.sum(groupings)), den)
   def ticks_per_bar(:san), do: nil
+
+  defp total_notes(num), do: Tk.ticks_per_quarter_note() * 4 * num
 end

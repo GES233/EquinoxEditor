@@ -1,13 +1,16 @@
 defmodule EquinoxDomain.Timeline.Tick do
-  @behaviour EquinoxDomain.Util.Model.Pickle
+  @moduledoc "刻是编辑器的时间单位。"
 
-  # 刻
   @type t :: non_neg_integer()
 
   # 按照习惯来
   @ticks_per_quarter_note 480
 
   def ticks_per_quarter_note, do: @ticks_per_quarter_note
+
+  # ---- 序列化相关 ----
+
+  @behaviour EquinoxDomain.Util.Model.Pickle
 
   @impl true
   def serialize(tick) when is_integer(tick) and tick >= 0, do: {:ok, tick}
