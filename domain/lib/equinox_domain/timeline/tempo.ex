@@ -134,4 +134,12 @@ defmodule EquinoxDomain.Timeline.Tempo do
 
   defp impl(%module{}), do: module
   defp impl(module) when is_atom(module), do: module
+
+  # ---- 序列化相关 ----
+
+  # def serialize/1
+  # def deserialize/1
+
+  # defp serialize_step/1
+  # defp deserialize_step/1
 end
