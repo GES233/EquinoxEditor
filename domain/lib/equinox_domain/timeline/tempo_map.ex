@@ -4,11 +4,11 @@ defmodule EquinoxDomain.Timeline.TempoMap do
 
   结构形如：
 
-      [
+      {
         %{start_tick: 0, end_tick: 1920, start_sec: 0.0, strategy: %Step{bpm: 120}},
         %{start_tick: 1920, end_tick: 2400, start_sec: 2.0, strategy: %Linear{...}},
         ...
-      ]
+      }
 
   区间格式左闭右开。
   """
@@ -23,7 +23,7 @@ defmodule EquinoxDomain.Timeline.TempoMap do
           strategy: Tempo.Segment.segment()
         }
 
-  @type t :: [compiled_event()]
+  @type t :: tuple()
 
   @doc """
   当速度事件发生变化时，重新编译时间线。
@@ -41,32 +41,24 @@ defmodule EquinoxDomain.Timeline.TempoMap do
          :ok <- event_start_with_numeric?(events),
          sorted = Enum.sort_by(events, fn {tick, _event} -> tick end),
          :ok <- no_duplicate_ticks?(sorted),
-         :ok <- first_event_valid?(sorted) do
-      do_compile(sorted, last_tick, 0.0, [])
+         :ok <- first_event_valid?(sorted),
+         {:ok, list_map} <- do_compile(sorted, last_tick, 0.0, []) do
+      # 为什么这么设计，确保数据不可变，同时便于二分查找
+      {:ok, List.to_tuple(list_map)}
     end
   end
 
-  @doc "在 compiled_map 中查找 target_tick 所对应的秒数。"
-  def tick_to_sec(compiled_map, target_tick) do
-    case binary_search_segment(compiled_map, target_tick) do
-      nil -> nil
-      seg -> seg.start_sec + Tempo.tick_to_sec(seg.strategy, target_tick - seg.start_tick)
-    end
+  @doc "在 compiled_tuple 中查找 target_tick 所对应的秒数。"
+  def tick_to_sec(compiled_tuple, target_tick) do
+    seg = find_segment_by_tick(compiled_tuple, target_tick, 0, tuple_size(compiled_tuple) - 1)
+    seg.start_sec + Tempo.tick_to_sec(seg.strategy, target_tick - seg.start_tick)
   end
 
   # 反向查询
-  def sec_to_tick(compiled_map, target_sec) do
-    Enum.reduce_while(compiled_map, nil, fn seg, _acc ->
-      seg_end_sec = seg.start_sec + Tempo.duration_sec(seg.strategy)
-
-      if target_sec >= seg.start_sec and target_sec < seg_end_sec do
-        offset_sec = target_sec - seg.start_sec
-        offset_tick = Tempo.sec_to_tick(seg.strategy, offset_sec)
-        {:halt, seg.start_tick + offset_tick}
-      else
-        {:cont, nil}
-      end
-    end)
+  def sec_to_tick(compiled_tuple, target_sec) do
+    seg = find_segment_by_sec(compiled_tuple, target_sec, 0, tuple_size(compiled_tuple) - 1)
+    offset_sec = target_sec - seg.start_sec
+    seg.start_tick + Tempo.sec_to_tick(seg.strategy, offset_sec)
   end
 
   # ---- 关于 compile/1 的工具函数 ----
@@ -88,13 +80,13 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   end
 
   # 没有一刻对应着多个事件的情况
-  defp no_duplicate_ticks?(events) do
-    ticks = Enum.map(events, fn {tick, _event} -> tick end)
+  defp no_duplicate_ticks?(sorted_events) do
+    has_dup? =
+      sorted_events
+      |> Enum.chunk_every(2, 1, :discard)
+      |> Enum.any?(fn [{t1, _}, {t2, _}] -> t1 == t2 end)
 
-    if(length(ticks) == length(Enum.uniq(ticks)),
-      do: :ok,
-      else: {:error, :duplicate_tempo_event_ticks}
-    )
+    if has_dup?, do: {:error, :duplicate_tempo_event_ticks}, else: :ok
   end
 
   # 看完屁股看身子，看完身子看脑袋
@@ -155,14 +147,59 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   # ---- tick_to_sec 的工具函数 ----
 
   # 二分搜索
-  defp binary_search_segment(compiled_map, target_tick) do
-    # compiled_map 按 start_tick 升序排列
-    idx =
-      Enum.find_index(compiled_map, fn seg ->
-        seg.start_tick <= target_tick and
-          (seg.end_tick == :infinity or target_tick < seg.end_tick)
-      end)
+  defp find_segment_by_tick(tuple, target_tick, low, high) when low <= high do
+    mid = div(low + high, 2)
+    seg = elem(tuple, mid)
 
-    idx && Enum.at(compiled_map, idx)
+    cond do
+      # 目标在当前片段左侧
+      target_tick < seg.start_tick ->
+        find_segment_by_tick(tuple, target_tick, low, mid - 1)
+
+      # 目标在当前片段右侧且不是正无穷
+      seg.end_tick != Tick.get_dynamic_tick() and target_tick >= seg.end_tick ->
+        find_segment_by_tick(tuple, target_tick, mid + 1, high)
+
+      # 命中区间（格式是左闭右开）
+      true ->
+        seg
+    end
   end
+
+  # 留个 Fallback ，下一个同理
+  # 目前的策略是往回收一收
+  # 也可以改成依照上一个 end_tick 为 bpm 的 Step （阶梯不是步骤）策略
+  # 但先在这里留着，不用管
+  defp find_segment_by_tick(tuple, _target_tick, _low, _high),
+    do: elem(tuple, tuple_size(tuple) - 1)
+
+  # ---- sec_to_tick 的工具函数 ----
+
+  # 依旧二分搜索
+  defp find_segment_by_sec(tuple, target_sec, low, high) when low <= high do
+    mid = div(low + high, 2)
+    seg = elem(tuple, mid)
+
+    seg_end_sec =
+      if seg.end_tick == Tick.get_dynamic_tick() do
+        :infinity
+      else
+        seg.start_sec + Tempo.duration_sec(seg.strategy)
+      end
+
+    cond do
+      target_sec < seg.start_sec ->
+        find_segment_by_sec(tuple, target_sec, low, mid - 1)
+
+      seg_end_sec != :infinity and target_sec >= seg_end_sec ->
+        find_segment_by_sec(tuple, target_sec, mid + 1, high)
+
+      true ->
+        seg
+    end
+  end
+
+  # 依旧 Fallback
+  defp find_segment_by_sec(tuple, _target_sec, _low, _high),
+    do: elem(tuple, tuple_size(tuple) - 1)
 end
