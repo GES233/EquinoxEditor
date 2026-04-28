@@ -82,12 +82,12 @@ defmodule EquinoxDomain.Timeline.Tempo do
     @impl true
     def tick_to_sec(seg, ticks) do
       sec_per_quarter = 60.0 / seg.bpm
-      ticks * (sec_per_quarter / Tick.ticks_per_quarter_note())
+      ticks * (sec_per_quarter / ticks_per_quarter_note())
     end
 
     @impl true
     def sec_to_tick(seg, offset_sec) do
-      round(offset_sec * (Tick.ticks_per_quarter_note() * seg.bpm / 60))
+      round(offset_sec * (ticks_per_quarter_note() * seg.bpm / 60))
     end
   end
 
@@ -126,9 +126,12 @@ defmodule EquinoxDomain.Timeline.Tempo do
     impl(segment).duration_sec(segment)
   end
 
+  @doc "得到该片段自开始某段时间所经过的 Tick 数。"
+  @spec sec_to_tick(Segment.segment(), Timeline.physical_time()) :: Segment.duration()
   def sec_to_tick(segment, sec) do
     impl(segment).sec_to_tick(segment, sec)
   end
 
   defp impl(%module{}), do: module
+  defp impl(module) when is_atom(module), do: module
 end
