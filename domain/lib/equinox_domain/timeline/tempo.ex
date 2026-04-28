@@ -2,8 +2,9 @@ defmodule EquinoxDomain.Timeline.Tempo do
   @moduledoc """
   时长工具的入口。
   """
+  # alias EquinoxDomain.Timeline
   alias EquinoxDomain.Timeline.Tick
-  import EquinoxDomain.Timeline.Tick
+  import Tick
 
   defmodule Event do
     @moduledoc "速度变化事件"
@@ -48,6 +49,9 @@ defmodule EquinoxDomain.Timeline.Tempo do
 
     @doc "该片段从开始到第 `tick_offset` 刻的持续时间。"
     @callback tick_to_sec(segment, tick_offset :: Tick.numeric_tick()) :: duration()
+
+    @doc "该片段第 X.XX 秒所对应的刻（四舍五入吧，因为这个秒一般就是刻转换过去的）。"
+    @callback sec_to_tick(segment, sec_offset :: Timeline.physical_time()) :: Tick.numeric_tick()
   end
 
   defmodule Step do
@@ -79,6 +83,11 @@ defmodule EquinoxDomain.Timeline.Tempo do
     def tick_to_sec(seg, ticks) do
       sec_per_quarter = 60.0 / seg.bpm
       ticks * (sec_per_quarter / Tick.ticks_per_quarter_note())
+    end
+
+    @impl true
+    def sec_to_tick(seg, offset_sec) do
+      round(offset_sec * (Tick.ticks_per_quarter_note() * seg.bpm / 60))
     end
   end
 
@@ -115,6 +124,10 @@ defmodule EquinoxDomain.Timeline.Tempo do
   @spec duration_sec(Segment.segment()) :: Segment.duration()
   def duration_sec(segment) do
     impl(segment).duration_sec(segment)
+  end
+
+  def sec_to_tick(segment, sec) do
+    impl(segment).sec_to_tick(segment, sec)
   end
 
   defp impl(%module{}), do: module

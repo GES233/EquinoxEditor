@@ -39,24 +39,34 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   def compile({events, last_tick}) do
     with :ok <- last_tick_valid?(last_tick),
          :ok <- event_start_with_numeric?(events),
-         :ok <- no_duplicate_ticks?(events),
-         :ok <- first_event_valid?(events) do
-      events
-      |> Enum.sort_by(fn {tick, _event} -> tick end)
-      |> do_compile(last_tick, 0.0, [])
+         sorted = Enum.sort_by(events, fn {tick, _event} -> tick end),
+         :ok <- no_duplicate_ticks?(sorted),
+         :ok <- first_event_valid?(sorted) do
+      do_compile(sorted, last_tick, 0.0, [])
     end
   end
 
-  def tick_to_sec(_compiled_map, _target_tick) do
-    # 1. 使用二分查找在 compiled_map 中找到 target_tick 所在的 segment
-    # 2. offset_ticks = target_tick - segment.start_tick
-    # 3. offset_sec = SegmentStrategy.tick_to_sec(segment.strategy, offset_ticks)
-    # 4. return segment.start_sec + offset_sec
+  @doc "在 compiled_map 中查找 target_tick 所对应的秒数。"
+  def tick_to_sec(compiled_map, target_tick) do
+    case binary_search_segment(compiled_map, target_tick) do
+      nil -> nil
+      seg -> seg.start_sec + Tempo.tick_to_sec(seg.strategy, target_tick - seg.start_tick)
+    end
   end
 
   # 反向查询
-  def sec_to_tick(_compiled_map, _target_sec) do
-    # ...
+  def sec_to_tick(compiled_map, target_sec) do
+    Enum.reduce_while(compiled_map, nil, fn seg, _acc ->
+      seg_end_sec = seg.start_sec + Tempo.duration_sec(seg.strategy)
+
+      if target_sec >= seg.start_sec and target_sec < seg_end_sec do
+        offset_sec = target_sec - seg.start_sec
+        offset_tick = Tempo.sec_to_tick(seg.strategy, offset_sec)
+        {:halt, seg.start_tick + offset_tick}
+      else
+        {:cont, nil}
+      end
+    end)
   end
 
   # ---- 关于 compile/1 的工具函数 ----
@@ -116,6 +126,7 @@ defmodule EquinoxDomain.Timeline.TempoMap do
     end
   end
 
+  # 最后一个片段
   defp do_compile([{start_tick, event}], last_tick, current_sec, acc) do
     with {:ok, compiled} <- build_compiled_event(start_tick, last_tick, event, current_sec) do
       {:ok, Enum.reverse([compiled | acc])}
@@ -139,5 +150,19 @@ defmodule EquinoxDomain.Timeline.TempoMap do
          strategy: strategy
        }}
     end
+  end
+
+  # ---- tick_to_sec 的工具函数 ----
+
+  # 二分搜索
+  defp binary_search_segment(compiled_map, target_tick) do
+    # compiled_map 按 start_tick 升序排列
+    idx =
+      Enum.find_index(compiled_map, fn seg ->
+        seg.start_tick <= target_tick and
+          (seg.end_tick == :infinity or target_tick < seg.end_tick)
+      end)
+
+    idx && Enum.at(compiled_map, idx)
   end
 end
