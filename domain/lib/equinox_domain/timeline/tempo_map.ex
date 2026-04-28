@@ -41,4 +41,7 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   def sec_to_tick(_compiled_map, _target_sec) do
     # ...
   end
+
+  # defp ensure_non_negative_ticks
+  # defp ensure_all_positive_rates
 end
