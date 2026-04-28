@@ -2,7 +2,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
   @moduledoc """
   时长工具的入口。
   """
-  # alias EquinoxDomain.Timeline
+  alias EquinoxDomain.Timeline
   alias EquinoxDomain.Timeline.Tick
   import Tick
 
