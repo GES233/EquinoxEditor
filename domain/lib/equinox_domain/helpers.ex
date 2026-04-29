@@ -1,5 +1,5 @@
 defmodule EquinoxDomain.Helpers do
-  # 适用于 Entity 以及 VO
+  # 用于序列化时规整数据
   def normalize_attrs(map_or_kw, fields) do
     allowed_set =
       MapSet.new(fields, fn
@@ -32,9 +32,4 @@ defmodule EquinoxDomain.Helpers do
   end
 
   defp normalize_key(_), do: nil
-
-  # 仅用于 Entity
-  def generate_id(id_prefix) do
-    (id_prefix || "") <> Base.encode16(:crypto.strong_rand_bytes(8), case: :lower)
-  end
 end

@@ -16,7 +16,8 @@ defmodule EquinoxDomain.Util.Model do
     id_prefix = Keyword.get(opts, :id_prefix)
 
     quote do
-      import EquinoxDomain.Helpers, only: [generate_id: 1, normalize_attrs: 2]
+      import EquinoxDomain.Helpers, only: [normalize_attrs: 2]
+      import EquinoxDomain.Util.ID, only: [generate_id: 1]
 
       @keys unquote(keys)
       defstruct @keys

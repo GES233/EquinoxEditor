@@ -6,6 +6,8 @@ defmodule EquinoxDomain.Timeline.Tempo do
   alias EquinoxDomain.Timeline.Tick
   import Tick
 
+  # ---- 速度变化事件 ----
+
   defmodule Event do
     @moduledoc "速度变化事件"
 
@@ -22,14 +24,12 @@ defmodule EquinoxDomain.Timeline.Tempo do
 
   @type tempo_events :: [tempo_event()] | {[tempo_event()], last :: Tick.t()}
 
-  defmodule Segment do
-    @moduledoc """
-    速度段的行为定义，支持阶梯、线性、甚至曲线。
+  # ---- 速度片段 ----
 
-    不允许时间逆流或停止（无论如何 BPM 一定大于零）；
-    开始 Tick 要大于等于 0；
-    ……
-    """
+  defmodule Segment do
+    @moduledoc "速度段的行为定义，预计实际支持阶梯、线性、甚至曲线。"
+
+    alias EquinoxDomain.Util.Pickle
 
     @typedoc "实现速度段的结构体。"
     @type segment :: struct()
@@ -41,7 +41,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
     @callback build_from_event(
                 start_tick :: Tick.numeric_tick(),
                 end_tick :: Tick.t(),
-                event :: EquinoxDomain.Timeline.Tempo.Event.context()
+                event :: Event.context()
               ) :: {:ok, segment()} | {:error, reason :: term()}
 
     @doc "该片段的持续时间。"
@@ -50,8 +50,16 @@ defmodule EquinoxDomain.Timeline.Tempo do
     @doc "该片段从开始到第 `tick_offset` 刻的持续时间。"
     @callback tick_to_sec(segment, tick_offset :: Tick.numeric_tick()) :: duration()
 
-    @doc "该片段第 X.XX 秒所对应的刻（四舍五入吧，因为这个秒一般就是刻转换过去的）。"
+    @doc "该片段第 X.XX 秒所对应的刻。"
     @callback sec_to_tick(segment, sec_offset :: Timeline.physical_time()) :: Tick.numeric_tick()
+
+    # ---- 序列化/反序列化【事件】 ----
+
+    @callback serialize_identidier() :: String.t()
+
+    @callback serialize_step_event(Event.t()) :: {:ok, Pickle.serialized()} | {:error, term()}
+
+    @callback deserialize_step_event(Pickle.serialized()) :: {:ok, Event.t()} | {:error, term()}
   end
 
   defmodule Step do
@@ -61,7 +69,10 @@ defmodule EquinoxDomain.Timeline.Tempo do
     如果全部都是一个阶梯，那么就是恒定速度。
     """
 
-    @behaviour EquinoxDomain.Timeline.Tempo.Segment
+    alias EquinoxDomain.Timeline.Tempo.{Segment, Event}
+    @behaviour Segment
+
+    @serialize_identidier "Step"
 
     defstruct [:start_tick, :end_tick, :bpm]
 
@@ -89,6 +100,33 @@ defmodule EquinoxDomain.Timeline.Tempo do
     def sec_to_tick(seg, offset_sec) do
       round(offset_sec * (ticks_per_quarter_note() * seg.bpm / 60))
     end
+
+    @impl true
+    def serialize_identidier, do: @serialize_identidier
+
+    @impl true
+    def serialize_step_event(%Event{module: __MODULE__, context: %{bpm: bpm}}) do
+      {:ok,
+       %{
+         "tempo_event_type" => @serialize_identidier,
+         "context" => %{"bpm" => bpm}
+       }}
+    end
+
+    @impl true
+    def deserialize_step_event(%{
+          "tempo_event_type" => @serialize_identidier,
+          "context" => %{"bpm" => bpm}
+        }) do
+      with true <- is_number(bpm) do
+        {:ok, %Event{module: __MODULE__, context: %{bpm: bpm}}}
+      else
+        false -> {:error, {:invalid_data, __MODULE__, :bpm_is_not_number, bpm}}
+      end
+    end
+
+    def deserialize_step_event(%{"tempo_event_type" => other_type}),
+      do: {:error, {:invalid_data, __MODULE__, :tempo_typo_incorrect, other_type}}
   end
 
   # 线性渐变速度
@@ -97,10 +135,14 @@ defmodule EquinoxDomain.Timeline.Tempo do
   # 应用曲线
   defmodule Curve, do: nil
 
-  # ---- 工具函数 ----
-  # 可以直接应用 Tempo.blabla(segment_or_module, blabla)
+  # ---- 速度段功能调用 ----
+  # 可以直接通过 Tempo.blabla(segment_or_module, blabla) 调用速度段内部的函数
 
-  @doc "根据模块、刻以及上下文构建片段的函数。"
+  @doc """
+  根据模块、刻以及上下文构建片段的函数。
+
+  把一些实现无关的错误（e.g. tick 早于零）提前拎出来。
+  """
   def build_segment_from_event(_module, start_tick, _, _) when start_tick < 0,
     do: {:error, {:tick_invalid, %{start_tick: start_tick}}}
 
@@ -132,14 +174,19 @@ defmodule EquinoxDomain.Timeline.Tempo do
     impl(segment).sec_to_tick(segment, sec)
   end
 
+  # ---- 序列化相关 ----
+  # 这里的上下文就是 tempo_strategies 了
+  # 其实可以直接用 Registry 来做
+  # 但权衡下暂时先以 exclipit context 来做
+
+  # def serialize/2
+
+  # def deserialize/2
+
+  # tempo_strategies_build
+
+  # ---- 一些 Helpers ----
+
   defp impl(%module{}), do: module
   defp impl(module) when is_atom(module), do: module
-
-  # ---- 序列化相关 ----
-
-  # def serialize/1
-  # def deserialize/1
-
-  # defp serialize_step/1
-  # defp deserialize_step/1
 end

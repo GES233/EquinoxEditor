@@ -148,7 +148,7 @@ defmodule EquinoxDomain.Timeline.TempoMap do
         find_segment_by_tick(tuple, target_tick, low, mid - 1)
 
       # 目标在当前片段右侧且不是正无穷
-      seg.end_tick != Tick.get_dynamic_tick() and target_tick >= seg.end_tick ->
+      Tick.is_numeric_tick(seg.end_tick) and target_tick >= seg.end_tick ->
         find_segment_by_tick(tuple, target_tick, mid + 1, high)
 
       # 命中区间（格式是左闭右开）
