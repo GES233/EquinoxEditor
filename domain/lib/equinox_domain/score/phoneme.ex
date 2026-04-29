@@ -10,7 +10,7 @@ defmodule EquinoxDomain.Score.Phoneme do
   # 或者是一个警报，辅音空间不足，最好重新安排
   # 那就这样：操作过程警报，渲染时实际存在就填充
 
-  # 另外一点是音素挂载在什么下面？音符？还是歌词？貌似和歌词关系更大吧
+  # 挂载在 EquinoxDomain.Score.Utterance 下面
 
   @type symbol :: String.t()
   @type phoneme_type :: :consonant | :vowel | :silence
