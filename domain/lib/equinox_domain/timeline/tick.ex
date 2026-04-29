@@ -22,7 +22,7 @@ defmodule EquinoxDomain.Timeline.Tick do
 
   # ---- 序列化相关 ----
 
-  @behaviour EquinoxDomain.Util.Model.Pickle
+  @behaviour EquinoxDomain.Util.Pickle
 
   @impl true
   def serialize(tick) when is_dynamic_tick(tick), do: {:ok, "dynamic tick"}

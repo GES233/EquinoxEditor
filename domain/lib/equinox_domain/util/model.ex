@@ -11,27 +11,6 @@ defmodule EquinoxDomain.Util.Model do
   以及加载必要的辅助函数（属性标准化、ID 生成）。
   """
 
-  defmodule Pickle do
-    @moduledoc "序列化与反序列化的行为。"
-    # 先不考虑 options 了
-
-    # 待序列化的结构体或数据
-    @type model :: term()
-
-    @typedoc "可持久化的基本标量。"
-    @type scalar :: nil | boolean() | integer() | float() | binary()
-
-    @typedoc "可序列化结构。"
-    @type serialized ::
-            scalar()
-            | [serialized()]
-            | %{optional(binary() | atom()) => serialized()}
-
-    @callback serialize(model()) :: {:ok, serialized()} | {:error, term()}
-
-    @callback deserialize(serialized()) :: {:ok, model()} | {:error, term()}
-  end
-
   defmacro __using__(opts) do
     keys = Keyword.fetch!(opts, :keys)
     id_prefix = Keyword.get(opts, :id_prefix)

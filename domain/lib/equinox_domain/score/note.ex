@@ -2,7 +2,7 @@ defmodule EquinoxDomain.Score.Note do
   @moduledoc """
   有关音符的领域模型。
   """
-  alias EquinoxDomain.{Util.ID, Util.Model, Timeline.Tick, Score.Key}
+  alias EquinoxDomain.{Util.ID, Util.Model, Util.Pickle, Timeline.Tick, Score.Key}
 
   # 切片操作逻辑
   # 默认交给 Slicer 根据休止时间自动判断
@@ -104,9 +104,9 @@ defmodule EquinoxDomain.Score.Note do
   # merge(note1, note2, opts) -> {:ok, note} | err
 
   # ---- 序列化与反序列化 ----
-  # @behaviour EquinoxDomain.Util.Model.Pickle
+  # @behaviour EquinoxDomain.Util.Pickle
 
-  @spec serialize(t()) :: {:ok, Model.Pickle.serialized()} | {:error, term()}
+  @spec serialize(t()) :: {:ok, Pickle.serialized()} | {:error, term()}
   def serialize(note) do
     with {:ok, start_tick} <- Tick.serialize(note.start_tick),
          {:ok, duration_tick} <- Tick.serialize(note.duration_tick) do
@@ -124,7 +124,7 @@ defmodule EquinoxDomain.Score.Note do
     end
   end
 
-  # @spec deserialze(Model.Pickle.serialized()) :: {:ok, t()} | {:error, term()}
+  # @spec deserialze(Pickle.serialized()) :: {:ok, t()} | {:error, term()}
 
   # ---- 作为音符的属性 ----
   # Note:

@@ -64,16 +64,13 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   # ---- 关于 compile/1 的工具函数 ----
 
   # 最后一刻是刻
-  defp last_tick_valid?(tick) when is_tick(tick), do: :ok
-  defp last_tick_valid?(tick), do: {:error, {:invalid_last_tick, tick}}
+  defp last_tick_valid?(tick) do
+    if is_tick(tick), do: :ok, else: {:error, {:invalid_last_tick, tick}}
+  end
 
   # 所有事件以时间刻开始
   defp event_start_with_numeric?(events) do
-    Enum.find(events, fn
-      {tick, _event} when is_numeric_tick(tick) -> false
-      _ -> true
-    end)
-    |> case do
+    case Enum.find(events, fn {tick, _event} -> not is_numeric_tick(tick) end) do
       nil -> :ok
       bad -> {:error, {:invalid_tempo_event_tick, bad}}
     end
@@ -104,14 +101,11 @@ defmodule EquinoxDomain.Timeline.TempoMap do
          current_sec,
          acc
        ) do
-    with {:ok, compiled} <- build_compiled_event(start_tick, end_tick, event, current_sec),
-         duration when is_number(duration) <- Tempo.duration_sec(compiled.strategy) do
+    with {:ok, compiled} <- build_compiled_event(start_tick, end_tick, event, current_sec) do
+      duration = Tempo.duration_sec(compiled.strategy)
       next_sec = current_sec + duration
 
       do_compile([next | rest], last_tick, next_sec, [compiled | acc])
-    else
-      {:error, reason} ->
-        {:error, reason}
     end
   end
 
@@ -177,13 +171,13 @@ defmodule EquinoxDomain.Timeline.TempoMap do
     mid = div(low + high, 2)
     seg = elem(tuple, mid)
 
-    seg_end_sec = seg.start_sec + Tempo.duration_sec(seg.strategy)
+    duration = Tempo.duration_sec(seg.strategy)
 
     cond do
       target_sec < seg.start_sec ->
         find_segment_by_sec(tuple, target_sec, low, mid - 1)
 
-      is_number(seg_end_sec) and target_sec >= seg_end_sec ->
+      duration != :infinity and target_sec >= seg.start_sec + duration ->
         find_segment_by_sec(tuple, target_sec, mid + 1, high)
 
       true ->
