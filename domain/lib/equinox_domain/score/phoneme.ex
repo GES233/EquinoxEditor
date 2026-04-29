@@ -14,6 +14,7 @@ defmodule EquinoxDomain.Score.Phoneme do
 
   @type symbol :: String.t()
   @type phoneme_type :: :consonant | :vowel | :silence
+  @type rasterized :: term()
 
   @type t :: %__MODULE__{
           symbol: symbol(),
@@ -23,5 +24,5 @@ defmodule EquinoxDomain.Score.Phoneme do
           tick_offset: integer(),
           duration_tick: integer()
         }
-  defstruct [:symbol, :type, :tick_offset, :duration_tick]
+  use EquinoxDomain.Util.Object, keys: [:symbol, :type, :tick_offset, :duration_tick]
 end
