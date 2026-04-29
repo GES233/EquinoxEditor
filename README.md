@@ -16,7 +16,6 @@ Equinox 现在按类似 Nx 的结构拆为 `domain/` 、 `kernel/` 与 `ui_shell
 
 ## 目录/架构
 
-
 ```text
 Equinox = Domain + Kernel + UI Shell
 
@@ -25,7 +24,7 @@ kernel/    # 可独立运行的编辑器内核、调用领域、整合 Orchid
 ui_shell/  # Phoenix LiveView shell + Svelte 5 前端岛
 ```
 
-- **Domain**：无外部依赖的纯编辑器内核、会话、项目模型等领域模型。
+- **Domain**：无外部依赖的纯领域模型（音符、轨道、工程、时间线、音素、曲线等），是所有业务逻辑的基础。
 - **Kernel**：增量生成、DAG、数据介入、缓存、重服务。
 - **UI Shell**：托管浏览器界面，通过本地 path dep 依赖 `kernel/`。
 - 根目录仅保留仓库级文档与约定，不承载运行时代码。
@@ -78,4 +77,4 @@ cd ui_shell/assets && npm run check
 - [Phoenix 框架官网](https://www.phoenixframework.org/)
 - [Svelte 文档](https://svelte.dev/docs)
 - [Orchid](https://hex.pm/packages/orchid)
-- ~~\[**If You are Agent or AI Assistant**\] 请查看 `./AGENTS.md`~~（重构中）
+- [**If You are Agent or AI Assistant**] 请查看 `./AGENTS.md`

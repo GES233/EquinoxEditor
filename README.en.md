@@ -10,15 +10,17 @@ This repository is the successor to two prior prototypes:
 
 Equinox consolidates those lessons into a single **Phoenix + Svelte** application, abandoning Livebook/Kino hosting entirely.
 
-Equinox now uses two folders instead of umbrella apps: `kernel/` and `ui_shell/`.
+Equinox is organized into three directories: `domain/`, `kernel/`, and `ui_shell/`.
 
 ## Layout
 
 ```text
+domain/    # zero-dependency domain model
 kernel/    # standalone editor kernel, domain model, Orchid orchestration
 ui_shell/  # Phoenix LiveView shell + Svelte 5 islands
 ```
 
+- **Domain**: pure data structures and domain logic (notes, tracks, projects, timeline, phonemes, curves). Zero dependencies.
 - **Kernel**: core editor logic, sessions, project model, render dispatch.
 - **UI Shell**: browser-facing shell that depends on `kernel/` via a local path dependency.
 - The repository root now keeps repo-level docs and conventions only.
@@ -29,6 +31,13 @@ ui_shell/  # Phoenix LiveView shell + Svelte 5 islands
 - [Node.js](https://nodejs.org/) (for frontend assets)
 
 ## Development
+
+### Domain
+
+```bash
+cd domain
+mix test
+```
 
 ### Kernel
 
@@ -52,6 +61,7 @@ During UI shell development, Vite watches `ui_shell/assets` and writes bundles i
 ### Checks
 
 ```bash
+cd domain && mix precommit
 cd kernel && mix precommit
 cd ui_shell && mix precommit
 cd ui_shell/assets && npm run check
@@ -60,9 +70,10 @@ cd ui_shell/assets && npm run check
 ## Architecture
 
 ```text
-Equinox = Kernel + UI Shell
+Equinox = Domain + Kernel + UI Shell
 ```
 
+- **Domain**: pure domain types and logic, decoupled from Kernel and UI.
 - **Kernel**: incremental generation, DAG orchestration, intervention, cache, heavy services.
 - **UI Shell**: Phoenix LiveView shell hosting Svelte 5 components for Piano Roll, Node Editor, and Arranger.
 
