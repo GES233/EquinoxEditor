@@ -6,7 +6,7 @@ defmodule EquinoxDomain.Timeline.Grid do
   """
   # 就留个模块在这里，因为实际执行的通常是 UI 端
   # 不会波及到后台
-  # 但作为语义上的巴拉巴拉，在这里说一下
+  # 但作为编辑器语义上的功能，在这里说一下
 
   alias EquinoxDomain.Timeline.Tick
 
