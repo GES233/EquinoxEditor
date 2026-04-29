@@ -30,6 +30,21 @@ Development follows a strict bottom-up dependency order:
 
 **Current priority**: The stability of the Domain layer is decoupled from the Domain-Kernel. No new features should be added to the Kernel or UI Shell before the Domain layer is complete.
 
+### EquinoxDomain — Independent Domain Project
+
+The `EquinoxDomain` module lives in `domain/` as a **separate, zero-dependency Elixir project** (`:equinox_domain`). It is the canonical home for all domain types and pure business logic. The `kernel/lib/equinox/domain/` directory is legacy and will be replaced.
+
+**Project location**: `domain/` (root-level, sibling to `kernel/` and `ui_shell/`)
+
+**Key design decisions**:
+- `use EquinoxDomain.Util.Model, keys: [...], id_prefix: "Xxx_"` auto-generates `new/1` and `update/2` for all domain structs. `update/2` returns `{:ok, model} | {:error, reason}`.
+- `Note.slice_flag` uses `:auto | :force_slice | :force_merge` (simpler than kernel's tuple-based version).
+- `Track` holds `notes: %{}` (map by id) and `curve_layers: %{}` (M6).
+- `Phoneme` is a standalone model with timing info; to be associated with `Note` via a `phonemes` field.
+- `Utterance` replaces the kernel's `Segment` concept — it's the Slicer's output, a continuous vocal phrase.
+
+**Build/Test**: `cd domain && mix test`
+
 ## 2. Environment & Agent Constraints (CRITICAL)
 
 - **OS/Shell**: Windows host, but Agent uses `mvdan/sh` (bash emulator).
@@ -215,7 +230,7 @@ Editor/Session layer:
    - Maintain `slice_id → Segment.id` mapping.
 3. Compiler renders from `Segment` level (via `SegmentContext`).
 
-## M6 — Curves (Refactor Spec) 💡
+## M6 — Curves (Refactor Spec) 
 
 ### Goals
 
@@ -223,28 +238,6 @@ Editor/Session layer:
 2. Segment stays a minimal note container.
 3. Compiler becomes the sole translator from `CurveLayer` → `data_intervention`.
 4. Kernel stays semantics-agnostic about individual curve parameters; consumption is Orchid Hook territory.
-
-### Target Module Layout
-
-```text
-kernel/lib/equinox/
-├── domain/
-│   ├── note.ex
-│   ├── slicer.ex
-│   ├── curve_chunk.ex        # new
-│   ├── curve_layer.ex        # new
-│   └── raster_cache.ex       # new
-├── editor/
-│   ├── editor.ex             # + curve operations
-│   ├── history.ex
-│   └── segment.ex            # slimmed down
-├── kernel/
-│   ├── compiler.ex           # accepts SegmentContext
-│   ├── compiler/
-│   │   └── segment_context.ex  # new
-│   └── ...
-└── ...
-```
 
 ### Data Structures (intent, not literal code)
 
