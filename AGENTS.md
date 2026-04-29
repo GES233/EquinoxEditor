@@ -8,6 +8,28 @@
 - **Frontend**: Svelte 5 (Runes mode strictly), SvelteFlow, Tailwind CSS v4, TypeScript, Vite.
 - **Banned Tech**: Kino, Livebook, LiteGraph, Svelte 4 syntax.
 
+### Layered Architecture
+
+Development follows a strict bottom-up dependency order:
+
+```text
+┌─────────────────────────────────┐
+│  ui_shell (Svelte + LiveView)   │  ← The presentation layer is the final implementation.
+├─────────────────────────────────┤
+│  Equinox.Session.*              │  ← Session/Storage Layer
+├─────────────────────────────────┤
+│  Equinox.Kernel.*               │  ← Compiler/Orchid Integration(Scheduling/Graph Engine/etc.)
+├─────────────────────────────────┤
+│  EquinoxDomain.*                │  ← Pure data + domain logic, highest priority
+└─────────────────────────────────┘
+```
+
+- **Domain** is the foundation: pure data structures (`Note`, `Segment`, `CurveChunk`, etc.) and stateless domain logic (`Slicer`). Zero dependencies on Kernel, Session, or UI.
+- **Kernel** consumes Domain types for compilation, planning, and graph construction. Never imports UI or Session.
+- **Session / UI Shell** sit at the outermost layer, consuming both Domain and Kernel.
+
+**Current priority**: The stability of the Domain layer is decoupled from the Domain-Kernel. No new features should be added to the Kernel or UI Shell before the Domain layer is complete.
+
 ## 2. Environment & Agent Constraints (CRITICAL)
 
 - **OS/Shell**: Windows host, but Agent uses `mvdan/sh` (bash emulator).
@@ -24,6 +46,7 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 ## 4. Core Domain & Architecture Rules
 
+- **Domain-First Development**: `Equinox.Domain.*` is the cornerstone of the project. All domain models (data structures + pure functional logic) must be completed and thoroughly tested at this layer before development of the Kernel or UI Shell can begin. The Domain layer is prohibited from referencing any modules outside.💡
 - **Pure Data**: `Project`, `Track`, and `Segment` are pure data structures (JSON serializable). No Ecto schemas, no executable closures inside them.
 - **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte.
 - **Stateless Kernel**: The Kernel (`Equinox.Kernel.*`, `Equinox.Domain.*`, `Equinox.Editor.*`) is pure-functional wherever possible. Persistent state lives in downstream consumers (`Equinox.Session.Server`, `ui_shell`). The only tolerated stateful Kernel component is `Equinox.Kernel.StepRegistry` (build-time catalog, not session state). 💡
@@ -82,11 +105,18 @@ The Kernel does not hardcode the semantics of any curve parameter. At compile ti
 
 An **Orchid Hook** (user-supplied, registered via `Configurator.plugins`) maps `param_name → (target_node, target_port)` and consumes the payload. Validation is delegated to `Orchid.Param` typing.
 
-### ADR-005 — `SegmentContext` is Compiler's input DTO
+### ADR-006 — Domain-Kernel Layered Decoupling
 
-`Segment` is pure note-bearing data. Compile-time fields (`graph`, `cluster`, `synth_override`, resolved `curve_slices`, `history`) live on `Equinox.Kernel.Compiler.SegmentContext`, constructed per call.
+`Equinox.Domain.*` is the lowest level of the project and does not depend on any upper-level modules. The Kernel can consume Domain types, but the Domain never references the Kernel.
 
-`Compiler.compile_segment/2` takes `%SegmentContext{}`, not `%Segment{}`.
+Rules:
+
+- `Equinox.Kernel`, `Equinox.Session`, and `Equinox.Editor` must not appear in the `alias`, `import`, or `use` of the Domain module (`Equinox.Domain.*`).
+- The Domain only depends on the standard library, `Equinox.Util.*`, and its own internal submodules.
+- The `graph`, `cluster`, `synth_override`, and `curves` fields in `Equinox.Domain.Segment` are Kernel compile-time concepts and should be removed from the Domain model (see M6 Phase 4).
+- In the current code, the alias `Equinox.Kernel.{Graph, Graph.Cluster}` in `segment.ex` and the alias `Equinox.Editor.Segment` in `slicer.ex` are points of coupling that need to be fixed.
+
+Development order: First, improve and stabilize all Domain modules and their tests; then, advance the Kernel compilation/scheduling logic; and finally, handle the UI Shell.
 
 ## 8. Do Not Do 💡
 
@@ -97,18 +127,25 @@ Hard constraints. Violating these means the refactor is wrong.
 - Do not let `Equinox.Kernel.Compiler` read from `%Track{}` directly. It only sees `%SegmentContext{}`.
 - Do not hardcode `:pitch`, `:energy`, etc. anywhere in `Equinox.Kernel.*`. Curve semantics are Hook territory.
 - Do not feed raw per-frame drawing samples into `Equinox.Editor` or `History`. Simplify to control points first.
+- Do not let `Equinox.Domain.*` modules import or alias anything from `Equinox.Kernel.*`, `Equinox.Session.*`, or `Equinox.Editor.*`.
+- Do not add `graph`, `cluster`, `synth_override` fields to Domain models — they belong in Kernel compile-time context (`SegmentContext`).
+- Do not start Kernel or UI Shell feature work before the relevant Domain layer is stable and tested.
 - Do not re-run `Slicer` implicitly during `Editor` note operations. Segment mutations are explicit.
 
 ## Current Milestones & Focus
+
+Current priority: **Domain layer stability → Domain-Kernel decoupling → Kernel compilation chain → UI Shell**.
 
 1. ~~**M0 — Skeleton**: Umbrella scaffolded, Vite ↔ Phoenix wiring verified on Windows, `MockBridge` + `LiveBridge` both render an empty PianoRoll.~~
 2. ~~**M1 — Piano Roll parity**: Port notes/viewport/grid from KinoBayanroll.~~
 3. ~~**M2 — Node Editor parity**: SvelteFlow-based Synth editor, StepRegistry-driven palette, graph persistence via `Equinox.Project`.~~
 4. ~~**M3 — Kernel compile/runtime decoupling**: `Compiler`, `Planner`, `Session.Context`, and OrchidStratum-backed session storage are wired into the render path.~~
-5. **M4 — Slicer semantics & segment application**: Finalize `Note.slice_flag` model, automatic rest-gap slicing, user overrides, and the editor/session flow that materializes slices into `Segment` updates.
+5. **M4 — Slicer semantics & segment application** (Domain layer, WIP): Finalize `Note.slice_flag` model, automatic rest-gap slicing, user overrides, and the editor/session flow that materializes slices into `Segment` updates.
    - Status: `Notes -> Slice -> Segment` projection and session-level `slice_id -> Segment.id` remapping are in place; covered by bulk-import and incremental-entry workflow tests.
-6. **M5 — Arranger**: Second SvelteFlow canvas, multi-track mix, slice/segment alignment, and slice-aware editing affordances.
-7. **M6 — Curves**: Track-level `CurveLayer` model, control-point + rasterization pipeline, Compiler injection as `data_intervention`, Orchid Hook contract. 💡
+6. **M6 — Curves** (Domain takes priority, Kernel comes later)): Track-level `CurveLayer` model, control-point + rasterization pipeline, Compiler injection as `data_intervention`, Orchid Hook contract. 💡
+   - Phase 1-2: `CurveChunk`、`CurveLayer`、`RasterCache` Pure data modules.
+   - Phase 3-4 (Kernel integration & slimming) will proceed after the Domain is stabilized.
+7. **M5 — Arranger** (UI Shell, rear-mounted): Second SvelteFlow canvas, multi-track mix, slice/segment alignment, and slice-aware editing affordances.
 8. **M7 — History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
 9. **M8 — Plugin System**: Runtime dynamic loading of custom Synth Nodes.
    - Frontend: Implement WebComponent wrapping for SvelteFlow to load arbitrary third-party UI `.js` securely via dynamic `<script type="module">`.
@@ -293,10 +330,9 @@ Configurator.new(
 
 Kernel does not ship a reference Hook. M6 delivers the contract and payload shape; the first concrete Hook lives outside Kernel (userland or a sibling package).
 
-## Refactor In Progress — Vibe Cleanup + M6 Phase 4 Prep
+## Refactor In Progress — Domain Layer Stabilization + Domain-Kernel Decoupling
 
-Ongoing cleanup sweep; pick up here on resume.
-
+Current priorities: Complete Domain layer modeling, eliminate the coupling reference between the Domain and the Kernel, and then advance the Kernel and UI Shell.
 ### Done
 
 - `Equinox.Util.Id.generate/0` extracted; 5 duplicated `generate_id/0` call sites replaced.
@@ -304,11 +340,19 @@ Ongoing cleanup sweep; pick up here on resume.
 - `%Equinox.Editor.Segment{}` relocated to `%Equinox.Domain.Segment{}`; all references updated (kernel, tests, `ui_shell`).
 - `Equinox.Util.Attrs` moduledoc carries a TODO about atom-table leak via `String.to_atom/1` (revisit with `to_existing_atom/1` or a field whitelist).
 
-### Open — Segment Shrinkage (M6 Phase 4 early)
+### Open — Domain-Kernel Coupling Fix
 
-Target: remove `curves / synth_override / graph / cluster` from `%Segment{}`. Held back pending Worker's architectural review.
+Currently existing coupling points (in order of priority):
 
-When resuming:
+1. `alias Equinox.Kernel.{Graph, Graph.Cluster}` in `Equinox.Domain.Segment` — Remove the alias and delete the `graph`/`cluster`/`synth_override`/`curves` fields.
+
+2. `alias Equinox.Editor.Segment` in `Equinox.Domain.Slicer` — Should be changed to `alias Equinox.Domain.Segment`.
+
+3. M6 Phase 1-2 (pure Domain modules): `CurveChunk`, `CurveLayer`, `RasterCache`.
+
+### Segment Slimming Execution Steps
+
+Target: remove `curves / synth_override / graph / cluster` from `%Segment{}`.
 
 - Shrink `defstruct`, `@type t`, `new/1`, `from_attrs/1`, and the `Jason.Encoder` impl in `kernel/lib/equinox/domain/segment.ex`.
 - Tolerate reads in `Equinox.Kernel.Compiler` temporarily via `Map.get(segment, :graph, %Graph{})` / `Map.get(segment, :cluster, %Graph.Cluster{})` / `Map.get(segment, :data_interventions, %{})`. Mark each such site with a comment pointing to M6 Phase 4 / `SegmentContext`. Current concrete sites:
@@ -329,8 +373,3 @@ Ordered roughly by priority; do not fix opportunistically without a matching com
 5. `Session.Server.handle_info/2` only handles task success; failures get swallowed by `Logger.warning("unknown message")`. Bug.
 6. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
 7. `Compiler.compile_cache` typespec disagrees with actual shape.
-
-## Next Session Starting Point
-
-- M4 close-out: lock the exact automatic slicing invariants for `Note.slice_flag` across split/merge/tail-append edits, and confirm `slice_id ↔ Segment.id` mapping lives in session-level registry rather than Slicer itself.
-- M6 kickoff: start Phase 1 (pure `Domain.Curve*` modules) — no other subsystems are touched, so it can proceed in parallel with M5 UI work.
