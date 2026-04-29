@@ -9,7 +9,15 @@ defmodule EquinoxDomain.Timeline.TimeSig do
   # 散拍子
   @type free :: :san
 
+  # 不从零开始
+  @type bar :: pos_integer()
+
   @type t :: standard() | compound() | free()
+
+  @typedoc "速度变化事件"
+  @type time_sig_event :: {bar(), t()}
+
+  @type time_sig_events :: [time_sig_event()] | {[time_sig_event()], last :: bar()}
 
   @doc "获取一个完整小节的 Tick 长度"
   def ticks_per_bar({:standard, num, den}), do: div(total_notes(num), den)
