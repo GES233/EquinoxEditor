@@ -3,7 +3,7 @@ defmodule EquinoxDomain.Curve do
   # 因为曲线参数是 Equinox 的一个特色（灵感来源于 Cadencii）
   # 所以作为一个单独的模块
 
-  # 原则上讲，一个 Curve 用于 Track
+  # 原则上讲，包括多个的 Chunk 的一条 Curve 用于 Track 的特定 Channel
 
   # 一方面，提供默认值（基于 behaviour）
   # 另一方面，提供直线、曲线、手绘工具以及清除/部分清楚的工具
