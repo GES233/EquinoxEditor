@@ -2,6 +2,10 @@ defmodule EquinoxDomain.Segment do
   # 渲染的最小上下文单位
 
   # Track[Notes & Curves] -> Slicer & Utterance -> Segments
+  # 先经过 Slicer 处理音符
+  # 再经过 Utterance 得到一系列时间窗
+  # 最后对音符/时长/曲线进行栅格化得到 Segments
+  # 丢给下游的引擎
   alias EquinoxDomain.{Timeline, Timeline.Tick, Score.Phoneme}
 
   # 是典型的 VO （因为是运行时生成的对象）
