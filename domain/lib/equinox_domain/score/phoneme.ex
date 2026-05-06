@@ -21,8 +21,9 @@ defmodule EquinoxDomain.Score.Phoneme do
           type: phoneme_type(),
           # 之所以不是非负整数，是要考虑辅音的 offset 是负的
           # 拍子从元音开始算
-          tick_offset: integer(),
+          # 相较于上游所属音符开始时刻的 offset
+          note_offset: integer(),
           duration_tick: integer()
         }
-  use EquinoxDomain.Util.Object, keys: [:symbol, :type, :tick_offset, :duration_tick]
+  use EquinoxDomain.Util.Object, keys: [:symbol, :type, :note_offset, :duration_tick]
 end

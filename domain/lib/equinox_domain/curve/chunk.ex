@@ -5,11 +5,11 @@ defmodule EquinoxDomain.Curve.Chunk do
   alias EquinoxDomain.Util.ID
   # 虽然预计对象会有很多，但因为可被定位的关系，属于 Entity
   @type t :: %__MODULE__{
-    id: ID.t(),
-    channel: term(),
-    type: module(),
-    payload: term()
-  }
+          id: ID.t(),
+          channel: term(),
+          type: module(),
+          payload: term()
+        }
   use EquinoxDomain.Util.Model,
     keys: [:id, :channel, :type, :payload],
     id_prefix: "CurveChunk_"

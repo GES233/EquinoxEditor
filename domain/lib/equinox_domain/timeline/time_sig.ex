@@ -7,7 +7,9 @@ defmodule EquinoxDomain.Timeline.TimeSig do
 
   alias EquinoxDomain.Timeline.Tick, as: Tk
 
-  @type standard :: {:standard, numerator :: pos_integer(), denominator :: pos_integer()}
+  @type standard ::
+          {numerator :: pos_integer(), denominator :: pos_integer()}
+          | {:standard, numerator :: pos_integer(), denominator :: pos_integer()}
   @type compound :: {:compound, groupings :: [pos_integer()], denominator :: pos_integer()}
   # 散拍子
   @type free :: :san
@@ -23,6 +25,9 @@ defmodule EquinoxDomain.Timeline.TimeSig do
   @type time_sig_events :: [time_sig_event()] | {[time_sig_event()], last :: bar()}
 
   @doc "获取一个完整小节的 Tick 长度"
+  def ticks_per_bar({num, den}) when is_integer(num) and is_integer(den),
+    do: ticks_per_bar({:standard, num, den})
+
   def ticks_per_bar({:standard, num, den}), do: div(total_notes(num), den)
   def ticks_per_bar({:compound, groupings, den}), do: div(total_notes(Enum.sum(groupings)), den)
   def ticks_per_bar(:san), do: nil

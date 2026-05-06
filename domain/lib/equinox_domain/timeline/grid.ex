@@ -4,6 +4,7 @@ defmodule EquinoxDomain.Timeline.Grid do
 
   负责将任意给定的游离 Tick 吸附到最近的网格线上。
   """
+
   # 就留个模块在这里，因为实际执行的通常是 UI 端
   # 不会波及到后台
   # 但作为编辑器语义上的功能，在这里说一下
@@ -56,7 +57,8 @@ defmodule EquinoxDomain.Timeline.Grid do
   def ticks_per_step({:triplet, 8}), do: div(Tick.ticks_per_quarter_note(), 3)
 
   @doc "保持音符绝对长度「被吸附」的相对吸附。"
-  @spec snap_tick_relative(Tick.numeric_tick(), Tick.numeric_tick(), grid_type()) :: Tick.numeric_tick()
+  @spec snap_tick_relative(Tick.numeric_tick(), Tick.numeric_tick(), grid_type()) ::
+          Tick.numeric_tick()
   def snap_tick_relative(raw_tick, original_tick, grid_type) do
     step = ticks_per_step(grid_type)
 

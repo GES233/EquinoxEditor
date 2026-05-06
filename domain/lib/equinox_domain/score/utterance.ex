@@ -10,9 +10,8 @@ defmodule EquinoxDomain.Score.Utterance do
     keys: [
       :id,
       :track_id,
-      :start_tick,
-      :duration_tick,
       # 关联内容
+      # Note.id 与音素的对应表
       :note_id_map,
       phonemes: []
     ],
