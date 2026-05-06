@@ -28,21 +28,19 @@ Development follows a strict bottom-up dependency order:
 - **Kernel** consumes Domain types for compilation, planning, and graph construction. Never imports UI or Session.
 - **Session / UI Shell** sit at the outermost layer, consuming both Domain and Kernel.
 
-**Current priority**: The stability of the Domain layer is decoupled from the Domain-Kernel. No new features should be added to the Kernel or UI Shell before the Domain layer is complete.
-
 ### EquinoxDomain — Independent Domain Project
 
-The `EquinoxDomain` module lives in `domain/` as a **separate, zero-dependency Elixir project** (`:equinox_domain`). It is the canonical home for all domain types and pure business logic. The `kernel/lib/equinox/domain/` directory is legacy and will be replaced.
+The `EquinoxDomain` module lives in `domain/` as a **separate, zero-dependency Elixir project** (`:equinox_domain`). It is the canonical home for all domain types and pure business logic. The `kernel/lib/equinox/domain/` directory is frozen — all new development targets `domain/`.
 
 **Project location**: `domain/` (root-level, sibling to `kernel/` and `ui_shell/`)
 
 **Key design decisions**:
 - `use EquinoxDomain.Util.Model, keys: [...], id_prefix: "Xxx_"` auto-generates `new/1` and `update/2` for all domain structs. `update/2` returns `{:ok, model} | {:error, reason}`.
 - `Note.slice_flag` uses `:auto | :force_slice | :force_merge` (simpler than kernel's tuple-based version).
-- `Track` holds `notes: %{}` (map by id) and `curve_layers: %{}` (M6).
+- `Track` holds `notes: %{}` (map by id) and `curve_layers: %{}`.
 - `Phoneme` is a standalone value object with timing info (`symbol`, `type`, `tick_offset`, `duration_tick`).
 - `Utterance` replaces the kernel's `Segment` concept — it groups notes + phonemes into a continuous vocal phrase, and determines rasterization boundaries for the render pipeline. The engine does not need to understand the Note domain model.
-- `Segment` is a pure rendering-context VO (acoustic boundaries, rasterized phonemes/curves) — not a note container.
+- `Segment` is a pure rendering-context VO (acoustic boundaries, rasterized phonemes/curves) — not a note container. The Domain defines a structure, and the `rasterized_*` fields are populated by the Kernel at compile time.
 
 **Build/Test**: `cd domain && mix test` | **Pre-commit**: `cd domain && mix precommit`
 
@@ -52,6 +50,8 @@ The `EquinoxDomain` module lives in `domain/` as a **separate, zero-dependency E
 - **Paths**: ALWAYS use forward slashes (`/`).
 - **Commands**: Unix text utilities (`grep`, `awk`, `tail` via pipes) are missing. Rely on native Agent tools (`Glob`, `Grep`, `View`) instead of bash pipes for text search/manipulation.
 - **Search Before Act**: Do not rely on hardcoded directory trees. Use `ls`/`glob` to find components and files.
+- **Plan Before Code**: Before modifying or creating files, briefly output your plan or structural changes. Do not rush into writing large blocks of code without confirming the target file paths via `ls`/`glob`.  
+- **Strict Phase Compliance**: Do not attempt to refactor Kernel or UI Shell (Phase 2 & 3) while Phase 1 is still ongoing. Ignore legacy code smells in `kernel/` until Phase 1 (Domain MVP) is 100% complete.  
 
 ## 3. Frontend ↔ Backend Bridge
 
@@ -59,13 +59,14 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 - **Rule**: Svelte components receive `bridge` as a prop. NEVER import from `phoenix_live_view` or access `window.liveSocket` in Svelte.
 - **Event Routing**: LiveComponents use `phx-target={@myself}`. Svelte 5 uses local `$state` for optimistic UI and `$effect` + `setTimeout` for debouncing network requests, instead of backend debouncing.
+- **Svelte 5 State**: Extract complex client-side state models into `.svelte.ts` files using exported functions or classes wrapping `$state`. Keep `.svelte` UI components focused on rendering and Bridge message dispatching.  
 
 ## 4. Core Domain & Architecture Rules
 
 - **Domain-First Development**: `EquinoxDomain.*` (in `domain/`) is the cornerstone of the project. All domain models (data structures + pure functional logic) must be completed and thoroughly tested at this layer before development of the Kernel or UI Shell can begin. The Domain project is prohibited from depending on Kernel or UI modules.💡
-- **Pure Data**: `Project`, `Track`, `Utterance`, `Note`, `Phoneme`, and `Segment` are pure data structures (JSON/Pickle serializable). No Ecto schemas, no executable closures inside them.
+- **Pure Data**: `Project`, `Track`, `Utterance`, `Note`, `Phoneme` are pure data structures (JSON/Pickle serializable). `Segment` is also of type Domain, but its `rasterized_*` fields are cached at runtime and do not participate in serialization. No Ecto schemas, no executable closures inside them.
 - **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte.
-- **Stateless Kernel**: The Kernel (`Equinox.Kernel.*`, `Equinox.Editor.*`) is pure-functional wherever possible. Domain types come from `EquinoxDomain.*`. Persistent state lives in downstream consumers (`Equinox.Session.Server`, `ui_shell`). The only tolerated stateful Kernel component is `Equinox.Kernel.StepRegistry` (build-time catalog, not session state). 💡
+- **Stateless Kernel**: The Kernel (`Equinox.Kernel.*`) is pure-functional wherever possible. Domain types come from `EquinoxDomain.*`. Persistent state lives in downstream consumers (`Equinox.Session.Server`, `ui_shell`). The only tolerated stateful Kernel component is `Equinox.Kernel.StepRegistry` (build-time catalog, not session state). `Equinox.Editor.*` is partially obsolete and is no longer considered an independent concept. 💡
 - **Slicer Model**: Slicing is a pure one-way projection `Notes → Slice → Utterance`. `Slicer` never mutates `Utterance`s after materialization; later edits happen on `Track.notes` with automatic slice repair. `slice_flag` (`:auto | :force_slice | :force_merge`) on `Note` is an *input signal* for `Slicer`, not a post-hoc synchronization channel. 💡
 - **Curves belong to Track, not Utterance/Segment**: Continuous parameter curves (pitch, energy, breathiness, …) are stored as `CurveLayer`s on `Track`. Utterances hold only notes + phonemes; Segments are pure rendering-context VOs. At compile time, the Compiler slices relevant curves into the active `SegmentContext`. 💡
 - **UI Layout Hierarchy**:
@@ -77,9 +78,11 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 ## 5. Coding Conventions
 
 - **Elixir**: Return `{:ok, value} | {:error, reason}` (except some Context-like structs, which prefer `t() -> t() | {:error, reason}`). API names start with verbs (`create_`, `update_`).
+  - - **Elixir Error Handling**: The `EquinoxDomain` layer must NEVER `raise` exceptions. Use pattern matching, `case`, and `with` to return `{:error, reason}`. Avoid `!` functions (e.g., use `Map.fetch` instead of `Map.fetch!`) unless validating purely internal logic where a crash is genuinely expected. For other scenes, `!` is acceptable.
 - **Svelte 5**: Runes ONLY (`$state`, `$derived`, `$props`, `$effect`).
 - **Tailwind v4**: `!` modifier goes at the END (e.g., `bg-amber-500!`). Gradients use `bg-linear-to-b`.
 - **SvelteFlow**: NEVER use reserved node types like `input`/`output`. Use custom names (e.g., `custom_input`).
+- **Language**: AGENTS.md is pure English. Source code, comments, and documentation use Chinese. Project audience: AI assistants and Chinese-speaking developers.
 
 ## 6. Essential Commands
 
@@ -87,6 +90,8 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 - Kernel (`cd kernel`): `mix deps.get`, `mix test`, `mix precommit`
 - UI Shell (`cd ui_shell`): `mix deps.get`, `iex -S mix phx.server`, `mix precommit`
 - Frontend (`cd ui_shell/assets`): `npm run dev`, `npm run build`, `npm run check`
+- Commit Messages: Follow Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `chore:`).   
+  - Commit messages should be in English, but the internal code/documentation comments remain in Chinese until user's request.
 
 ## 7. Architecture Decision Records 💡
 
@@ -94,7 +99,9 @@ Short, load-bearing decisions. New Agents MUST read these before touching Kernel
 
 ### ADR-001 — Slicer is a one-way projection (Notes → Utterance)
 
-`EquinoxDomain.Score.Slicer` consumes a flat list of `Note`s and produces `Utterance` structs via `materialize/2`. An `Utterance` groups contiguous notes + phonemes into a renderable vocal phrase. Once an Utterance exists, it becomes the authoritative container for its notes. Re-running the slicer over a Track does **not** silently mutate existing Utterances; callers must explicitly reconcile.
+`EquinoxDomain.Score.Slicer` consumes a flat list of `Note`s and produces `Utterance` structs. An `Utterance` groups contiguous notes + phonemes into a continuous vocal phrase, and is the stable carrier of note↔phoneme mapping for a track. It also stores phoneme timing and reserves a render window before rendering.
+
+Once an Utterance exists, it becomes the authoritative container for its notes and persists across edits; it is not regenerated on every slicer run. Re-running the slicer over a Track does **not** silently mutate existing Utterances; callers must explicitly reconcile.
 
 - `Note.slice_flag` (`:auto | :force_slice | :force_merge`) is an input signal for the slicer (manual overrides + rest-gap hints), not a runtime sync channel.
 - The rendering engine consumes `Utterance` + rasterized curves via `SegmentContext`; it does not need to understand the Note domain model.
@@ -110,7 +117,7 @@ Rationale: Utterances are derived from Notes; forcing curves to live inside Utte
 
 A `CurveChunk` stores sparse control points as truth and a raster cache (`stride` + `binary` samples) as a derivable artifact. Only control points are serialized; raster caches are rebuilt on demand.
 
-Hand-drawn strokes from the UI are simplified (Douglas-Peucker or similar) into control points **before** they enter `Equinox.Editor` / `History`. Raw per-pixel samples never reach History.
+Hand-drawn strokes from the UI are simplified (Douglas-Peucker or similar) into control points **before** they enter the editing pipeline / `History`. Raw per-pixel samples never reach History.
 
 ### ADR-004 — Curves enter the pipeline as data interventions
 
@@ -121,6 +128,11 @@ The Kernel does not hardcode the semantics of any curve parameter. At compile ti
 3. Emits a `data_intervention` keyed by `PortRef`.
 
 An **Orchid Hook** (user-supplied, registered via `Configurator.plugins`) maps `param_name → (target_node, target_port)` and consumes the payload. Validation is delegated to `Orchid.Param` typing.
+
+### ADR-005 — Arranger (Absorbed by Phase 3)
+
+Early design decisions for the M5 Arranger have been incorporated into the Phase 3 UI Shell planning, and the standalone ADR is no longer maintained.
+Numbering is retained to avoid subsequent ADR rearrangements.
 
 ### ADR-006 — Domain-Kernel Layered Decoupling
 
@@ -135,68 +147,112 @@ Rules:
 
 Development order: First, complete all Domain modules and tests in `domain/`; then, integrate Domain into Kernel; and finally, handle the UI Shell.
 
+### ADR-007 — Rasterization Strategy (Domain behaviour, Kernel/NIF implementation)
+
+Rasterization of control points into sample sequences is a performance-sensitive one-dimensional time-series operation. The strategy:
+
+1. The Domain layer defines rasterization behavior (pure Elixir reference implementation).
+2. The Kernel/NIF layer can be replaced with a high-performance implementation, using behavior contract constraints on the interface.
+3. All rasterized data is cached at runtime and does not participate in serialization.
+
+Rationale: Domain already possesses complete semantics for one-dimensional time series, but extensive rasterization on BEAM may present a performance bottleneck. Separating the definition and implementation allows for subsequent replacement with NIF without affecting the pure functional properties of the Domain layer.
+
 ## 8. Do Not Do 💡
 
-Hard constraints. Violating these means the refactor is wrong.
+### Domain Red Lines (permanent)
 
-- Do not add `GenServer` / `Agent` / `:ets` inside `Equinox.Kernel.*` except the existing `StepRegistry`.
-- Do not restore `graph`, `cluster`, `synth_override`, or `curves` fields on `%Segment{}` or `%Utterance{}`. They belong on `SegmentContext` (compile-time) or `Track` (curves).
-- Do not let `Equinox.Kernel.Compiler` read from `%Track{}` directly. It only sees `%SegmentContext{}`.
-- Do not hardcode `:pitch`, `:energy`, etc. anywhere in `Equinox.Kernel.*`. Curve semantics are Hook territory.
-- Do not feed raw per-frame drawing samples into `Equinox.Editor` or `History`. Simplify to control points first.
-- Do not let `EquinoxDomain.*` modules import or alias anything from `Equinox.Kernel.*`, `Equinox.Session.*`, or `Equinox.Editor.*`.
-- Do not add `graph`, `cluster`, `synth_override` fields to Domain models — they belong in Kernel compile-time context (`SegmentContext`).
-- Do not start Kernel or UI Shell feature work before the relevant Domain layer is stable and tested.
-- Do not re-run `Slicer` implicitly during `Editor` note operations. Utterance materialization is explicit.
+- Do not let `EquinoxDomain.*` modules import, alias, or use anything from `Equinox.Kernel.*`, `Equinox.Session.*`, or `Equinox.Editor.*`. Domain is a zero-dependency project.
+- Do not add `graph`, `cluster`, or `synth_override` fields to Domain structs. These are Kernel compile-time concepts; they belong in `SegmentContext` (ADR-006).
+- Do not re-run `Slicer` implicitly during Editor note operations. Slicing is an explicit one-way projection: `Notes → Slice → Utterance` (ADR-001).
+- Do not feed raw per-frame drawing samples into Editor or History. Simplify to control points first via Douglas-Peucker (ADR-003).
+
+### Kernel Guidelines
+
+The Kernel layer exists as a thin wrapper over Domain + runtime state management. It introduces no new business logic.
+
+- GenServer usage in Kernel is limited to runtime state management only. No business logic in processes.
+- Curve parameter semantics do not leak into Kernel. Never hardcode `:pitch`, `:energy`, or any specific param name (Hook territory, ADR-004).
+
+## 9. Testing Guidelines
+
+- **Domain (Elixir)**: Focus on pure unit tests (`ExUnit`). Avoid mocking in the `domain/` project since everything is pure data/functions. Use table-driven tests (or `Enum.each`) for matrix logic like `Slicer` edge cases.
+- **Kernel (Elixir)**: Test stateful boundaries (e.g., GenServers) and integration with Domain types.
+- **Frontend (Svelte)**: UI testing is deferred to Phase 3. For pure TS logic (e.g., math, formatting), use standard unit tests.
 
 ## Current Milestones & Focus
 
-Current priority: **Phase 1 (Domain MVP) → Phase 2 (Domain-Kernel integration) → UI Shell**.
+Current priority: **Phase 1a → 1b → 1c → 1d (Domain MVP) → Phase 2 (Domain-Kernel integration) → Phase 3 (UI Shell)**.
 
 ```
-Phase 1 ──── Domain MVP (domain/)
-  Complete all pure domain models + tests.
-  Zero dependencies on Kernel or UI.
+Phase 1a ─── Standalone Domain Models (domain/)
+  Key.TwelveET, Note (pitch/duration/timing), Curves (Chunk/Layer/RasterCache),
+  Timeline (TimeSigMap, Tempo.Linear, Tempo.Curve), Douglas-Peucker simplification.
+
+Phase 1b ─── Aggregate Roots (domain/)
+  Track, Project, Utterance, Phoneme linkage.
+  Note CRUD at Track level.
+
+Phase 1c ─── Slicer & Materialization (domain/)
+  Note.slice_flag, Slicer: Notes → Utterance projection,
+  Track note CRUD with slice repair, Segment (rendering context VO).
+
+Phase 1d ─── Polish & Serialization (domain/)
+  Editing commands, Session/RenderRequest, Pickle + comprehensive tests.
 
 Phase 2 ──── Domain-Kernel Integration (kernel/)
   Replace legacy Domain types with the new domain project.
   Adapt Editor / Session / Compiler to Utterance + SegmentContext.
-  M6 curve compilation pipeline.
+  Curve compilation pipeline.
 
 Phase 3 ──── UI Shell Polish (ui_shell/)
-  M5 Arranger, M7 History, M8 Plugin System.
+  Arranger, History, Plugin System.
 ```
 
 ### Completed
+
+> The following M0–M3 are early milestones that have been completed. Subsequent planning will uniformly use the Phase system.
+
 1. ~~**M0 — Skeleton**: Umbrella scaffolded, Vite ↔ Phoenix wiring verified on Windows, `MockBridge` + `LiveBridge` both render an empty PianoRoll.~~
 2. ~~**M1 — Piano Roll parity**: Port notes/viewport/grid from KinoBayanroll.~~
 3. ~~**M2 — Node Editor parity**: SvelteFlow-based Synth editor, StepRegistry-driven palette, graph persistence via `Equinox.Project`.~~
 4. ~~**M3 — Kernel compile/runtime decoupling**: `Compiler`, `Planner`, `Session.Context`, and OrchidStratum-backed session storage are wired into the render path.~~
 
-### Phase 1 — Domain MVP (domain/)
-5. **M4 — Slicer semantics & Utterance materialization**: Implement `Note.slice_flag` (`:auto | :force_slice | :force_merge`), rest-gap slicing, `Notes → Slice → Utterance` projection, and `Materialize` as an explicit step. Track-level note CRUD with automatic slice repair.
-6. **M6a — Curves (pure data)**: `CurveChunk`, `CurveLayer`, `RasterCache` modules + rasterizer (linear / cubic / step interpolation) + stroke simplification (Douglas-Peucker). Control points authoritative, raster cache derivable.
-7. **Score models**: Complete `Key.TwelveET`, `Note` (split/merge/metadata), `Track` (note CRUD + curve layer management), `Project`, `Utterance`, `Phoneme` linkage.
-8. **Timeline**: Complete `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`.
-9. **Editing commands**: Implement `Command.Editing` concrete commands (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo.
-10. **Session / Render request**: Define `Session` (selection, clipboard, viewport) and `Command.RenderRequest`.
-11. **Serialization + Tests**: `Pickle` protocol implementations for all domain types + comprehensive test coverage.
+### Phase 1a — Standalone Domain Models (domain/)
+5. **Key.TwelveET** — 12-tone equal temperament pitch model: note names, octaves, MIDI numbers, frequency conversion.
+6. **Note (standalone)** — Note struct with duration, pitch, timing (`start_tick`, `duration_tick`). Pure value fields; no Track-level concerns.
+7. **Timeline** — `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`. Musical time ↔ physical time conversion.
+8. **Curves (pure data)** — `Curve.Chunk`, `Curve.Layer`, `Curve.RasterCache` + rasterizer (linear / cubic / step interpolation) + stroke simplification (Douglas-Peucker).
+
+### Phase 1b — Aggregate Roots (domain/)
+9. **Track** — Notes map (`%{note_id => Note.t()}`) + `curve_layers: %{}`. Note CRUD at Track level (insert, delete, split, merge, update). Curve layer management.
+10. **Project** — Tracks map + project-level metadata. Track CRUD.
+11. **Utterance & Phoneme** — Utterance groups notes + phonemes into continuous vocal phrases. Phoneme is a standalone VO with timing info. Utterance determines rasterization boundaries.
+
+### Phase 1c — Slicer & Materialization (domain/)
+12. **Slicer** — `Note.slice_flag` (`:auto | :force_slice | :force_merge`). Rest-gap slicing. `Notes → Slice → Utterance` projection. Materialization as an explicit step.
+13. **Track slice repair** — After insert/delete/split/merge/update, auto-repair `slice_flag` in affected interval.
+14. **Segment** — Rendering context VO: acoustic boundaries, rasterized phonemes/curves. The Domain defines the structure, and the `rasterized_*` fields are populated by the Kernel (see ADR-007).
+
+### Phase 1d — Polish & Serialization (domain/)
+15. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo.
+16. **Session / RenderRequest** — `Session` (selection, clipboard, viewport) and `Command.RenderRequest`.
+17. **Pickle + comprehensive tests** — `Pickle` protocol implementations for all domain types + full test coverage.
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
-12. **Domain dependency**: Add `:equinox_domain` to kernel, delete legacy `Equinox.Domain.*`, replace all references.
-13. **Slicer → Utterance**: Rewrite Slicer for new `slice_flag` model; `materialize_utterances` replaces `materialize_segments`.
-14. **Track API**: `insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note` with automatic slice repair.
-15. **SegmentContext + M6b**: Introduce `SegmentContext`, remove `graph`/`cluster`/`synth_override`/`curves` from Segment. Slice `CurveLayer`s into tick range, rasterize, emit `data_interventions` via Hook contract.
-16. **Editor / Session adaptation**: Editor ops → Track API → explicit materialization. Session manages `utterance_id ↔ segment_id` mapping.
+18. **Domain dependency**: Add `:equinox_domain` to kernel, delete legacy `Equinox.Domain.*`, replace all references.
+19. **Slicer → Utterance**: Rewrite Slicer for new `slice_flag` model; `materialize_utterances` replaces `materialize_segments`.
+20. **Track API**: `insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note` with automatic slice repair.
+21. **SegmentContext + M6b**: Introduce `SegmentContext`, remove `graph`/`cluster`/`synth_override`/`curves` from Segment. Slice `CurveLayer`s into tick range, rasterize, emit `data_interventions` via Hook contract.
+22. **Editor / Session adaptation**: Editor ops → Track API → explicit materialization. Session manages `utterance_id ↔ segment_id` mapping.
 
 ### Phase 3 — UI Shell (ui_shell/)
-17. **M5 — Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances.
-18. **M7 — History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
-19. **M8 — Plugin System**: Runtime dynamic loading of custom Synth Nodes.
+23. **Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances.
+24. **History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
+25. **Plugin System**: Runtime dynamic loading of custom Synth Nodes.
     - Frontend: WebComponent wrapping for SvelteFlow, third-party UI `.js` via dynamic `<script type="module">`.
     - Backend: Distributed Erlang — isolated BEAM `Engine Node` per Session for Orchid graph execution, hot-load `.beam` modules without risking the Phoenix `Web Node`.
 
-## M4 — Slicer Semantics & Utterance Materialization
+## Slicer Semantics & Utterance Materialization
 
 ### Slicer Scenarios
 
@@ -251,16 +307,16 @@ After each track edit, repair algorithm:
 
 ### Materialization Flow
 
-Editor/Session layer:
+Editor/Session layer(Steps are marked with `[auto]` / `[explicit]`):
 
-1. Track edits update `track.notes` with repaired `slice_flag`.
-2. Slicer produces `Utterance` structs: `Notes → Slice → Utterance`.
-3. Session materializes utterances and maintains `utterance_id` mapping.
-4. Compiler renders from `Utterance` level — utterances determine rasterization boundaries for both phonemes and curves.
+1. [auto] Track edits update `track.notes` with repaired `slice_flag`.
+2. [auto] Slicer produces `Utterance` structs: `Notes → Slice → Utterance`.
+3. [explicit] Session materializes utterances and maintains `utterance_id` mapping.
+4. [auto] Compiler renders from `Utterance` level — utterances determine rasterization boundaries for both phonemes and curves.
 
-## M6 — Curves
+## Curves
 
-Split into M6a (pure data, Phase 1) and M6b (kernel integration, Phase 2).
+Split into Phase 1 (pure data, Domain) and Phase 2 (kernel integration).
 
 ### Goals
 
@@ -278,11 +334,14 @@ Split into M6a (pure data, Phase 1) and M6b (kernel integration, Phase 2).
 
 ### Segment Shrinkage
 
-After M6, `%EquinoxDomain.Segment{}` retains only rendering-context fields: `track_id, utterance_id, start_tick, end_tick, core_start_sec, core_end_sec, context_start_sec, context_end_sec, rasterized_phonemes, rasterized_curves`.
+After curves integration, `%EquinoxDomain.Segment{}` retains only rendering-context fields: `track_id, utterance_id, start_tick, end_tick, core_start_sec, core_end_sec, context_start_sec, context_end_sec, rasterized_phonemes, rasterized_curves`(The `rasterized_*` fields are cached at runtime and are not serialized).
 
 Removed from Kernel's legacy Segment: `curves`, `synth_override`, `graph`, `cluster`. These move to `SegmentContext` (compile-time) or `Track` (curves).
 
 ### Editor API Additions
+
+> The `Editor.` prefix is ​​a placeholder name; its specific module affiliation will be determined during Phase 2 implementation.
+> In this document, "Editor" refers to the entire Equinox application.
 
 - `Editor.apply_curve_stroke(project, track_id, param, %Chunk{})`: atomic insertion of a completed stroke. Emits history entries.
 - `Editor.erase_curve_range(project, track_id, param, start_tick, end_tick)`: erase within a range.
@@ -301,7 +360,7 @@ Strokes are assumed already-simplified control-point chunks (see ADR-003). The E
    ```
 4. No `param_name` is privileged inside Kernel code.
 
-### M6a — Domain (Phase 1)
+### Phase 1 — Domain
 
 Pure data modules inside `domain/`, no impact on Kernel:
 
@@ -314,7 +373,7 @@ Pure data modules inside `domain/`, no impact on Kernel:
 
 Each step ends on a green `cd domain && mix precommit`.
 
-### M6b — Kernel Integration (Phase 2)
+### Phase 2 — Kernel Integration
 
 After Domain is stable:
 
@@ -345,11 +404,9 @@ Configurator.new(
 )
 ```
 
-Kernel does not ship a reference Hook. M6 delivers the contract and payload shape; the first concrete Hook lives outside Kernel (userland or a sibling package).
+Kernel does not ship a reference Hook. Curves integration delivers the contract and payload shape; the first concrete Hook lives outside Kernel (userland or a sibling package).
 
 ## Refactor In Progress — Domain MVP → Domain-Kernel Integration
-
-Current priorities: Complete Domain MVP in `domain/` (Phase 1), then integrate into Kernel (Phase 2).
 
 ### Phase 1 — Domain MVP (domain/)
 
@@ -362,12 +419,25 @@ The `domain/` project (`EquinoxDomain`) is the canonical home for all domain typ
 - VO: `Segment` (rendering context)
 - Curve skeletal: `Curve.Chunk`
 
-**In Progress / TODO (see milestones 5-11):**
-- Complete `Note` (split/merge/metadata/serialization), `Track` (note CRUD + curve layers), `Project`
-- `Slicer`: `Notes → Slice → Utterance` with `:auto | :force_slice | :force_merge` flags
-- `Key.TwelveET`, `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`
-- M6a: `Curve.Layer`, `Curve.RasterCache`, rasterizer, stroke simplification
-- `Command.Editing` implementations, `Session`, `Command.RenderRequest`
+**Phase 1a — Standalone Domain Models (milestones 5-8):**
+- `Key.TwelveET` — 12ET pitch model, note names, MIDI numbers
+- Complete `Note` standalone fields (pitch, duration, timing)
+- `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`
+- M6a: `Curve.Layer`, `Curve.RasterCache`, rasterizer, Douglas-Peucker
+
+**Phase 1b — Aggregate Roots (milestones 9-11):**
+- `Track` (notes map + curve layers, CRUD)
+- `Project` (tracks, metadata)
+- `Utterance` + `Phoneme` linkage, utterance as rasterization boundary source
+
+**Phase 1c — Slicer & Materialization (milestones 12-14):**
+- `Note.slice_flag` + `Slicer`: `Notes → Slice → Utterance`
+- Track slice repair on CRUD
+- `Segment` VO (rasterized phonemes/curves)
+
+**Phase 1d — Polish (milestones 15-17):**
+- `Command.Editing` implementations
+- `Session`, `Command.RenderRequest`
 - `Pickle` protocol for all types + comprehensive tests
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
@@ -392,7 +462,6 @@ Ordered roughly by priority; do not fix opportunistically without a matching com
 1. `Track.remove_segment/2` and `Project.remove_track/2` fail silently — contract mismatch.
 2. `Editor.add_note/4` hard-matches `{:ok, _} = Track.update_segment(...)` — violates error handling convention.
 3. Comment language mixed: `Equinox.Editor` module is all English (AI smell), rest is Chinese. Standardize to Chinese.
-4. `Equinox.Editor` misnamed — does not emit `History.Operation`; `History` is effectively orphaned.
-5. `Session.Server.handle_info/2` only handles task success; failures get swallowed by `Logger.warning("unknown message")`.
-6. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
-7. `Compiler.compile_cache` typespec disagrees with actual shape.
+4. `Session.Server.handle_info/2` only handles task success; failures get swallowed by `Logger.warning("unknown message")`.
+5. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
+6. `Compiler.compile_cache` typespec disagrees with actual shape.
