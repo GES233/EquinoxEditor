@@ -40,7 +40,7 @@ The `EquinoxDomain` module lives in `domain/` as a **separate, zero-dependency E
 - `Track` holds `notes: %{}` (map by id) and `curve_layers: %{}`.
 - `Phoneme` is a standalone value object with timing info (`symbol`, `type`, `tick_offset`, `duration_tick`).
 - `Utterance` replaces the kernel's `Segment` concept — it groups notes + phonemes into a continuous vocal phrase, and determines rasterization boundaries for the render pipeline. The engine does not need to understand the Note domain model.
-- `Segment` is a pure rendering-context VO (acoustic boundaries, rasterized phonemes/curves) — not a note container. The Domain defines a structure, and the `rasterized_*` fields are populated by the Kernel at compile time.
+- `Segment` is a pure rendering-context VO (acoustic boundaries, rasterized phonemes/curves) — not a note container. Domain define struct, and `rasterized_*` padding by Kernel during synthesizing.
 
 **Build/Test**: `cd domain && mix test` | **Pre-commit**: `cd domain && mix precommit`
 
@@ -217,6 +217,13 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 3. ~~**M2 — Node Editor parity**: SvelteFlow-based Synth editor, StepRegistry-driven palette, graph persistence via `Equinox.Project`.~~
 4. ~~**M3 — Kernel compile/runtime decoupling**: `Compiler`, `Planner`, `Session.Context`, and OrchidStratum-backed session storage are wired into the render path.~~
 
+**Completed sector list:**
+- Core timeline: `Tick`, `TempoMap`, `Tempo.Step`, `Grid`
+- Utilities: `Util.Model`, `Util.Object`, `Util.ID`, `Util.Pickle`, `Helpers`
+- Score data structures: `Note` (partial), `Phoneme`, `Utterance` (skeletal), `Track` (skeletal), `Project` (skeletal)
+- VO: `Segment` (rendering context)
+- Curve skeletal: `Curve.Chunk`
+
 ### Phase 1a — Standalone Domain Models (domain/)
 5. **Key.TwelveET** — 12-tone equal temperament pitch model: note names, octaves, MIDI numbers, frequency conversion.
 6. **Note (standalone)** — Note struct with duration, pitch, timing (`start_tick`, `duration_tick`). Pure value fields; no Track-level concerns.
@@ -242,7 +249,7 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 18. **Domain dependency**: Add `:equinox_domain` to kernel, delete legacy `Equinox.Domain.*`, replace all references.
 19. **Slicer → Utterance**: Rewrite Slicer for new `slice_flag` model; `materialize_utterances` replaces `materialize_segments`.
 20. **Track API**: `insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note` with automatic slice repair.
-21. **SegmentContext + M6b**: Introduce `SegmentContext`, remove `graph`/`cluster`/`synth_override`/`curves` from Segment. Slice `CurveLayer`s into tick range, rasterize, emit `data_interventions` via Hook contract.
+21. **SegmentContext**: Introduce `SegmentContext`, remove `graph`/`cluster`/`synth_override`/`curves` from Segment. Slice `CurveLayer`s into tick range, rasterize, emit `data_interventions` via Hook contract.
 22. **Editor / Session adaptation**: Editor ops → Track API → explicit materialization. Session manages `utterance_id ↔ segment_id` mapping.
 
 ### Phase 3 — UI Shell (ui_shell/)
@@ -406,56 +413,7 @@ Configurator.new(
 
 Kernel does not ship a reference Hook. Curves integration delivers the contract and payload shape; the first concrete Hook lives outside Kernel (userland or a sibling package).
 
-## Refactor In Progress — Domain MVP → Domain-Kernel Integration
-
-### Phase 1 — Domain MVP (domain/)
-
-The `domain/` project (`EquinoxDomain`) is the canonical home for all domain types and pure business logic. It is a zero-dependency project built bottom-up.
-
-**Completed:**
-- Core timeline: `Tick`, `TempoMap`, `Tempo.Step`, `Grid`
-- Utilities: `Util.Model`, `Util.Object`, `Util.ID`, `Util.Pickle`, `Helpers`
-- Score data structures: `Note` (partial), `Phoneme`, `Utterance` (skeletal), `Track` (skeletal), `Project` (skeletal)
-- VO: `Segment` (rendering context)
-- Curve skeletal: `Curve.Chunk`
-
-**Phase 1a — Standalone Domain Models (milestones 5-8):**
-- `Key.TwelveET` — 12ET pitch model, note names, MIDI numbers
-- Complete `Note` standalone fields (pitch, duration, timing)
-- `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`
-- M6a: `Curve.Layer`, `Curve.RasterCache`, rasterizer, Douglas-Peucker
-
-**Phase 1b — Aggregate Roots (milestones 9-11):**
-- `Track` (notes map + curve layers, CRUD)
-- `Project` (tracks, metadata)
-- `Utterance` + `Phoneme` linkage, utterance as rasterization boundary source
-
-**Phase 1c — Slicer & Materialization (milestones 12-14):**
-- `Note.slice_flag` + `Slicer`: `Notes → Slice → Utterance`
-- Track slice repair on CRUD
-- `Segment` VO (rasterized phonemes/curves)
-
-**Phase 1d — Polish (milestones 15-17):**
-- `Command.Editing` implementations
-- `Session`, `Command.RenderRequest`
-- `Pickle` protocol for all types + comprehensive tests
-
-### Phase 2 — Domain-Kernel Integration (kernel/)
-
-After Domain is stable: add `:equinox_domain` dep, delete legacy `Equinox.Domain.*`, adapt Editor/Session/Compiler to `EquinoxDomain.*`.
-
-**Legacy cleanup (kernel scope):**
-- Delete `kernel/lib/equinox/domain/note.ex`, `segment.ex`, `slicer.ex`
-- Replace all `Equinox.Domain.*` references with `EquinoxDomain.*`
-- Replace `Equinox.Util.Id` / `Equinox.Util.Attrs` with domain equivalents
-
-**SegmentContext + M6b (kernel scope):**
-- Introduce `Equinox.Kernel.Compiler.SegmentContext`
-- Remove `graph`/`cluster`/`synth_override`/`curves` from legacy `%Segment{}`, add legacy-tolerant loader in `Project.from_json/1`
-- `Compiler.compile/2` accepts `%SegmentContext{}`
-- `Session.Context` builds `SegmentContext` per utterance from owning `Track`
-
-### Known Smells (kernel scope — address during Phase 2)
+## 10. Known Issues (kernel scope — address during Phase 2)
 
 Ordered roughly by priority; do not fix opportunistically without a matching commit plan.
 
