@@ -126,9 +126,13 @@ defmodule EquinoxDomain.Score.Note do
 
   # @spec deserialze(Pickle.serialized()) :: {:ok, t()} | {:error, term()}
 
+  # 在这里加一个对 metadata 处理的函数
+  # 因为可能涉及插件的关系
+  # 遍历模块即可
+
   # ---- 作为音符的属性 ----
   # Note:
-  # 【关于时长】
+  # 【关于时长】  <- 需要引入对应模块
   # 需要和 merge/3 一样，引入容忍程度
   # 以兼容手绘音符与从乐谱转换的音符的差异
 end

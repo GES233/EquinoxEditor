@@ -34,4 +34,10 @@ defmodule EquinoxDomain.Util.Pickle do
     @doc "将被序列化的数据返回到给定对象（无需额外上下文）。"
     @callback deserialize(Pickle.serialized()) :: {:ok, Pickle.model()} | {:error, term()}
   end
+
+  defmodule Plugable do
+    @moduledoc "为操作对象可能存在外部插件的情况提供一些便利函数。"
+
+    # 先留个模块在这，我再想想 usecase
+  end
 end
