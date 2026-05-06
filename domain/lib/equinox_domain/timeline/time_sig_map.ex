@@ -1,15 +1,169 @@
 defmodule EquinoxDomain.Timeline.TimeSigMap do
-  # 整体上和 `EquinoxDomain.Timeline.TempoMap` 比较像。
+  @moduledoc """
+  拍号变化事件的编译映射表。
 
-  # 先不考虑散拍子
-  # 散拍子就是 `{:san, Tick.num | Quarter.num }` 了
+  内部委托 `RecordMap` 完成编译与基于 Bar 的二分查找，
+  自身负责 Bar→Tick 与 Tick→Bar 的转换。
 
-  alias EquinoxDomain.Timeline.TimeSig
+  编译后的结构形如：
 
-  @type compiled_event :: {pos_integer(), TimeSig.t()}
+      {
+        %{start_pos: 0, end_pos: 4, start_bar: 1, start_tick: 0, end_tick: 7680, time_sig: {:standard, 4, 4}},
+        %{start_pos: 4, end_pos: 6, start_bar: 5, start_tick: 7680, end_tick: 10560, time_sig: {:standard, 3, 4}},
+        ...
+      }
+
+  - `start_pos` / `end_pos` 是 0-based 的内部位置（bar - 1），供 `RecordMap` 二分查找使用
+  - `start_bar` 是 1-based 的用户可见小节号
+  - `start_tick` / `end_tick` 是对应的累计 Tick 范围
+  - 区间格式左闭右开
+  """
+
+  alias EquinoxDomain.Timeline.{TimeSig, RecordMap, Tick}
+  import Tick
+
+  @type compiled_event :: %{
+          start_pos: non_neg_integer(),
+          end_pos: Tick.t(),
+          start_bar: pos_integer(),
+          start_tick: Tick.numeric_tick(),
+          end_tick: Tick.t(),
+          time_sig: TimeSig.t()
+        }
 
   @type t :: tuple()
 
-  # def compile(_events) do
-  # end
+  @doc """
+  编译拍号事件列表为可二分查找的元组。
+
+  事件格式：`[{bar, time_sig}, ...]`，bar 从 1 开始。
+  """
+  @spec compile(TimeSig.time_sig_events()) :: {:ok, t()} | {:error, term()}
+  def compile([]), do: {:error, :empty_time_sig_events}
+
+  def compile({[], _last_bar}), do: {:error, :empty_time_sig_events}
+
+  def compile([_ | _] = events) do
+    # bar 从 1 开始，Record 位置从 0 开始
+    normalized = Enum.map(events, fn {bar, ts} -> {bar - 1, ts} end)
+    compile({normalized, Tick.get_dynamic_tick()})
+  end
+
+  def compile({events, _last}) do
+    reducer = fn start_pos, end_pos, time_sig, current_tick ->
+      tpb = TimeSig.ticks_per_bar(time_sig)
+
+      case tpb do
+        nil ->
+          # 散拍子：无法计算 tick 边界
+          {:ok,
+           %{
+             start_pos: start_pos,
+             end_pos: end_pos,
+             start_bar: start_pos + 1,
+             start_tick: current_tick,
+             end_tick: :dynamic_tick,
+             time_sig: time_sig
+           }, current_tick}
+
+        tpb when is_integer(end_pos) ->
+          num_bars = end_pos - start_pos
+          end_tick = current_tick + tpb * num_bars
+
+          {:ok,
+           %{
+             start_pos: start_pos,
+             end_pos: end_pos,
+             start_bar: start_pos + 1,
+             start_tick: current_tick,
+             end_tick: end_tick,
+             time_sig: time_sig
+           }, end_tick}
+
+        _tpb ->
+          {:ok,
+           %{
+             start_pos: start_pos,
+             end_pos: end_pos,
+             start_bar: start_pos + 1,
+             start_tick: current_tick,
+             end_tick: :dynamic_tick,
+             time_sig: time_sig
+           }, current_tick}
+      end
+    end
+
+    RecordMap.compile({events, Tick.get_dynamic_tick()}, reducer, 0)
+  end
+
+  @doc """
+  将给定小节号转换为起始 Tick。
+
+  返回该小节第一拍的 Tick 位置。
+  """
+  @spec bar_to_tick(t(), TimeSig.bar()) :: {:ok, Tick.numeric_tick()} | {:error, term()}
+  def bar_to_tick(compiled, target_bar) when target_bar >= 1 do
+    pos = target_bar - 1
+    seg = RecordMap.find_by_position(compiled, pos)
+
+    case TimeSig.ticks_per_bar(seg.time_sig) do
+      nil ->
+        {:error, {:free_meter_at_bar, target_bar}}
+
+      tpb ->
+        bars_offset = pos - seg.start_pos
+        {:ok, seg.start_tick + tpb * bars_offset}
+    end
+  end
+
+  def bar_to_tick(_compiled, bad_bar),
+    do: {:error, {:invalid_bar, bad_bar}}
+
+  @doc """
+  将给定 Tick 转换为所在的小节号。
+
+  返回该 Tick 落于的小节（1-based）。
+  """
+  @spec tick_to_bar(t(), Tick.numeric_tick()) :: {:ok, TimeSig.bar()} | {:error, term()}
+  def tick_to_bar(compiled, target_tick) when is_numeric_tick(target_tick) do
+    seg = find_by_tick(compiled, target_tick)
+
+    case TimeSig.ticks_per_bar(seg.time_sig) do
+      nil ->
+        {:error, {:free_meter_at_tick, target_tick}}
+
+      tpb ->
+        tick_offset = target_tick - seg.start_tick
+        bar_offset = div(tick_offset, tpb)
+        {:ok, seg.start_bar + bar_offset}
+    end
+  end
+
+  def tick_to_bar(_compiled, bad_tick),
+    do: {:error, {:invalid_tick, bad_tick}}
+
+  # ---- 内部函数 ----
+
+  # 二分搜索：按 Tick 定位区间
+  defp find_by_tick(tuple, target_tick, low, high) when low <= high do
+    mid = div(low + high, 2)
+    seg = elem(tuple, mid)
+
+    cond do
+      target_tick < seg.start_tick ->
+        find_by_tick(tuple, target_tick, low, mid - 1)
+
+      is_numeric_tick(seg.end_tick) and target_tick >= seg.end_tick ->
+        find_by_tick(tuple, target_tick, mid + 1, high)
+
+      true ->
+        seg
+    end
+  end
+
+  defp find_by_tick(tuple, _target_tick, _low, _high),
+    do: elem(tuple, tuple_size(tuple) - 1)
+
+  defp find_by_tick(tuple, target_tick),
+    do: find_by_tick(tuple, target_tick, 0, tuple_size(tuple) - 1)
 end

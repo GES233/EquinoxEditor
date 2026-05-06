@@ -14,8 +14,7 @@ defmodule EquinoxDomain.Timeline do
   # 物理时间
   @type physical_time :: float()
 
-  # ---- 随想 ----
-  # 可以将 `EquinoxDomain.Timeline.Tempo/EquinoxDomain.Timeline.TempoMap`
-  # 以及 `EquinoxDomain.Timeline.TimeSig/EquinoxDomain.Timeline.TimeSigMap`
-  # 的共同逻辑抽提出来设置成 `record/record_map` 吗？
+  # ---- 设计笔记 ----
+  # Tempo/TempoMap 以及 TimeSig/TimeSigMap 的共同逻辑已提取为 `Record` / `RecordMap`。
+  # 详见 `EquinoxDomain.Timeline.Record` 和 `EquinoxDomain.Timeline.RecordMap`。
 end
