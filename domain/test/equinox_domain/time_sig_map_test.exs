@@ -23,7 +23,7 @@ defmodule EquinoxDomain.TimeSigMapTest do
       assert tuple_size(compiled) == 1
       seg = elem(compiled, 0)
       assert seg.start_pos == 0
-      assert seg.end_pos == :dynamic_tick
+      assert seg.end_pos == :open_end
       assert seg.start_bar == 1
       assert seg.start_tick == 0
       assert seg.end_tick == :dynamic_tick
@@ -50,7 +50,7 @@ defmodule EquinoxDomain.TimeSigMapTest do
       seg2 = elem(compiled, 1)
       assert seg2.start_bar == 3
       assert seg2.start_tick == 3840
-      assert seg2.end_pos == :dynamic_tick
+      assert seg2.end_pos == :open_end
       assert seg2.time_sig == {:standard, 3, 4}
     end
 

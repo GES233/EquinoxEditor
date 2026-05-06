@@ -64,7 +64,7 @@ defmodule EquinoxDomain.RecordMapTest do
       assert tuple_size(tuple) == 1
       seg = elem(tuple, 0)
       assert seg.start_pos == 0
-      assert seg.end_pos == :dynamic_tick
+      assert seg.end_pos == :open_end
       assert seg.value == :only
     end
 
@@ -83,7 +83,7 @@ defmodule EquinoxDomain.RecordMapTest do
       assert elem(tuple, 0).value == :first
 
       assert elem(tuple, 1).start_pos == 480
-      assert elem(tuple, 1).end_pos == :dynamic_tick
+      assert elem(tuple, 1).end_pos == :open_end
       assert elem(tuple, 1).value == :second
     end
 
@@ -104,13 +104,13 @@ defmodule EquinoxDomain.RecordMapTest do
     test "带动态最后的 Record 列表" do
       {:ok, tuple} =
         RecordMap.compile(
-          {[{0, :first}, {480, :second}], :dynamic_tick},
+          {[{0, :first}, {480, :second}], :open_end},
           &counting_reducer/4,
           0
         )
 
       assert elem(tuple, 0).end_pos == 480
-      assert elem(tuple, 1).end_pos == :dynamic_tick
+      assert elem(tuple, 1).end_pos == :open_end
     end
 
     test "累加器正确传递" do

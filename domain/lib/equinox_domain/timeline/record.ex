@@ -18,6 +18,10 @@ defmodule EquinoxDomain.Timeline.Record do
   @typedoc "Record 的位置：Tick 刻或 Bar 小节号，从 0 开始"
   @type position :: non_neg_integer()
 
+  @type end_position :: position() | :open_end
+
+  def open_end, do: :open_end
+
   @typedoc "Record 携带的对应值"
   @type value :: term()
 

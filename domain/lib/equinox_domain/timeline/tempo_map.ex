@@ -16,7 +16,14 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   区间格式左闭右开。
   """
 
-  alias EquinoxDomain.{Timeline, Timeline.Tempo, Timeline.Tick, Timeline.RecordMap}
+  alias EquinoxDomain.{
+    Timeline,
+    Timeline.Tempo,
+    Timeline.Tick,
+    Timeline.RecordMap,
+    Timeline.Record
+  }
+  import Tick
 
   @type compiled_event :: %{
           start_pos: Tick.numeric_tick(),
@@ -38,8 +45,12 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   def compile([_ | _] = tempo_events),
     do: compile({tempo_events, Tick.get_dynamic_tick()})
 
-  def compile({_events, _last_tick} = tempo_events) do
-    reducer = fn start_tick, end_tick, event, current_sec ->
+  def compile({tempo_events, last_tick}) do
+    record_events = {tempo_events, record_end_from_tick(last_tick)}
+
+    reducer = fn start_tick, end_pos, event, current_sec ->
+      end_tick = tick_end_from_record(end_pos)
+
       with {:ok, strategy} <-
              Tempo.build_segment_from_event(
                event.module,
@@ -60,9 +71,9 @@ defmodule EquinoxDomain.Timeline.TempoMap do
       end
     end
 
-    case RecordMap.compile(tempo_events, reducer, 0.0) do
+    case RecordMap.compile(record_events, reducer, 0.0) do
       {:ok, tuple} ->
-        {:ok, tuple}
+        {:ok, tempoize_tuple(tuple)}
 
       {:error, {:first_record_must_start_at_zero, pos}} ->
         {:error, {:first_tempo_event_must_start_at_zero, pos}}
@@ -79,8 +90,8 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   end
 
   @doc "在 compiled_tuple 中查找 target_tick 所对应的秒数。"
-  def tick_to_sec(compiled_tuple, target_tick) do
-    seg = RecordMap.find_by_position(compiled_tuple, target_tick)
+  def tick_to_sec(compiled_tuple, target_tick) when is_numeric_tick(target_tick) do
+    seg = find_by_tick(compiled_tuple, target_tick)
     seg.start_sec + Tempo.tick_to_sec(seg.strategy, target_tick - seg.start_pos)
   end
 
@@ -90,6 +101,30 @@ defmodule EquinoxDomain.Timeline.TempoMap do
     offset_sec = target_sec - seg.start_sec
     seg.start_pos + Tempo.sec_to_tick(seg.strategy, offset_sec)
   end
+
+  # ---- tick_to_sec 的工具函数 ----
+
+  defp find_by_tick(tuple, target_tick),
+    do: find_by_tick(tuple, target_tick, 0, tuple_size(tuple) - 1)
+
+  defp find_by_tick(tuple, target_tick, low, high) when low <= high do
+    mid = div(low + high, 2)
+    seg = elem(tuple, mid)
+
+    cond do
+      target_tick < seg.start_pos ->
+        find_by_tick(tuple, target_tick, low, mid - 1)
+
+      is_numeric_tick(seg.end_pos) and target_tick >= seg.end_pos ->
+        find_by_tick(tuple, target_tick, mid + 1, high)
+
+      true ->
+        seg
+    end
+  end
+
+  defp find_by_tick(tuple, _target_tick, _low, _high),
+    do: elem(tuple, tuple_size(tuple) - 1)
 
   # ---- sec_to_tick 的工具函数 ----
 
@@ -115,4 +150,25 @@ defmodule EquinoxDomain.Timeline.TempoMap do
   # Fallback：超出范围返回最后一个区间
   defp find_segment_by_sec(tuple, _target_sec, _low, _high),
     do: elem(tuple, tuple_size(tuple) - 1)
+
+  # ---- 刻与 Record 对象的转换 ----
+
+  defp record_end_from_tick(:dynamic_tick), do: Record.open_end()
+  defp record_end_from_tick(tick) when is_integer(tick) and tick >= 0, do: tick
+
+  defp tick_end_from_record(:open_end), do: Tick.get_dynamic_tick()
+  defp tick_end_from_record(pos) when is_integer(pos) and pos >= 0, do: pos
+
+  defp tempoize_tuple(tuple) do
+    tuple
+    |> Tuple.to_list()
+    |> Enum.map(&tempoize_segment/1)
+    |> List.to_tuple()
+  end
+
+  defp tempoize_segment(%{end_pos: :open_end} = seg) do
+    %{seg | end_pos: Tick.get_dynamic_tick()}
+  end
+
+  defp tempoize_segment(seg), do: seg
 end

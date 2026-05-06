@@ -54,7 +54,7 @@ defmodule EquinoxDomain.Timeline.TimeSigMap do
         },
         %{
           start_pos: 14,
-          end_pos: :dynamic_tick,
+          end_pos: :open_end,
           start_bar: 15,
           start_tick: 23520,
           end_tick: :dynamic_tick,
@@ -62,12 +62,12 @@ defmodule EquinoxDomain.Timeline.TimeSigMap do
         }}}
   """
 
-  alias EquinoxDomain.Timeline.{TimeSig, RecordMap, Tick}
+  alias EquinoxDomain.Timeline.{TimeSig, RecordMap, Record, Tick}
   import Tick
 
   @type compiled_event :: %{
-          start_pos: non_neg_integer(),
-          end_pos: Tick.t(),
+          start_pos: Record.position(),
+          end_pos: Record.end_position(),
           start_bar: pos_integer(),
           start_tick: Tick.numeric_tick(),
           end_tick: Tick.t(),
@@ -87,56 +87,57 @@ defmodule EquinoxDomain.Timeline.TimeSigMap do
   def compile({[], _last_bar}), do: {:error, :empty_time_sig_events}
 
   def compile([_ | _] = events) do
-    # bar 从 1 开始，Record 位置从 0 开始
-    normalized = Enum.map(events, fn {bar, ts} -> {bar - 1, ts} end)
-    compile({normalized, Tick.get_dynamic_tick()})
+    compile({events, Record.open_end()})
   end
 
-  def compile({events, _last}) do
-    reducer = fn start_pos, end_pos, time_sig, current_tick ->
-      tpb = TimeSig.ticks_per_bar(time_sig)
+  def compile({events, end_bar}) do
+    with {:ok, record_events} <- normalize_bar_events(events),
+         {:ok, record_end} <- normalize_end_bar(end_bar) do
+      reducer = fn start_pos, end_pos, time_sig, current_tick ->
+        tpb = TimeSig.ticks_per_bar(time_sig)
 
-      case tpb do
-        nil ->
-          # 散拍子：无法计算 tick 边界
-          {:ok,
-           %{
-             start_pos: start_pos,
-             end_pos: end_pos,
-             start_bar: start_pos + 1,
-             start_tick: current_tick,
-             end_tick: :dynamic_tick,
-             time_sig: time_sig
-           }, current_tick}
+        case {tpb, end_pos} do
+          {nil, _} ->
+            # 散拍子：无法计算 tick 边界
+            {:ok,
+             %{
+               start_pos: start_pos,
+               end_pos: end_pos,
+               start_bar: start_pos + 1,
+               start_tick: current_tick,
+               end_tick: Tick.get_dynamic_tick(),
+               time_sig: time_sig
+             }, current_tick}
 
-        tpb when is_integer(end_pos) ->
-          num_bars = end_pos - start_pos
-          end_tick = current_tick + tpb * num_bars
+          {tpb, end_pos} when is_integer(tpb) and is_integer(end_pos) ->
+            num_bars = end_pos - start_pos
+            end_tick = current_tick + tpb * num_bars
 
-          {:ok,
-           %{
-             start_pos: start_pos,
-             end_pos: end_pos,
-             start_bar: start_pos + 1,
-             start_tick: current_tick,
-             end_tick: end_tick,
-             time_sig: time_sig
-           }, end_tick}
+            {:ok,
+             %{
+               start_pos: start_pos,
+               end_pos: end_pos,
+               start_bar: start_pos + 1,
+               start_tick: current_tick,
+               end_tick: end_tick,
+               time_sig: time_sig
+             }, end_tick}
 
-        _tpb ->
-          {:ok,
-           %{
-             start_pos: start_pos,
-             end_pos: end_pos,
-             start_bar: start_pos + 1,
-             start_tick: current_tick,
-             end_tick: :dynamic_tick,
-             time_sig: time_sig
-           }, current_tick}
+          {tpb, :open_end} when is_integer(tpb) ->
+            {:ok,
+             %{
+               start_pos: start_pos,
+               end_pos: end_pos,
+               start_bar: start_pos + 1,
+               start_tick: current_tick,
+               end_tick: Tick.get_dynamic_tick(),
+               time_sig: time_sig
+             }, current_tick}
+        end
       end
-    end
 
-    RecordMap.compile({events, Tick.get_dynamic_tick()}, reducer, 0)
+      RecordMap.compile({record_events, record_end}, reducer, 0)
+    end
   end
 
   @doc """
@@ -209,4 +210,27 @@ defmodule EquinoxDomain.Timeline.TimeSigMap do
 
   defp find_by_tick(tuple, target_tick),
     do: find_by_tick(tuple, target_tick, 0, tuple_size(tuple) - 1)
+
+  defp normalize_bar_events(events) do
+    normalized =
+      Enum.map(events, fn
+        {bar, time_sig} when is_integer(bar) and bar >= 1 ->
+          {bar - 1, time_sig}
+
+        bad ->
+          bad
+      end)
+
+    {:ok, normalized}
+  end
+
+  defp normalize_end_bar(:open_end), do: {:ok, Record.open_end()}
+
+  defp normalize_end_bar(end_bar) when is_integer(end_bar) and end_bar >= 1 do
+    # 这里把用户可见 bar 边界转成内部 position 边界。
+    # 因为左闭右开 [start_bar, end_bar)，而他在右边，所以需要 -1 。
+    {:ok, end_bar - 1}
+  end
+
+  defp normalize_end_bar(bad), do: {:error, {:invalid_end_bar, bad}}
 end

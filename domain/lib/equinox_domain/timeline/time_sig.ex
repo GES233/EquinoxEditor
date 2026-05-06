@@ -5,6 +5,7 @@ defmodule EquinoxDomain.Timeline.TimeSig do
   也就是面向用户的表示时间。
   """
 
+  alias EquinoxDomain.Timeline.Record
   alias EquinoxDomain.Timeline.Tick, as: Tk
 
   @type standard ::
@@ -22,7 +23,7 @@ defmodule EquinoxDomain.Timeline.TimeSig do
   @typedoc "节拍变化事件"
   @type time_sig_event :: {bar(), t()}
 
-  @type time_sig_events :: [time_sig_event()] | {[time_sig_event()], last :: bar()}
+  @type time_sig_events :: [time_sig_event()] | {[time_sig_event()], Record.end_position()}
 
   @doc "获取一个完整小节的 Tick 长度"
   def ticks_per_bar({num, den}) when is_integer(num) and is_integer(den),
