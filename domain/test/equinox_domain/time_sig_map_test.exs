@@ -2,6 +2,7 @@ defmodule EquinoxDomain.TimeSigMapTest do
   use ExUnit.Case
 
   alias EquinoxDomain.Timeline.TimeSigMap
+  doctest TimeSigMap
 
   describe "compile/1" do
     test "空列表" do

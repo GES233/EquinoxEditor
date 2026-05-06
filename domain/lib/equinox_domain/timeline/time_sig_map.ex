@@ -8,15 +8,58 @@ defmodule EquinoxDomain.Timeline.TimeSigMap do
   编译后的结构形如：
 
       {
-        %{start_pos: 0, end_pos: 4, start_bar: 1, start_tick: 0, end_tick: 7680, time_sig: {:standard, 4, 4}},
-        %{start_pos: 4, end_pos: 6, start_bar: 5, start_tick: 7680, end_tick: 10560, time_sig: {:standard, 3, 4}},
+        %{
+          start_pos: 0,
+          end_pos: 4,
+          start_bar: 1,
+          start_tick: 0,
+          end_tick: 7680,
+          time_sig: {:standard, 4, 4}
+        },
+        %{
+          start_pos: 4,
+          end_pos: 6,
+          start_bar: 5,
+          start_tick: 7680,
+          end_tick: 10560,
+          time_sig: {:standard, 3, 4}
+        },
         ...
       }
 
-  - `start_pos` / `end_pos` 是 0-based 的内部位置（bar - 1），供 `RecordMap` 二分查找使用
-  - `start_bar` 是 1-based 的用户可见小节号
+  - `start_pos` / `end_pos` 是从 0 开始的内部位置，方便 `RecordMap` 进行二分查找
+  - `start_bar` 是从 1 开始的用户可见小节号
   - `start_tick` / `end_tick` 是对应的累计 Tick 范围
   - 区间格式左闭右开
+
+  ## 用例
+
+      iex> TimeSigMap.compile([{1, {:standard, 4, 4}}, {8, {:standard, 3, 4}}, {15, {:standard, 4, 4}}])
+      {:ok,
+      {%{
+          start_pos: 0,
+          end_pos: 7,
+          start_bar: 1,
+          start_tick: 0,
+          end_tick: 13440,
+          time_sig: {:standard, 4, 4}
+        },
+        %{
+          start_pos: 7,
+          end_pos: 14,
+          start_bar: 8,
+          start_tick: 13440,
+          end_tick: 23520,
+          time_sig: {:standard, 3, 4}
+        },
+        %{
+          start_pos: 14,
+          end_pos: :dynamic_tick,
+          start_bar: 15,
+          start_tick: 23520,
+          end_tick: :dynamic_tick,
+          time_sig: {:standard, 4, 4}
+        }}}
   """
 
   alias EquinoxDomain.Timeline.{TimeSig, RecordMap, Tick}

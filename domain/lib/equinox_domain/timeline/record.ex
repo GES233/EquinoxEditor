@@ -15,13 +15,13 @@ defmodule EquinoxDomain.Timeline.Record do
 
   alias EquinoxDomain.Timeline.Tick
 
-  @typedoc "Record 的位置：Tick 刻（Tempo）或 Bar 小节号（TimeSig），从 0 开始"
+  @typedoc "Record 的位置：Tick 刻或 Bar 小节号，从 0 开始"
   @type position :: non_neg_integer()
 
-  @typedoc "Record 携带的值，语义由使用者定义"
+  @typedoc "Record 携带的对应值"
   @type value :: term()
 
-  @typedoc "单个 Record：位置 + 值"
+  @typedoc "单个时间线的事件"
   @type t :: {position(), value()}
 
   @typedoc """

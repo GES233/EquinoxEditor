@@ -36,4 +36,8 @@ defmodule EquinoxDomain.Timeline.TimeSig do
   # 我其实不知道这个的思路是什么原理
   # get_ticks_per_beat(den), do: div(4, den) * tpqn
   defp total_notes(num), do: Tk.ticks_per_quarter_note() * 4 * num
+
+  # defp normalize({num, den}) when is_integer(num) and is_integer(den),
+  #   do: {:standard, num, den}
+  # defp normalize(rest), do: rest
 end
