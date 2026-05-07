@@ -63,6 +63,8 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 ## 4. Core Domain & Architecture Rules
 
+> In this document, "Editor" refers to the entire Equinox application.
+
 - **Domain-First Development**: `EquinoxDomain.*` (in `domain/`) is the cornerstone of the project. All domain models (data structures + pure functional logic) must be completed and thoroughly tested at this layer before development of the Kernel or UI Shell can begin. The Domain project is prohibited from depending on Kernel or UI modules.💡
 - **Pure Data**: `Project`, `Track`, `Utterance`, `Note`, `Phoneme` are pure data structures (JSON/Pickle serializable). `Segment` is also of type Domain, but its `rasterized_*` fields are cached at runtime and do not participate in serialization. No Ecto schemas, no executable closures inside them.
 - **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte.
@@ -78,7 +80,7 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 ## 5. Coding Conventions
 
 - **Elixir**: Return `{:ok, value} | {:error, reason}` (except some Context-like structs, which prefer `t() -> t() | {:error, reason}`). API names start with verbs (`create_`, `update_`).
-  - - **Elixir Error Handling**: The `EquinoxDomain` layer must NEVER `raise` exceptions. Use pattern matching, `case`, and `with` to return `{:error, reason}`. Avoid `!` functions (e.g., use `Map.fetch` instead of `Map.fetch!`) unless validating purely internal logic where a crash is genuinely expected. For other scenes, `!` is acceptable.
+  - **Elixir Error Handling**: The `EquinoxDomain` layer must NEVER `raise` exceptions. Use pattern matching, `case`, and `with` to return `{:error, reason}`. Avoid `!` functions (e.g., use `Map.fetch` instead of `Map.fetch!`) unless validating purely internal logic where a crash is genuinely expected. For other scenes, `!` is acceptable.
 - **Svelte 5**: Runes ONLY (`$state`, `$derived`, `$props`, `$effect`).
 - **Tailwind v4**: `!` modifier goes at the END (e.g., `bg-amber-500!`). Gradients use `bg-linear-to-b`.
 - **SvelteFlow**: NEVER use reserved node types like `input`/`output`. Use custom names (e.g., `custom_input`).
@@ -129,10 +131,7 @@ The Kernel does not hardcode the semantics of any curve parameter. At compile ti
 
 An **Orchid Hook** (user-supplied, registered via `Configurator.plugins`) maps `param_name → (target_node, target_port)` and consumes the payload. Validation is delegated to `Orchid.Param` typing.
 
-### ADR-005 — Arranger (Absorbed by Phase 3)
-
-Early design decisions for the M5 Arranger have been incorporated into the Phase 3 UI Shell planning, and the standalone ADR is no longer maintained.
-Numbering is retained to avoid subsequent ADR rearrangements.
+### ADR-005 — (retired, absorbed into Phase 3; numbering preserved)
 
 ### ADR-006 — Domain-Kernel Layered Decoupling
 
@@ -323,7 +322,7 @@ Editor/Session layer(Steps are marked with `[auto]` / `[explicit]`):
 
 ## Curves
 
-Split into Phase 1 (pure data, Domain) and Phase 2 (kernel integration).
+Split into Phase 1 (domain) and Phase 2 (kernel integration).
 
 ### Goals
 
@@ -345,14 +344,11 @@ After curves integration, `%EquinoxDomain.Segment{}` retains only rendering-cont
 
 Removed from Kernel's legacy Segment: `curves`, `synth_override`, `graph`, `cluster`. These move to `SegmentContext` (compile-time) or `Track` (curves).
 
-### Editor API Additions
+### Curve Facade API Additions
 
-> The `Editor.` prefix is ​​a placeholder name; its specific module affiliation will be determined during Phase 2 implementation.
-> In this document, "Editor" refers to the entire Equinox application.
-
-- `Editor.apply_curve_stroke(project, track_id, param, %Chunk{})`: atomic insertion of a completed stroke. Emits history entries.
-- `Editor.erase_curve_range(project, track_id, param, start_tick, end_tick)`: erase within a range.
-- `Editor.clear_curve_layer(project, track_id, param)`: wipe a whole layer.
+- `apply_curve_stroke(project, track_id, param, %Chunk{})`: atomic insertion of a completed stroke. Emits history entries.
+- `erase_curve_range(project, track_id, param, start_tick, end_tick)`: erase within a range.
+- `clear_curve_layer(project, track_id, param)`: wipe a whole layer.
 
 Strokes are assumed already-simplified control-point chunks (see ADR-003). The Editor does **not** accept raw sample arrays.
 
@@ -419,7 +415,7 @@ Ordered roughly by priority; do not fix opportunistically without a matching com
 
 1. `Track.remove_segment/2` and `Project.remove_track/2` fail silently — contract mismatch.
 2. `Editor.add_note/4` hard-matches `{:ok, _} = Track.update_segment(...)` — violates error handling convention.
-3. Comment language mixed: `Equinox.Editor` module is all English (AI smell), rest is Chinese. Standardize to Chinese.
+3. The comments in the `Equinox.Editor.*` module are all in English (likely a legacy of early AI generation), while the comments in other modules are in Chinese. In Phase 2, they will all be in Chinese.
 4. `Session.Server.handle_info/2` only handles task success; failures get swallowed by `Logger.warning("unknown message")`.
 5. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
 6. `Compiler.compile_cache` typespec disagrees with actual shape.
