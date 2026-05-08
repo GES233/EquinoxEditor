@@ -1,3 +1,5 @@
+![icon](artwoks/editor_cyan.svg)
+
 # Equinox
 
 [English](README.en.md)
