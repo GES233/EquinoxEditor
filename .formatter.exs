@@ -1,3 +1,3 @@
 [
-  inputs: ["*.{ex,exs}", "{kernel,ui_shell}/{config,lib,test}/**/*.{ex,exs}"]
+  inputs: ["*.{ex,exs}", "{domain,kernel,ui_shell}/{config,lib,test}/**/*.{ex,exs}"]
 ]
