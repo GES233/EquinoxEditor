@@ -156,6 +156,20 @@ Rasterization of control points into sample sequences is a performance-sensitive
 
 Rationale: Domain already possesses complete semantics for one-dimensional time series, but extensive rasterization on BEAM may present a performance bottleneck. Separating the definition and implementation allows for subsequent replacement with NIF without affecting the pure functional properties of the Domain layer.
 
+### ADR-008 — Key is a Behaviour + nested Protocol, not a single Protocol
+
+Pitch representation (`EquinoxDomain.Score.Key`) uses a dual-discipline architecture:
+
+- **`Key` (Behaviour)**: Construction callbacks (`new/1`, `from_score/3`, `from_midi/2`). Module-level dispatch — the caller must know which tuning implementation to invoke. Wrapper functions (`Key.new/2`, `Key.from_midi/3`) proxy to the concrete module for polymorphic factory dispatch.
+- **`Key.Inner` (Protocol)**: Outbound conversion functions (`to_midi/1`, `to_frequency/2`, `to_score/3`). Value-level dispatch — any `Key` struct automatically routes to the correct implementation.
+
+Rationale:
+- Construction needs module-level knowledge (you must choose TwelveET vs Pythagorean vs Just), which suits Behaviour.
+- Conversion needs value-level polymorphism (a Track holds `Key.t()` and calls `Key.Inner.to_midi/1` without knowing the tuning), which suits Protocol.
+- A single Protocol would force construction (which has no `Key.t()` instance yet) into awkward static functions on each module. Separating them keeps each dispatch mode in its natural home.
+
+MVP contract: MIDI/frequency (`to_midi`/`to_frequency`) are fully implemented. Staff notation (`from_score`/`to_score`) signatures are reserved but return `{:error, :not_implemented}` — no runtime cost, no interface breakage when added later.
+
 ## 8. Do Not Do 💡
 
 ### Domain Red Lines (permanent)
@@ -222,9 +236,10 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 - Score data structures: `Note` (partial), `Phoneme`, `Utterance` (skeletal), `Track` (skeletal), `Project` (skeletal)
 - VO: `Segment` (rendering context)
 - Curve skeletal: `Curve.Chunk`
+- Key: `Key.TwelveET` (behaviour + Inner protocol) — MIDI/frequency conversion complete; staff notation (`from_score`/`to_score`) deferred to post-MVP
 
 ### Phase 1a — Standalone Domain Models (domain/)
-5. **Key.TwelveET** — 12-tone equal temperament pitch model: note names, octaves, MIDI numbers, frequency conversion.
+5. **Key.TwelveET** — ✅ MIDI/frequency path done: `Key` behaviour (construction) + `Key.Inner` protocol (conversion), `TwelveET` implementation, 14 smoke tests. ⏳ Staff notation (`from_score`/`to_score`) deferred — signatures reserved, stubs return `{:error, :not_implemented}`.
 6. **Note (standalone)** — Note struct with duration, pitch, timing (`start_tick`, `duration_tick`). Pure value fields; no Track-level concerns.
 7. **Timeline** — `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`. Musical time ↔ physical time conversion.
 8. **Curves (pure data)** — `Curve.Chunk`, `Curve.Layer`, `Curve.RasterCache` + rasterizer (linear / cubic / step interpolation) + stroke simplification (Douglas-Peucker).
