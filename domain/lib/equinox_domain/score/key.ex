@@ -16,19 +16,12 @@ defmodule EquinoxDomain.Score.Key do
 
   @callback new(any()) :: key_struct()
 
+  # 当前阶段暂时保留，不需要具体实现，MIDI 同理
   @callback from_score(score_data :: term(), type :: atom(), ctx :: term()) ::
               {:ok, key_struct()} | {:error, term()}
 
   @callback from_midi(midi_note :: number(), ctx :: term()) ::
               {:ok, key_struct()} | {:error, term()}
-
-  # ---- 调用实现了行为的模块 ----
-
-  def new(attrs, module), do: module.new(attrs)
-
-  def from_score(data, type, ctx, module), do: module.from_score(data, type, ctx)
-
-  def from_midi(midi, ctx, module), do: module.from_midi(midi, ctx)
 
   defprotocol Inner do
     @moduledoc "部分去向的操作集合"
@@ -47,4 +40,18 @@ defmodule EquinoxDomain.Score.Key do
     @doc "转换到绝对频率 (Hz)"
     def to_frequency(key, reference)
   end
+
+  # ---- Facade API ----
+
+  def new(attrs, module), do: module.new(attrs)
+
+  def from_score(data, type, ctx, module), do: module.from_score(data, type, ctx)
+
+  def from_midi(midi, ctx, module), do: module.from_midi(midi, ctx)
+
+  defdelegate to_score(key, type, ctx), to: Inner
+
+  defdelegate to_midi(key), to: Inner
+
+  defdelegate to_frequency(key, reference), to: Inner
 end

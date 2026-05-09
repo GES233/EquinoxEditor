@@ -27,51 +27,51 @@ defmodule EquinoxDomain.Score.Key.TwelveETTest do
   describe "to_midi/1" do
     test "A4 (69)" do
       key = Key.new(69, TwelveET)
-      assert Inner.to_midi(key) == 69.0
+      assert Key.to_midi(key) == 69.0
     end
 
     test "C4 (60)" do
       key = Key.new(60, TwelveET)
-      assert Inner.to_midi(key) == 60.0
+      assert Key.to_midi(key) == 60.0
     end
 
     test "浮点 MIDI 保留精度" do
       key = Key.new(60.5, TwelveET)
-      assert Inner.to_midi(key) == 60.5
+      assert Key.to_midi(key) == 60.5
     end
   end
 
   describe "to_frequency/2" do
     test "A4 = 440 Hz" do
       key = Key.new(69, TwelveET)
-      assert_in_delta Inner.to_frequency(key, 440.0), 440.0, 0.01
+      assert_in_delta Key.to_frequency(key, 440.0), 440.0, 0.01
     end
 
     test "A5 = 880 Hz" do
       key = Key.new(81, TwelveET)
-      assert_in_delta Inner.to_frequency(key, 440.0), 880.0, 0.01
+      assert_in_delta Key.to_frequency(key, 440.0), 880.0, 0.01
     end
 
     test "A3 = 220 Hz" do
       key = Key.new(57, TwelveET)
-      assert_in_delta Inner.to_frequency(key, 440.0), 220.0, 0.01
+      assert_in_delta Key.to_frequency(key, 440.0), 220.0, 0.01
     end
 
     test "C4 = ~261.63 Hz" do
       key = Key.new(60, TwelveET)
-      assert_in_delta Inner.to_frequency(key, 440.0), 261.6256, 0.1
+      assert_in_delta Key.to_frequency(key, 440.0), 261.6256, 0.1
     end
 
     test "不同参考频率" do
       key = Key.new(69, TwelveET)
-      assert_in_delta Inner.to_frequency(key, 432.0), 432.0, 0.01
+      assert_in_delta Key.to_frequency(key, 432.0), 432.0, 0.01
     end
 
     test "半音差" do
       c4 = Key.new(60, TwelveET)
       cs4 = Key.new(61, TwelveET)
       # 频率比应接近 2^(1/12)
-      ratio = Inner.to_frequency(cs4, 440.0) / Inner.to_frequency(c4, 440.0)
+      ratio = Key.to_frequency(cs4, 440.0) / Key.to_frequency(c4, 440.0)
       assert_in_delta ratio, :math.pow(2, 1 / 12), 0.0001
     end
   end
