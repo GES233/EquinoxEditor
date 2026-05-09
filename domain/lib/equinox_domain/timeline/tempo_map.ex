@@ -23,6 +23,7 @@ defmodule EquinoxDomain.Timeline.TempoMap do
     Timeline.RecordMap,
     Timeline.Record
   }
+
   import Tick
 
   @type compiled_event :: %{
