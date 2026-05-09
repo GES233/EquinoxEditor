@@ -236,40 +236,39 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 - Score data structures: `Note` (partial), `Phoneme`, `Utterance` (skeletal), `Track` (skeletal), `Project` (skeletal)
 - VO: `Segment` (rendering context)
 - Curve skeletal: `Curve.Chunk`
-- Key: `Key.TwelveET` (behaviour + Inner protocol) — MIDI/frequency conversion complete; staff notation (`from_score`/`to_score`) deferred to post-MVP
+- Key: behaviour + Inner protocol + `Key.TwelveET` implementation — MIDI/frequency conversion complete; staff notation (`from_score`/`to_score`) deferred to post-MVP(signatures reserved, stubs return `{:error, :not_implemented}`)
 
 ### Phase 1a — Standalone Domain Models (domain/)
-5. **Key.TwelveET** — ✅ MIDI/frequency path done: `Key` behaviour (construction) + `Key.Inner` protocol (conversion), `TwelveET` implementation, 14 smoke tests. ⏳ Staff notation (`from_score`/`to_score`) deferred — signatures reserved, stubs return `{:error, :not_implemented}`.
-6. **Note (standalone)** — Note struct with duration, pitch, timing (`start_tick`, `duration_tick`). Pure value fields; no Track-level concerns.
-7. **Timeline** — `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`. Musical time ↔ physical time conversion.
-8. **Curves (pure data)** — `Curve.Chunk`, `Curve.Layer`, `Curve.RasterCache` + rasterizer (linear / cubic / step interpolation) + stroke simplification (Douglas-Peucker).
+5. **Note (standalone)** — Note struct with duration, pitch, timing (`start_tick`, `duration_tick`). Pure value fields; no Track-level concerns.
+6. **Timeline** — `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`. Musical time ↔ physical time conversion.
+7. **Curves (pure data)** — `Curve.Chunk`, `Curve.Layer`, `Curve.RasterCache` + rasterizer (linear / cubic / step interpolation) + stroke simplification (Douglas-Peucker).
 
 ### Phase 1b — Aggregate Roots (domain/)
-9. **Track** — Notes map (`%{note_id => Note.t()}`) + `curve_layers: %{}`. Note CRUD at Track level (insert, delete, split, merge, update). Curve layer management.
-10. **Project** — Tracks map + project-level metadata. Track CRUD.
-11. **Utterance & Phoneme** — Utterance groups notes + phonemes into continuous vocal phrases. Phoneme is a standalone VO with timing info. Utterance determines rasterization boundaries.
+8. **Track** — Notes map (`%{note_id => Note.t()}`) + `curve_layers: %{}`. Note CRUD at Track level (insert, delete, split, merge, update). Curve layer management.
+9. **Project** — Tracks map + project-level metadata. Track CRUD.
+10. **Utterance & Phoneme** — Utterance groups notes + phonemes into continuous vocal phrases. Phoneme is a standalone VO with timing info. Utterance determines rasterization boundaries.
 
 ### Phase 1c — Slicer & Materialization (domain/)
-12. **Slicer** — `Note.slice_flag` (`:auto | :force_slice | :force_merge`). Rest-gap slicing. `Notes → Slice → Utterance` projection. Materialization as an explicit step.
-13. **Track slice repair** — After insert/delete/split/merge/update, auto-repair `slice_flag` in affected interval.
-14. **Segment** — Rendering context VO: acoustic boundaries, rasterized phonemes/curves. The Domain defines the structure, and the `rasterized_*` fields are populated by the Kernel (see ADR-007).
+11. **Slicer** — `Note.slice_flag` (`:auto | :force_slice | :force_merge`). Rest-gap slicing. `Notes → Slice → Utterance` projection. Materialization as an explicit step.
+12. **Track slice repair** — After insert/delete/split/merge/update, auto-repair `slice_flag` in affected interval.
+13. **Segment** — Rendering context VO: acoustic boundaries, rasterized phonemes/curves. The Domain defines the structure, and the `rasterized_*` fields are populated by the Kernel (see ADR-007).
 
 ### Phase 1d — Polish & Serialization (domain/)
-15. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo.
-16. **Session / RenderRequest** — `Session` (selection, clipboard, viewport) and `Command.RenderRequest`.
-17. **Pickle + comprehensive tests** — `Pickle` protocol implementations for all domain types + full test coverage.
+14. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo.
+15. **Session / RenderRequest** — `Session` (selection, clipboard, viewport) and `Command.RenderRequest`.
+16. **Pickle + comprehensive tests** — `Pickle` protocol implementations for all domain types + full test coverage.
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
-18. **Domain dependency**: Add `:equinox_domain` to kernel, delete legacy `Equinox.Domain.*`, replace all references.
-19. **Slicer → Utterance**: Rewrite Slicer for new `slice_flag` model; `materialize_utterances` replaces `materialize_segments`.
-20. **Track API**: `insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note` with automatic slice repair.
-21. **SegmentContext**: Introduce `SegmentContext`, remove `graph`/`cluster`/`synth_override`/`curves` from Segment. Slice `CurveLayer`s into tick range, rasterize, emit `data_interventions` via Hook contract.
-22. **Editor / Session adaptation**: Editor ops → Track API → explicit materialization. Session manages `utterance_id ↔ segment_id` mapping.
+17. **Domain dependency**: Add `:equinox_domain` to kernel, delete legacy `Equinox.Domain.*`, replace all references.
+18. **Slicer → Utterance**: Rewrite Slicer for new `slice_flag` model; `materialize_utterances` replaces `materialize_segments`.
+19. **Track API**: `insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note` with automatic slice repair.
+20. **SegmentContext**: Introduce `SegmentContext`, remove `graph`/`cluster`/`synth_override`/`curves` from Segment. Slice `CurveLayer`s into tick range, rasterize, emit `data_interventions` via Hook contract.
+21. **Editor / Session adaptation**: Editor ops → Track API → explicit materialization. Session manages `utterance_id ↔ segment_id` mapping.
 
 ### Phase 3 — UI Shell (ui_shell/)
-23. **Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances.
-24. **History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
-25. **Plugin System**: Runtime dynamic loading of custom Synth Nodes.
+22. **Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances.
+23. **History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
+24. **Plugin System**: Runtime dynamic loading of custom Synth Nodes.
     - Frontend: WebComponent wrapping for SvelteFlow, third-party UI `.js` via dynamic `<script type="module">`.
     - Backend: Distributed Erlang — isolated BEAM `Engine Node` per Session for Orchid graph execution, hot-load `.beam` modules without risking the Phoenix `Web Node`.
 
