@@ -8,9 +8,9 @@ defmodule EquinoxDomain.Curve do
   这里将 Curve 与 Channel 分离开的原因在于 Channel
   允许重叠，其经过处理（重叠片段以最新的为准）变成一条 Curve 。
 
-  ### 曲线的来源
+  ## 曲线的来源
 
-  ### 曲线的参数化
+  ## 曲线的参数化
   """
 
   # 一方面，提供默认值（基于 Channel 的 behaviour）

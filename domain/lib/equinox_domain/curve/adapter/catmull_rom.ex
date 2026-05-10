@@ -1,5 +1,5 @@
 defmodule EquinoxDomain.Curve.Adapter.CatmullRom do
-  # Catmull-Rom 曲线适配器（naive 参考实现）
+  @moduledoc "Catmull-Rom 曲线适配器（naive 参考实现）"
 
   use EquinoxDomain.Curve.Adapter
 

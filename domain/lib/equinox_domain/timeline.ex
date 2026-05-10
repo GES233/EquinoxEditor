@@ -13,8 +13,4 @@ defmodule EquinoxDomain.Timeline do
 
   # 物理时间
   @type physical_time :: float()
-
-  # ---- 设计笔记 ----
-  # Tempo/TempoMap 以及 TimeSig/TimeSigMap 的共同逻辑已提取为 `Record` / `RecordMap`。
-  # 详见 `EquinoxDomain.Timeline.Record` 和 `EquinoxDomain.Timeline.RecordMap`。
 end
