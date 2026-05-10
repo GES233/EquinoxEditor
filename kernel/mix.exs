@@ -37,10 +37,16 @@ defmodule EquinoxKernel.MixProject do
 
   defp deps do
     [
-      {:orchid, "~> 0.6.1"},
-      {:orchid_symbiont, "~> 0.2.1"},
-      {:orchid_stratum, "~> 0.2.0"},
-      {:orchid_intervention, "~> 0.1.0"},
+      ## 领域模型
+      # {:equinox_domain, path: "./domain"}
+      ## Orchid 生态
+      {:orchid, "~> 0.6"},
+      {:orchid_symbiont, "~> 0.2"},
+      {:orchid_stratum, "~> 0.2"},
+      {:orchid_intervention, "~> 0.1"},
+      ## NIF
+      # Rust? Zig?
+      ## 序列化
       {:jason, "~> 1.2"}
     ]
   end
