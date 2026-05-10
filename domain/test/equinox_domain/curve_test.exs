@@ -36,9 +36,9 @@ defmodule EquinoxDomain.CurveTest do
       assert Adapter.Inner.control_points(container) == pts
     end
 
-    test "Inner.rasterize/4 空点列表返回全零" do
+    test "Inner.rasterize/2 空点列表返回全零" do
       container = CatmullRom.new(%{})
-      result = Adapter.Inner.rasterize(container, 0, 100, 10)
+      result = Adapter.Inner.rasterize(container, 0..90//10)
       assert byte_size(result) == 10 * 4
       assert result == <<0.0::float-32-native, 0.0::float-32-native, 0.0::float-32-native,
                          0.0::float-32-native, 0.0::float-32-native, 0.0::float-32-native,
@@ -46,9 +46,9 @@ defmodule EquinoxDomain.CurveTest do
                          0.0::float-32-native>>
     end
 
-    test "Inner.rasterize/4 单点返回常量" do
+    test "Inner.rasterize/2 单点返回常量" do
       container = CatmullRom.new(points: [ControlPoint.new(tick: 0, value: 0.75)])
-      result = Adapter.Inner.rasterize(container, 0, 30, 10)
+      result = Adapter.Inner.rasterize(container, 0..20//10)
       assert byte_size(result) == 3 * 4
       <<a::float-32-native, b::float-32-native, c::float-32-native>> = result
       assert_in_delta a, 0.75, 0.001
@@ -56,14 +56,14 @@ defmodule EquinoxDomain.CurveTest do
       assert_in_delta c, 0.75, 0.001
     end
 
-    test "Inner.rasterize/4 线性段（tension=1.0 退化）" do
+    test "Inner.rasterize/2 线性段（tension=1.0 退化）" do
       pts = [
         ControlPoint.new(tick: 0, value: 0.0),
         ControlPoint.new(tick: 100, value: 1.0)
       ]
 
       container = CatmullRom.new(points: pts, tension: 1.0)
-      result = Adapter.Inner.rasterize(container, 0, 100, 50)
+      result = Adapter.Inner.rasterize(container, [0, 50])
 
       # 2 个样本：tick=0 和 tick=50
       # tension=1.0 → 切线归零，Hermite S 曲线
@@ -74,7 +74,7 @@ defmodule EquinoxDomain.CurveTest do
       assert_in_delta s1, 0.5, 0.01
     end
 
-    test "Inner.rasterize/4 标准 Catmull-Rom（tension=0.5）" do
+    test "Inner.rasterize/2 标准 Catmull-Rom（tension=0.5）" do
       pts = [
         ControlPoint.new(tick: 0, value: 0.0),
         ControlPoint.new(tick: 100, value: 1.0),
@@ -82,7 +82,7 @@ defmodule EquinoxDomain.CurveTest do
       ]
 
       container = CatmullRom.new(points: pts, tension: 0.5)
-      result = Adapter.Inner.rasterize(container, 0, 200, 100)
+      result = Adapter.Inner.rasterize(container, [0, 100])
 
       # 2 个样本：tick=0 和 tick=100
       assert byte_size(result) == 2 * 4
@@ -92,20 +92,41 @@ defmodule EquinoxDomain.CurveTest do
       assert s1 > 0.5
     end
 
-    test "Inner.rasterize/4 边界外 clamp 到首尾值" do
+    test "Inner.rasterize/2 边界外 clamp 到首尾值" do
       pts = [
         ControlPoint.new(tick: 50, value: 0.3),
         ControlPoint.new(tick: 150, value: 0.7)
       ]
 
       container = CatmullRom.new(points: pts)
-      result = Adapter.Inner.rasterize(container, 0, 200, 100)
+      result = Adapter.Inner.rasterize(container, [0, 100])
 
       # tick=0 (clamp to first) 和 tick=100 (中点)
       <<s0::float-32-native, s1::float-32-native>> = result
       assert_in_delta s0, 0.3, 0.01
       assert_in_delta s1, 0.5, 0.01
     end
+test "Inner.span/1 返回最后一个控制点的 tick" do
+      pts = [
+        ControlPoint.new(tick: 0, value: 0.0),
+        ControlPoint.new(tick: 100, value: 1.0),
+        ControlPoint.new(tick: 200, value: 0.0)
+      ]
+
+      container = CatmullRom.new(points: pts, tension: 0.5)
+      assert Adapter.Inner.span(container) == 200
+    end
+
+    test "Inner.span/1 空曲线返回 0" do
+      container = CatmullRom.new(%{})
+      assert Adapter.Inner.span(container) == 0
+    end
+
+    test "Inner.span/1 单点返回该点 tick" do
+      container = CatmullRom.new(points: [ControlPoint.new(tick: 50, value: 0.5)])
+      assert Adapter.Inner.span(container) == 50
+    end
+
   end
 
   describe "Chunk" do
@@ -119,8 +140,7 @@ defmodule EquinoxDomain.CurveTest do
       chunk = Chunk.new(
         adapter: CatmullRom,
         container: container,
-        start_tick: 960,
-        end_tick: 1920
+        start_tick: 960
       )
 
       assert is_binary(chunk.id)
@@ -128,24 +148,22 @@ defmodule EquinoxDomain.CurveTest do
       assert chunk.adapter == CatmullRom
       assert chunk.container == container
       assert chunk.start_tick == 960
-      assert chunk.end_tick == 1920
       assert chunk.rasterized == nil
       assert chunk.extra == %{}
     end
 
     test "update/2 修改 Chunk 属性（id 不可变）" do
       container = CatmullRom.new(%{})
-      chunk = Chunk.new(adapter: CatmullRom, container: container, start_tick: 0, end_tick: 480)
+      chunk = Chunk.new(adapter: CatmullRom, container: container, start_tick: 0)
 
-      {:ok, moved} = Chunk.update(chunk, start_tick: 960, end_tick: 1440)
+      {:ok, moved} = Chunk.update(chunk, start_tick: 960)
       assert moved.start_tick == 960
-      assert moved.end_tick == 1440
       assert moved.id == chunk.id
     end
 
     test "update/2 拒绝修改 id" do
       container = CatmullRom.new(%{})
-      chunk = Chunk.new(adapter: CatmullRom, container: container, start_tick: 0, end_tick: 480)
+      chunk = Chunk.new(adapter: CatmullRom, container: container, start_tick: 0)
 
       assert Chunk.update(chunk, id: "fake") == {:error, :id_immutable}
     end
@@ -162,7 +180,7 @@ defmodule EquinoxDomain.CurveTest do
     test "update/2 修改 Channel 属性" do
       pts = [ControlPoint.new(tick: 0, value: 0.5)]
       container = CatmullRom.new(points: pts)
-      chunk = Chunk.new(adapter: CatmullRom, container: container, start_tick: 0, end_tick: 480)
+      chunk = Chunk.new(adapter: CatmullRom, container: container, start_tick: 0)
 
       channel =
         Channel.new(name: :pitch)
@@ -178,9 +196,9 @@ defmodule EquinoxDomain.CurveTest do
       pts_b = [ControlPoint.new(tick: 0, value: 0.8)]
 
       chunk_a = Chunk.new(adapter: CatmullRom, container: CatmullRom.new(points: pts_a),
-                          start_tick: 0, end_tick: 480)
+                          start_tick: 0)
       chunk_b = Chunk.new(adapter: CatmullRom, container: CatmullRom.new(points: pts_b),
-                          start_tick: 0, end_tick: 480)
+                          start_tick: 0)
 
       channel = Channel.update(Channel.new(name: :pitch), chunks: [chunk_a, chunk_b])
       assert length(channel.chunks) == 2

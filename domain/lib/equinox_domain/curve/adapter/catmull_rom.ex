@@ -1,8 +1,7 @@
 defmodule EquinoxDomain.Curve.Adapter.CatmullRom do
   # Catmull-Rom 曲线适配器（naive 参考实现）
 
-  @behaviour EquinoxDomain.Curve.Adapter
-  alias EquinoxDomain.Curve.{Adapter.Inner, ControlPoint}
+  use EquinoxDomain.Curve.Adapter
 
   @type t :: %__MODULE__{
           points: [ControlPoint.t()],
@@ -19,34 +18,33 @@ defmodule EquinoxDomain.Curve.Adapter.CatmullRom do
   defimpl Inner, for: __MODULE__ do
     def control_points(%{points: points}), do: points
 
-    def rasterize(%{points: points, tension: tension}, start_tick, end_tick, stride) do
+    def span(%{points: []}), do: 0
+    def span(%{points: points}), do: List.last(points).tick
+
+    def rasterize(%{points: points, tension: tension}, tick_seq) do
       points = Enum.sort_by(points, & &1.tick)
 
       cond do
-        points == [] -> constant_rasterize(0.0, start_tick, end_tick, stride)
-        length(points) == 1 -> constant_rasterize(hd(points).value, start_tick, end_tick, stride)
-        true -> catmull_rasterize(points, tension, start_tick, end_tick, stride)
+        points == [] ->
+          for _ <- tick_seq, into: <<>>, do: <<0.0::float-32-native>>
+
+        length(points) == 1 ->
+          val = hd(points).value
+          for _ <- tick_seq, into: <<>>, do: <<val::float-32-native>>
+
+        true ->
+          catmull_rasterize(points, tension, tick_seq)
       end
     end
 
     # ---- helpers ----
 
-    defp constant_rasterize(value, start_tick, end_tick, stride) do
-      count = div(end_tick - start_tick, stride)
-
-      for _ <- 1..count, into: <<>> do
-        <<value::float-32-native>>
-      end
-    end
-
-    defp catmull_rasterize(points, tension, start_tick, end_tick, stride) do
+    defp catmull_rasterize(points, tension, tick_seq) do
       first_tick = hd(points).tick
       last_tick = List.last(points).tick
       padded = boundary_pad(points)
-      count = div(end_tick - start_tick, stride)
 
-      for i <- 0..(count - 1), into: <<>> do
-        tick = start_tick + i * stride
+      for tick <- tick_seq, into: <<>> do
         value = sample_at(padded, tension, first_tick, last_tick, tick)
         <<value::float-32-native>>
       end

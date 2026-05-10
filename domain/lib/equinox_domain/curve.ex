@@ -1,9 +1,17 @@
 defmodule EquinoxDomain.Curve do
-  # 曲线工具
-  # 因为曲线参数是 Equinox 的一个特色（灵感来源于 Cadencii）
-  # 所以作为一个单独的模块
+  @moduledoc """
+  曲线工具模块。
 
-  # 简单来说，包括多个 Chunk 的一条 Curve 用于 Track 的特定 Channel
+  灵感来源于 Cadencii 。
+
+  用一句话描述曲线，就是包括多个 Chunk 的一条 Curve 用于 Track 的特定 Channel 。
+  这里将 Curve 与 Channel 分离开的原因在于 Channel
+  允许重叠，其经过处理（重叠片段以最新的为准）变成一条 Curve 。
+
+  ### 曲线的来源
+
+  ### 曲线的参数化
+  """
 
   # 一方面，提供默认值（基于 Channel 的 behaviour）
   # 另一方面，提供直线、曲线、手绘工具以及清除/部分清除的工具（type）
