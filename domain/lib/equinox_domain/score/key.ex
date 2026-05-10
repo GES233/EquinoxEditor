@@ -54,4 +54,11 @@ defmodule EquinoxDomain.Score.Key do
   defdelegate to_midi(key), to: Inner
 
   defdelegate to_frequency(key, reference), to: Inner
+
+  defmacro __using__(_opts) do
+    quote do
+      @behaviour EquinoxDomain.Score.Key
+      alias EquinoxDomain.Score.Key.Inner
+    end
+  end
 end

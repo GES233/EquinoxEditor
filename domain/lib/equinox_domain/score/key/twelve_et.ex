@@ -3,8 +3,7 @@ defmodule EquinoxDomain.Score.Key.TwelveET do
   十二平均律实现。
   内部以 MIDI 编号（整数）存储。
   """
-  @behaviour EquinoxDomain.Score.Key
-  alias EquinoxDomain.Score.Key.Inner
+  use EquinoxDomain.Score.Key
 
   defstruct [:midi]
 
