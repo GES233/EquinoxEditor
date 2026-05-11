@@ -50,9 +50,9 @@ defmodule EquinoxDomain.Util.Pickle do
     @type signature :: binary()
 
     @typedoc """
-    需要说明一下：
+    需要说明一下运行时格式:
 
-    运行时信封格式: `%{"__scope__" => scope(), "__signature__" => signature(), 你的payload}`
+    `%{"__scope__" => scope(), "__signature__" => signature(), payload}`
     """
     @type serialized :: %{optional(binary()) => Pickle.serialized()}
 
