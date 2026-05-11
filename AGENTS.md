@@ -37,7 +37,7 @@ The `EquinoxDomain` module lives in `domain/` as a **separate, zero-dependency E
 **Key design decisions**:
 - `use EquinoxDomain.Util.Model, keys: [...], id_prefix: "Xxx_"` auto-generates `new/1` and `update/2` for all domain structs. `update/2` returns `{:ok, model} | {:error, reason}`.
 - `Note.slice_flag` uses `:auto | :force_slice | :force_merge` (simpler than kernel's tuple-based version).
-- `Track` holds `notes: %{}` (map by id) and `curve_layers: %{}`.
+- `Track` holds `notes: %{}` (map by id) and `curve_channels: %{}`.
 - `Phoneme` is a standalone value object with timing info (`symbol`, `type`, `tick_offset`, `duration_tick`).
 - `Utterance` replaces the kernel's `Segment` concept — it groups notes + phonemes into a continuous vocal phrase, and determines rasterization boundaries for the render pipeline. The engine does not need to understand the Note domain model.
 - `Segment` is a pure rendering-context VO (acoustic boundaries, rasterized phonemes/curves) — not a note container. Domain define struct, and `rasterized_*` padding by Kernel during synthesizing.
@@ -111,7 +111,7 @@ Once an Utterance exists, it becomes the authoritative container for its notes a
 
 ### ADR-002 — Curves are a Track-level layer
 
-Continuous parameter curves live on `Track.curve_layers`, keyed by `param_name :: atom()` (e.g., `:pitch`, `:energy`). They are orthogonal to Utterance/Segment boundaries and survive re-slicing.
+Continuous parameter curves live on `Track.curve_channels`, keyed by `param_name :: atom() | binary()` (e.g., `:pitch`, `:energy`). They are orthogonal to Utterance/Segment boundaries and survive re-slicing.
 
 Rationale: Utterances are derived from Notes; forcing curves to live inside Utterances would tie curve continuity to a derivation artifact.
 
@@ -241,10 +241,10 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 ### Phase 1a — Standalone Domain Models (domain/)
 5. **Note (standalone)** — Note struct with duration, pitch, timing (`start_tick`, `duration_tick`). Pure value fields; no Track-level concerns.
 6. **Timeline** — `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`. Musical time ↔ physical time conversion.
-7. **Curves (pure data)** — `Curve.Chunk`, `Curve.Layer`, `Curve.RasterCache` + rasterizer (linear / cubic / step interpolation) + stroke simplification (Douglas-Peucker).
+7. **Curves (pure data)** — `Curve.Chunk`, `Curve.Channel`, `Curve.RasterCache` + rasterizer (linear / cubic / step interpolation) + stroke simplification (Douglas-Peucker).
 
 ### Phase 1b — Aggregate Roots (domain/)
-8. **Track** — Notes map (`%{note_id => Note.t()}`) + `curve_layers: %{}`. Note CRUD at Track level (insert, delete, split, merge, update). Curve layer management.
+8. **Track** — Notes map (`%{note_id => Note.t()}`) + `curve_channels: %{}`. Note CRUD at Track level (insert, delete, split, merge, update). Curve layer management.
 9. **Project** — Tracks map + project-level metadata. Track CRUD.
 10. **Utterance & Phoneme** — Utterance groups notes + phonemes into continuous vocal phrases. Phoneme is a standalone VO with timing info. Utterance determines rasterization boundaries.
 
@@ -348,7 +348,7 @@ Split into Phase 1 (domain) and Phase 2 (kernel integration).
 ### Data Structures (matching domain project)
 
 - `EquinoxDomain.Curve.Chunk`: `{id, start_tick, end_tick, control_points, rasterized | nil, source, extra}`. Control points carry `(tick, value, kind, tension)`.
-- `EquinoxDomain.Curve.Layer`: `{param :: atom(), chunks :: [Chunk.t()], extra}`. Lives on `Track.curve_layers`. No default mode — absent coverage means "no intervention".
+- `EquinoxDomain.Curve.Channel`: `{param :: atom() | binary(), chunks :: [Chunk.t()], extra}`. Lives on `Track.curve_channels`. No default mode — absent coverage means "no intervention".
 - `EquinoxDomain.Curve.RasterCache`: `{stride, samples :: binary, fingerprint}`. Rebuildable from control points; never serialized.
 - `Equinox.Kernel.Compiler.SegmentContext`: `{utterance, curve_slices, synth_override, graph, cluster, history}`. The only struct passed into `Compiler.compile/2`.
 
@@ -382,10 +382,10 @@ Strokes are assumed already-simplified control-point chunks (see ADR-003). The E
 Pure data modules inside `domain/`, no impact on Kernel:
 
 - [ ] Complete `EquinoxDomain.Curve.Chunk` + unit tests.
-- [ ] Add `EquinoxDomain.Curve.Layer` + unit tests (insert/replace/erase/slice).
+- [ ] Add `EquinoxDomain.Curve.Channel` + unit tests (insert/replace/erase/slice).
 - [ ] Add `EquinoxDomain.Curve.RasterCache` + rasterizer (linear / cubic / step interpolation).
 - [ ] Add stroke-simplification helper (Douglas-Peucker, tunable epsilon).
-- [ ] Add `curve_layers` field to `EquinoxDomain.Score.Track`, default `%{}`.
+- [ ] Add `curve_channels` field to `EquinoxDomain.Score.Track`, default `%{}`.
 - [ ] Implement `Pickle` serialization for all curve types.
 
 Each step ends on a green `cd domain && mix precommit`.
