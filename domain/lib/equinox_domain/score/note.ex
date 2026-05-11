@@ -255,15 +255,15 @@ defmodule EquinoxDomain.Score.Note do
   def serialize(note) do
     with {:ok, start_tick} <- Tick.serialize(note.start_tick),
          {:ok, duration_tick} <- Tick.serialize(note.duration_tick),
+         {:ok, key_env} <- Key.serialize(note.key),
          {:ok, slice_flag} <- serialize_slice_flag(note.slice_flag) do
-      # 需要实现 key
       {:ok,
        %{
          "type" => "Note",
          "id" => note.id,
          "start" => start_tick,
          "duration" => duration_tick,
-         "key" => note.key,
+         "key" => key_env,
          "slice_flag" => slice_flag,
          "metadata" => note.metadata
        }}

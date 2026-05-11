@@ -106,30 +106,16 @@ defmodule EquinoxDomain.Timeline.Tempo do
     def signature, do: @serialize_identidier
 
     @impl true
-    def serialize(%Event{module: __MODULE__, context: %{bpm: bpm}}) do
-      {:ok,
-       %{
-         "__scope__" => "tempo_event",
-         "__signature__" => @serialize_identidier,
-         "context" => %{"bpm" => bpm}
-       }}
+    def dump(%Event{module: __MODULE__, context: %{bpm: bpm}}) do
+      {:ok, %{"bpm" => bpm}}
     end
 
     @impl true
-    def deserialize(%{
-         "__scope__" => "tempo_event",
-         "__signature__" => @serialize_identidier,
-         "context" => %{"bpm" => bpm}
-        }) do
-      with true <- is_number(bpm) do
-        {:ok, %Event{module: __MODULE__, context: %{bpm: bpm}}}
-      else
-        false -> {:error, {:invalid_data, __MODULE__, :is_not_number, bpm}}
-      end
+    def load(%{"bpm" => bpm}) when is_number(bpm) do
+      {:ok, %Event{module: __MODULE__, context: %{bpm: bpm}}}
     end
 
-    def deserialize(%{"__scope__" => other_type}),
-      do: {:error, {:invalid_data, __MODULE__, :scope_incorrect, other_type}}
+    def load(_), do: {:error, {:invalid_data, __MODULE__}}
   end
 
   # 线性渐变速度
@@ -178,16 +164,26 @@ defmodule EquinoxDomain.Timeline.Tempo do
     impl(segment).sec_to_tick(segment, sec)
   end
 
-  # ---- 序列化相关 ----
-  # 这里的上下文就是 tempo_strategies 了
-  # 其实可以直接用 Registry 来做
-  # 但权衡下暂时先以 exclipit context 来做
+  # ---- 序列化 ----
 
-  # def serialize/2
+  alias EquinoxDomain.Util.Pickle.Plugable
 
-  # def deserialize/2
+  @scope "tempo_segment"
 
-  # tempo_strategies_build
+  def scope, do: @scope
+
+  @doc "将速度事件序列化为 Plugable 信封"
+  @spec serialize_event(Event.t()) :: {:ok, Plugable.tagged()} | {:error, term()}
+  def serialize_event(%Event{module: mod} = event) do
+    Plugable.dispatch_dump(event, @scope, mod)
+  end
+
+  @doc "从 Plugable 信封反序列化为速度事件，需要 registry"
+  @spec deserialize_event(Plugable.tagged(), Plugable.registry()) ::
+          {:ok, Event.t()} | {:error, term()}
+  def deserialize_event(env, registry) do
+    Plugable.dispatch_load(env, @scope, registry)
+  end
 
   # ---- 一些 Helpers ----
 

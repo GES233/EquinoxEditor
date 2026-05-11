@@ -39,34 +39,95 @@ defmodule EquinoxDomain.Util.Pickle do
   end
 
   defmodule Plugable do
-    @moduledoc "为操作对象可能存在外部的其他实现的情况提供一些便利。"
-    # 不能说插件，插件可能会介入生命周期的多个阶段，不是领域模型可以 cope 掉的
+    @moduledoc """
+    多实现对象的序列化契约。
+
+    一个 Plugable 对象在序列化后形如：
+
+        %{
+          "__scope__" => scope(),
+          "__signature__" => signature(),
+          # ...实现相关字段
+        }
+
+    其中 `scope` 由抽象层模块声明（如 Key、Tempo），
+    `signature` 由具体实现模块提供（如 TwelveET、Step）。
+    """
 
     alias EquinoxDomain.Util.Pickle
 
-    # 等到后面定性改成 Literal
     @type scope :: binary()
-
     @type signature :: binary()
 
-    @typedoc """
-    需要说明一下运行时格式:
+    @typedoc "带 scope/signature 标签的 payload"
+    @type tagged :: %{required(binary()) => Pickle.serialized()}
 
-    `%{"__scope__" => scope(), "__signature__" => signature(), payload}`
-    """
-    @type serialized :: %{optional(binary()) => Pickle.serialized()}
+    @type registry :: %{scope() => %{signature() => module()}}
 
-    @type registry :: %{
-      scope() => %{signature() => module()}
-    }
-
-    @doc "获得当前模块/实现的标识"
+    @doc "获得当前实现的 signature"
     @callback signature() :: signature()
+
+    @doc "将实例 dump 为纯数据 map（不含 scope/signature）"
+    @callback dump(Pickle.model()) :: {:ok, map()} | {:error, term()}
+
+    @doc "从纯数据 map 构造实例"
+    @callback load(map()) :: {:ok, Pickle.model()} | {:error, term()}
 
     defmacro __using__(_opts) do
       quote do
         @behaviour EquinoxDomain.Util.Pickle.Plugable
-        @behaviour EquinoxDomain.Util.Pickle.Pure
+      end
+    end
+
+    # ---- 分发函数 ----
+
+    @spec lookup(registry(), scope(), signature()) ::
+            {:ok, module()} | {:error, {:not_found, scope(), signature()}}
+    def lookup(registry, scope, signature) do
+      with %{} = table <- Map.get(registry, scope, %{}),
+           {:ok, mod} <- Map.fetch(table, signature) do
+        {:ok, mod}
+      else
+        :error -> {:error, {:not_found, scope, signature}}
+      end
+    end
+
+    @doc """
+    分发 dump：调模块的 dump/1，然后贴上 __scope__ 和 __signature__ 标签。
+    抽象层模块的 facade 调用此函数。
+    """
+    @spec dispatch_dump(Pickle.model(), scope(), module()) ::
+            {:ok, tagged()} | {:error, term()}
+    def dispatch_dump(model, scope, mod) do
+      with {:ok, payload} <- mod.dump(model) do
+        {:ok,
+         payload
+         |> Map.put("__scope__", scope)
+         |> Map.put("__signature__", mod.signature())}
+      end
+    end
+
+    @doc """
+    分发 load：从 tagged payload 中提取 signature，查 registry 找模块，调 load/1。
+
+    会校验 `__scope__` 是否匹配。
+    """
+    @spec dispatch_load(tagged(), scope(), registry()) ::
+            {:ok, Pickle.model()} | {:error, term()}
+    def dispatch_load(payload, scope, registry) do
+      case Map.fetch(payload, "__scope__") do
+        {:ok, ^scope} ->
+          with {:ok, sig} <- Map.fetch(payload, "__signature__"),
+               {:ok, mod} <- lookup(registry, scope, sig),
+               {:ok, model} <- mod.load(payload) do
+            {:ok, model}
+          end
+
+        {:ok, other} ->
+          {:error, {:scope_mismatch, expected: scope, got: other}}
+
+        :error ->
+          {:error, {:missing_scope, payload}}
       end
     end
   end

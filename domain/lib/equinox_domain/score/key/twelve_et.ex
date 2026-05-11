@@ -7,6 +7,8 @@ defmodule EquinoxDomain.Score.Key.TwelveET do
 
   defstruct [:midi]
 
+  # ---- Key 行为 ----
+
   @impl true
   def new(midi) when is_number(midi), do: %__MODULE__{midi: midi}
 
@@ -16,42 +18,28 @@ defmodule EquinoxDomain.Score.Key.TwelveET do
   @impl true
   def from_score(_score_data, _type, _ctx), do: {:error, :not_implemented}
 
+  # ---- Plugable 行为 ----
+
+  @impl true
+  def signature, do: "12ET"
+
+  @impl true
+  def dump(%__MODULE__{midi: midi}), do: {:ok, %{"midi" => midi}}
+
+  @impl true
+  def load(%{"midi" => midi}) when is_number(midi), do: {:ok, new(midi)}
+
+  def load(_), do: {:error, {:invalid_payload, __MODULE__}}
+
+  # ---- Inner 协议实现 ----
+
   defimpl Inner, for: __MODULE__ do
     def to_midi(%{midi: midi}), do: midi * 1.0
 
     def to_frequency(%{midi: midi}, reference), do: reference * :math.pow(2, (midi - 69) / 12)
 
+    def signature(_key), do: "12ET"
+
     def to_score(_key, _type, _ctx), do: {:error, :not_implemented}
   end
-
-  @signature "12ET"
-
-  @impl true
-  def signature, do: @signature
-
-  @impl true
-    def serialize(%__MODULE__{midi: midi}) do
-      {:ok,
-       %{
-         "__scope__" => "key",
-         "__signature__" => @signature,
-         "midi" => midi
-       }}
-    end
-
-    @impl true
-    def deserialize(%{
-         "__scope__" => "key",
-         "__signature__" => @signature,
-         "midi" => midi
-        }) do
-      with true <- is_number(midi) do
-        {:ok, %__MODULE__{midi: midi}}
-      else
-        false -> {:error, {:invalid_data, __MODULE__, :is_not_number, midi}}
-      end
-    end
-
-    def deserialize(%{"__scope__" => other_type}),
-      do: {:error, {:invalid_data, __MODULE__, :scope_incorrect, other_type}}
 end

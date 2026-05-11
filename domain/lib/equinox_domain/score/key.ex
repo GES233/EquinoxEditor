@@ -50,6 +50,12 @@ defmodule EquinoxDomain.Score.Key do
     def to_frequency(key, reference)
   end
 
+  # ---- Scope ----
+
+  @scope "key"
+
+  def scope, do: @scope
+
   # ---- Facade API ----
 
   def new(attrs, module), do: module.new(attrs)
@@ -63,6 +69,22 @@ defmodule EquinoxDomain.Score.Key do
   defdelegate to_midi(key), to: Inner
 
   defdelegate to_frequency(key, reference), to: Inner
+
+  # ---- 序列化 ----
+
+  alias EquinoxDomain.Util.Pickle.Plugable
+
+  @doc "将 Key 实例序列化为 Plugable 信封"
+  @spec serialize(t()) :: {:ok, Plugable.tagged()} | {:error, term()}
+  def serialize(key) do
+    Plugable.dispatch_dump(key, @scope, key.__struct__)
+  end
+
+  @doc "从 Plugable 信封反序列化为 Key 实例，需要 registry 查找实现模块"
+  @spec deserialize(Plugable.tagged(), Plugable.registry()) :: {:ok, t()} | {:error, term()}
+  def deserialize(payload, registry) do
+    Plugable.dispatch_load(payload, @scope, registry)
+  end
 
   defmacro __using__(_opts) do
     quote do
