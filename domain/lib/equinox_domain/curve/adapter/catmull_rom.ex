@@ -9,6 +9,7 @@ defmodule EquinoxDomain.Curve.Adapter.CatmullRom do
         }
   defstruct points: [], tension: 0.5
 
+  # 可以用 Object 替换？
   @impl true
   def new(attrs) do
     attrs = Map.new(attrs)

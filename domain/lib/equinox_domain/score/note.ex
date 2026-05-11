@@ -6,11 +6,17 @@ defmodule EquinoxDomain.Score.Note do
 
   # 切片操作逻辑
   # 默认交给 Slicer 根据休止时间自动判断
-  # 强制操作为该音符和【后面的】
+  # 强制操作为该音符和【后面的】音符作为一组
   @type slice_flag ::
           :auto
           | :force_slice
           | :force_merge
+
+  # 直接在这里声明好啦
+  # metadata 就是 %{作用域 => 内容}
+  # 限定死本身就得是可被序列化的
+  # 列表、字典、字符串、数字，nil
+  @type metadata :: %{binary() => Pickle.serialized()}
 
   use Model,
     keys: [
@@ -103,12 +109,12 @@ defmodule EquinoxDomain.Score.Note do
   * 无 key 时返回全部
   * 传 key 时返回 ok_or_err
   """
-  @spec get_metadata(t()) :: {:ok, map()}
+  @spec get_metadata(t()) :: {:ok, metadata()}
   def get_metadata(note), do: {:ok, note.metadata}
 
   # 使用 Map.fetch/2 区分是 nil 还是 not exist
-  @spec get_metadata(t(), atom()) :: {:ok, term()} | {:error, {:key_not_found, atom()}}
-  def get_metadata(note, key) when is_atom(key) do
+  @spec get_metadata(t(), binary()) :: {:ok, term()} | {:error, {:key_not_found, term()}}
+  def get_metadata(note, key) when is_binary(key) do
     case Map.fetch(note.metadata, key) do
       {:ok, value} -> {:ok, value}
       :error -> {:error, {:key_not_found, key}}
@@ -129,7 +135,7 @@ defmodule EquinoxDomain.Score.Note do
   @doc """
   在指定绝对 tick 位置切开音符。
 
-  返回 `{:ok, [note_before, note_after]}`，两个音符均生成新 ID。
+  返回 `{:ok, [note_before, note_after]}`，后面的音符为新 ID。
   `split_tick` 必须在音符内部（严格大于 start_tick，严格小于 end_tick）。
 
   `attrs` 可选，用于覆盖切分后后部音符的字段（如不同的歌词）。
@@ -233,36 +239,36 @@ defmodule EquinoxDomain.Score.Note do
     {:ok, merged}
   end
 
+  defp serialize_slice_flag(:auto), do: {:ok, "auto"}
+  defp serialize_slice_flag(:force_slice), do: {:ok, "force_slice"}
+  defp serialize_slice_flag(:force_merge), do: {:ok, "force_merge"}
+  defp serialize_slice_flag(flag), do: {:error, {:invalid_slice_flag, flag}}
+
+  # defp deserialize_slice_flag("auto"), do: {:ok, :auto}
+  # defp deserialize_slice_flag("force_slice"), do: {:ok, :force_slice}
+  # defp deserialize_slice_flag("force_merge"), do: {:ok, :force_merge}
+
   # ---- 序列化与反序列化 ----
   # @behaviour EquinoxDomain.Util.Pickle
 
   @spec serialize(t()) :: {:ok, Pickle.serialized()} | {:error, term()}
   def serialize(note) do
     with {:ok, start_tick} <- Tick.serialize(note.start_tick),
-         {:ok, duration_tick} <- Tick.serialize(note.duration_tick) do
-      # TODO:
-      # key 等类型需要实现对应的协议
-      # 确定 slice_flag 以及 matadata
+         {:ok, duration_tick} <- Tick.serialize(note.duration_tick),
+         {:ok, slice_flag} <- serialize_slice_flag(note.slice_flag) do
+      # 需要实现 key
       {:ok,
        %{
          "type" => "Note",
          "id" => note.id,
          "start" => start_tick,
          "duration" => duration_tick,
-         "key" => note.key
+         "key" => note.key,
+         "slice_flag" => slice_flag,
+         "metadata" => note.metadata
        }}
     end
   end
 
-  # @spec deserialze(Pickle.serialized()) :: {:ok, t()} | {:error, term()}
-
-  # 在这里加一个对 metadata 处理的函数
-  # 因为可能涉及插件的关系
-  # 遍历模块即可
-
-  # ---- 作为音符的属性 ----
-  # Note:
-  # 【关于时长】  <- 需要引入对应模块
-  # 需要和 merge/3 一样，引入容忍程度
-  # 以兼容手绘音符与从乐谱转换的音符的差异
+  # @spec deserialze(Pickle.serialized(), key_module_registry) :: {:ok, t()} | {:error, term()}
 end

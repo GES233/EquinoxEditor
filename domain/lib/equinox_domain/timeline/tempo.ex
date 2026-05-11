@@ -77,6 +77,9 @@ defmodule EquinoxDomain.Timeline.Tempo do
     defstruct [:start_tick, :end_tick, :bpm]
 
     @impl true
+    def build_from_event(_, _, %{bpm: bpm}) when not is_number(bpm),
+      do: {:error, {:invalid_bpm, bpm}}
+
     def build_from_event(_, _, %{bpm: bpm}) when bpm <= 0,
       do: {:error, {:bpm_is_negative, bpm}}
 
@@ -133,6 +136,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
   defmodule Linear, do: nil
 
   # 应用曲线
+  # 这里的曲线要和 `EquinoxDomain.Curve` 区分开
   defmodule Curve, do: nil
 
   # ---- 速度段功能调用 ----

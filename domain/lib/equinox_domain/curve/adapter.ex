@@ -16,6 +16,12 @@ defmodule EquinoxDomain.Curve.Adapter do
           def rasterize(foo, tick_seq), do: ...
         end
       end
+  
+  ## 可编辑的曲线
+
+      # 比方说控制点可变之类的
+      # 整体平移（随着特定音符片段）
+      # 什么什么的
 
   ## 栅格化的实现
 

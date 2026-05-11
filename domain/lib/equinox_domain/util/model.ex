@@ -34,7 +34,7 @@ defmodule EquinoxDomain.Util.Model do
         attrs
         |> normalize_attrs(@keys)
         |> Map.pop(:id, generate_id(unquote(id_prefix)))
-        |> then(fn {id, attrs} -> struct!(__MODULE__, Map.merge(attrs, %{id: id})) end)
+        |> then(fn {id, attrs} -> struct(__MODULE__, Map.merge(attrs, %{id: id})) end)
       end
 
       @doc """
@@ -49,7 +49,7 @@ defmodule EquinoxDomain.Util.Model do
           |> Map.pop(:id)
 
         with nil <- id do
-          {:ok, struct!(model, attrs)}
+          {:ok, struct(model, attrs)}
         else
           _ -> {:error, :id_immutable}
         end

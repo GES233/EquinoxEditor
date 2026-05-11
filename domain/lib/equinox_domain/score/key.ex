@@ -14,7 +14,14 @@ defmodule EquinoxDomain.Score.Key do
 
   @type key_struct :: struct()
 
+  @type t :: key_struct()
+
+  # ---- 基本的 CRUD ----
+
+  # 新建
   @callback new(any()) :: key_struct()
+
+  # ---- 创建 ----
 
   # 当前阶段暂时保留，不需要具体实现，MIDI 同理
   @callback from_score(score_data :: term(), type :: atom(), ctx :: term()) ::
@@ -22,6 +29,11 @@ defmodule EquinoxDomain.Score.Key do
 
   @callback from_midi(midi_note :: number(), ctx :: term()) ::
               {:ok, key_struct()} | {:error, term()}
+
+  # 反序列化
+  # @callback deserialize(payload) :: {:ok, key_struct()} | {:error, term()}
+
+  # ---- 去向 ----
 
   defprotocol Inner do
     @moduledoc "部分去向的操作集合"
@@ -39,6 +51,13 @@ defmodule EquinoxDomain.Score.Key do
 
     @doc "转换到绝对频率 (Hz)"
     def to_frequency(key, reference)
+
+    # ---- 序列化 ----
+
+    @doc "序列化的相关标识"
+    def signature(key)
+
+    # def serialize(key)
   end
 
   # ---- Facade API ----

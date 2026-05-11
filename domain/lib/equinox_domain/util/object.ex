@@ -26,7 +26,7 @@ defmodule EquinoxDomain.Util.Object do
       def new(attrs) do
         attrs
         |> normalize_attrs(@keys)
-        |> then(&struct!(__MODULE__, &1))
+        |> then(&struct(__MODULE__, &1))
       end
 
       @doc """
@@ -37,7 +37,7 @@ defmodule EquinoxDomain.Util.Object do
       def update(obj, attrs) do
         attrs
         |> normalize_attrs(@keys)
-        |> then(&struct!(obj, &1))
+        |> then(&struct(obj, &1))
       end
     end
   end
