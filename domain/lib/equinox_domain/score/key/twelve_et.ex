@@ -21,8 +21,37 @@ defmodule EquinoxDomain.Score.Key.TwelveET do
 
     def to_frequency(%{midi: midi}, reference), do: reference * :math.pow(2, (midi - 69) / 12)
 
-    def signature(_key), do: "12ET"
-
     def to_score(_key, _type, _ctx), do: {:error, :not_implemented}
   end
+
+  @signature "12ET"
+
+  @impl true
+  def signature, do: @signature
+
+  @impl true
+    def serialize(%__MODULE__{midi: midi}) do
+      {:ok,
+       %{
+         "__scope__" => "key",
+         "__signature__" => @signature,
+         "midi" => midi
+       }}
+    end
+
+    @impl true
+    def deserialize(%{
+         "__scope__" => "key",
+         "__signature__" => @signature,
+         "midi" => midi
+        }) do
+      with true <- is_number(midi) do
+        {:ok, %__MODULE__{midi: midi}}
+      else
+        false -> {:error, {:invalid_data, __MODULE__, :is_not_number, midi}}
+      end
+    end
+
+    def deserialize(%{"__scope__" => other_type}),
+      do: {:error, {:invalid_data, __MODULE__, :scope_incorrect, other_type}}
 end

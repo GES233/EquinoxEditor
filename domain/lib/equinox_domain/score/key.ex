@@ -30,9 +30,6 @@ defmodule EquinoxDomain.Score.Key do
   @callback from_midi(midi_note :: number(), ctx :: term()) ::
               {:ok, key_struct()} | {:error, term()}
 
-  # 反序列化
-  # @callback deserialize(payload) :: {:ok, key_struct()} | {:error, term()}
-
   # ---- 去向 ----
 
   defprotocol Inner do
@@ -51,13 +48,6 @@ defmodule EquinoxDomain.Score.Key do
 
     @doc "转换到绝对频率 (Hz)"
     def to_frequency(key, reference)
-
-    # ---- 序列化 ----
-
-    @doc "序列化的相关标识"
-    def signature(key)
-
-    # def serialize(key)
   end
 
   # ---- Facade API ----
@@ -78,6 +68,7 @@ defmodule EquinoxDomain.Score.Key do
     quote do
       @behaviour EquinoxDomain.Score.Key
       alias EquinoxDomain.Score.Key.Inner
+      use EquinoxDomain.Util.Pickle.Plugable
     end
   end
 end

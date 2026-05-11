@@ -7,6 +7,9 @@ defmodule EquinoxDomain.Util.Pickle do
   @typedoc "可持久化的基本标量。"
   @type scalar :: nil | boolean() | integer() | float() | binary()
 
+  # 一方面作为类似 Registry
+  # 另一方面需要提供别的东西，例如外部插件/元数据/外部配置等等
+  # Domain 不会涉及
   @typedoc "可能需要的上下文"
   @type context :: term()
 
@@ -24,7 +27,7 @@ defmodule EquinoxDomain.Util.Pickle do
   @callback deserialize(serialized(), context()) :: {:ok, model()} | {:error, term()}
 
   defmodule Pure do
-    @moduledoc "不需要额外上下文的序列化与反序列化。"
+    @moduledoc "不需要额外上下文的对象的序列化与反序列化。"
 
     alias EquinoxDomain.Util.Pickle
 
@@ -36,8 +39,35 @@ defmodule EquinoxDomain.Util.Pickle do
   end
 
   defmodule Plugable do
-    @moduledoc "为操作对象可能存在外部插件的情况提供一些便利函数。"
+    @moduledoc "为操作对象可能存在外部的其他实现的情况提供一些便利。"
+    # 不能说插件，插件可能会介入生命周期的多个阶段，不是领域模型可以 cope 掉的
 
-    # 先留个模块在这，我再想想 usecase
+    alias EquinoxDomain.Util.Pickle
+
+    # 等到后面定性改成 Literal
+    @type scope :: binary()
+
+    @type signature :: binary()
+
+    @typedoc """
+    需要说明一下：
+
+    运行时信封格式: `%{"__scope__" => scope(), "__signature__" => signature(), 你的payload}`
+    """
+    @type serialized :: %{optional(binary()) => Pickle.serialized()}
+
+    @type registry :: %{
+      scope() => %{signature() => module()}
+    }
+
+    @doc "获得当前模块/实现的标识"
+    @callback signature() :: signature()
+
+    defmacro __using__(_opts) do
+      quote do
+        @behaviour EquinoxDomain.Util.Pickle.Plugable
+        @behaviour EquinoxDomain.Util.Pickle.Pure
+      end
+    end
   end
 end

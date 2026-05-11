@@ -29,8 +29,6 @@ defmodule EquinoxDomain.Timeline.Tempo do
   defmodule Segment do
     @moduledoc "速度段的行为定义，预计实际支持阶梯、线性、甚至曲线。"
 
-    alias EquinoxDomain.Util.Pickle
-
     @typedoc "实现速度段的结构体。"
     @type segment :: struct()
 
@@ -53,13 +51,13 @@ defmodule EquinoxDomain.Timeline.Tempo do
     @doc "该片段第 X.XX 秒所对应的刻。"
     @callback sec_to_tick(segment, sec_offset :: Timeline.physical_time()) :: Tick.numeric_tick()
 
-    # ---- 序列化/反序列化【事件】 ----
-
-    @callback serialize_identidier() :: String.t()
-
-    @callback serialize_step_event(Event.t()) :: {:ok, Pickle.serialized()} | {:error, term()}
-
-    @callback deserialize_step_event(Pickle.serialized()) :: {:ok, Event.t()} | {:error, term()}
+    defmacro __using__(_opts) do
+      quote do
+        @behaviour EquinoxDomain.Timeline.Tempo.Segment
+        # 序列化/反序列化【事件】
+        use EquinoxDomain.Util.Pickle.Plugable
+      end
+    end
   end
 
   defmodule Step do
@@ -70,7 +68,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
     """
 
     alias EquinoxDomain.Timeline.Tempo.{Segment, Event}
-    @behaviour Segment
+    use Segment
 
     @serialize_identidier "Step"
 
@@ -105,31 +103,33 @@ defmodule EquinoxDomain.Timeline.Tempo do
     end
 
     @impl true
-    def serialize_identidier, do: @serialize_identidier
+    def signature, do: @serialize_identidier
 
     @impl true
-    def serialize_step_event(%Event{module: __MODULE__, context: %{bpm: bpm}}) do
+    def serialize(%Event{module: __MODULE__, context: %{bpm: bpm}}) do
       {:ok,
        %{
-         "tempo_event_type" => @serialize_identidier,
+         "__scope__" => "tempo_event",
+         "__signature__" => @serialize_identidier,
          "context" => %{"bpm" => bpm}
        }}
     end
 
     @impl true
-    def deserialize_step_event(%{
-          "tempo_event_type" => @serialize_identidier,
-          "context" => %{"bpm" => bpm}
+    def deserialize(%{
+         "__scope__" => "tempo_event",
+         "__signature__" => @serialize_identidier,
+         "context" => %{"bpm" => bpm}
         }) do
       with true <- is_number(bpm) do
         {:ok, %Event{module: __MODULE__, context: %{bpm: bpm}}}
       else
-        false -> {:error, {:invalid_data, __MODULE__, :bpm_is_not_number, bpm}}
+        false -> {:error, {:invalid_data, __MODULE__, :is_not_number, bpm}}
       end
     end
 
-    def deserialize_step_event(%{"tempo_event_type" => other_type}),
-      do: {:error, {:invalid_data, __MODULE__, :tempo_typo_incorrect, other_type}}
+    def deserialize(%{"__scope__" => other_type}),
+      do: {:error, {:invalid_data, __MODULE__, :scope_incorrect, other_type}}
   end
 
   # 线性渐变速度
