@@ -5,10 +5,8 @@ defmodule EquinoxDomain.Curve.Adapter do
   ## 示例
 
       defmodule Foo do
-        use EquinoxDomain.Curve.Adapter
-
-        @impl true
-        def new(attrs), do: ...
+        # 一般都存在状态
+        use EquinoxDomain.Curve.Adapter, keys: ...
 
         defimpl Inner, for: __MODULE__ do
           def control_points(foo), do: ...
@@ -16,7 +14,7 @@ defmodule EquinoxDomain.Curve.Adapter do
           def rasterize(foo, tick_seq), do: ...
         end
       end
-  
+
   ## 可编辑的曲线
 
       # 比方说控制点可变之类的
@@ -37,7 +35,7 @@ defmodule EquinoxDomain.Curve.Adapter do
 
   alias EquinoxDomain.Curve.ControlPoint
 
-  @callback new(attrs :: map()) :: struct()
+  # ---- 如果这里需要一些业务函数的话，放在这 ----
 
   defprotocol Inner do
     @doc "返回容器内的控制点列表，单位是 tick 。"
@@ -56,10 +54,27 @@ defmodule EquinoxDomain.Curve.Adapter do
     # 后续 NIF 替换
   end
 
-  defmacro __using__(_opts) do
+  defmacro __using__(opts) do
+    # 顺应 EquinoxDomain.Util.Object 模块
+    keys = Keyword.fetch!(opts, :keys)
+
     quote do
-      @behaviour EquinoxDomain.Curve.Adapter
+      use EquinoxDomain.Util.Object, keys: unquote(keys)
+      # @behaviour EquinoxDomain.Curve.Adapter
       alias EquinoxDomain.Curve.{Adapter.Inner, ControlPoint}
+      @after_compile EquinoxDomain.Curve.Adapter
     end
+  end
+
+  def __after_compile__(env, _bytecode) do
+    unless Protocol.assert_impl!(EquinoxDomain.Curve.Adapter.Inner, env.module) do
+      :ok
+    end
+  rescue
+    ArgumentError ->
+      IO.warn(
+        "#{inspect(env.module)} uses Curve.Adapter but not implement Inner protocol",
+        Macro.Env.stacktrace(env)
+      )
   end
 end

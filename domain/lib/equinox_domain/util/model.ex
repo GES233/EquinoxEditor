@@ -12,6 +12,7 @@ defmodule EquinoxDomain.Util.Model do
   """
 
   defmacro __using__(opts) do
+    # 这里一般是代码编写除了问题，可以 raise
     keys = Keyword.fetch!(opts, :keys)
     id_prefix = Keyword.get(opts, :id_prefix)
 
@@ -31,10 +32,10 @@ defmodule EquinoxDomain.Util.Model do
       如果未提供 `:id`，会自动调用 `generate_id/0` 生成 ID。
       """
       def new(attrs) do
-        attrs
-        |> normalize_attrs(@keys)
-        |> Map.pop(:id, generate_id(unquote(id_prefix)))
-        |> then(fn {id, attrs} -> struct(__MODULE__, Map.merge(attrs, %{id: id})) end)
+        with {:ok, normalized} <- normalize_attrs(attrs, @keys) do
+          Map.pop(normalized, :id, generate_id(unquote(id_prefix)))
+          |> then(fn {id, attrs} -> struct(__MODULE__, Map.put(attrs, :id, id)) end)
+        end
       end
 
       @doc """
@@ -43,15 +44,9 @@ defmodule EquinoxDomain.Util.Model do
       `attrs` 格式同 `new/1`。
       """
       def update(model, attrs) do
-        {id, attrs} =
-          attrs
-          |> normalize_attrs(@keys)
-          |> Map.pop(:id)
-
-        with nil <- id do
+        with {:ok, normalized} <- normalize_attrs(attrs, @keys),
+             :ok <- if(Map.has_key?(normalized, :id), do: {:error, :id_immutable}, else: :ok) do
           {:ok, struct(model, attrs)}
-        else
-          _ -> {:error, :id_immutable}
         end
       end
     end

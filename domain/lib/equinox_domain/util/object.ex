@@ -2,7 +2,7 @@ defmodule EquinoxDomain.Util.Object do
   @moduledoc """
   值对象。
 
-  通过 `use EquinoxDomain.Object, keys: [...]` 自动生成：
+  通过 `use EquinoxDomain.Util.Object, keys: [...]` 自动生成：
 
   - 结构体定义
   - `new/1`
@@ -10,6 +10,7 @@ defmodule EquinoxDomain.Util.Object do
   """
 
   defmacro __using__(opts) do
+    # 和 Domain 一样，这里一般是代码编写除了问题，可以 raise
     keys = Keyword.fetch!(opts, :keys)
 
     quote do
@@ -24,9 +25,9 @@ defmodule EquinoxDomain.Util.Object do
       `attrs` 可以是 map 或 keyword list，键可以使用原子或字符串。
       """
       def new(attrs) do
-        attrs
-        |> normalize_attrs(@keys)
-        |> then(&struct(__MODULE__, &1))
+        with {:ok, normalized} <- normalize_attrs(attrs, @keys) do
+          struct(__MODULE__, normalized)
+        end
       end
 
       @doc """
@@ -35,9 +36,9 @@ defmodule EquinoxDomain.Util.Object do
       `attrs` 格式同 `new/1`。
       """
       def update(obj, attrs) do
-        attrs
-        |> normalize_attrs(@keys)
-        |> then(&struct(obj, &1))
+        with {:ok, normalized} <- normalize_attrs(attrs, @keys) do
+          struct(obj, normalized)
+        end
       end
     end
   end

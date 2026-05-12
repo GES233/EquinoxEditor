@@ -200,7 +200,8 @@ defmodule EquinoxDomain.Score.Note do
           note2_end + gap_tolerance < note1.start_tick ->
         {:error, {:gap_too_large, note1_end, note2.start_tick, gap_tolerance}}
 
-      true -> do_merge(note1, note1_end, note2, note2_end)
+      true ->
+        do_merge(note1, note1_end, note2, note2_end)
     end
   end
 

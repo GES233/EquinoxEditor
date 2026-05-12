@@ -40,10 +40,12 @@ defmodule EquinoxDomain.CurveTest do
       container = CatmullRom.new(%{})
       result = Adapter.Inner.rasterize(container, 0..90//10)
       assert byte_size(result) == 10 * 4
-      assert result == <<0.0::float-32-native, 0.0::float-32-native, 0.0::float-32-native,
-                         0.0::float-32-native, 0.0::float-32-native, 0.0::float-32-native,
-                         0.0::float-32-native, 0.0::float-32-native, 0.0::float-32-native,
-                         0.0::float-32-native>>
+
+      assert result ==
+               <<0.0::float-32-native, 0.0::float-32-native, 0.0::float-32-native,
+                 0.0::float-32-native, 0.0::float-32-native, 0.0::float-32-native,
+                 0.0::float-32-native, 0.0::float-32-native, 0.0::float-32-native,
+                 0.0::float-32-native>>
     end
 
     test "Inner.rasterize/2 单点返回常量" do
@@ -106,7 +108,8 @@ defmodule EquinoxDomain.CurveTest do
       assert_in_delta s0, 0.3, 0.01
       assert_in_delta s1, 0.5, 0.01
     end
-test "Inner.span/1 返回最后一个控制点的 tick" do
+
+    test "Inner.span/1 返回最后一个控制点的 tick" do
       pts = [
         ControlPoint.new(tick: 0, value: 0.0),
         ControlPoint.new(tick: 100, value: 1.0),
@@ -126,7 +129,6 @@ test "Inner.span/1 返回最后一个控制点的 tick" do
       container = CatmullRom.new(points: [ControlPoint.new(tick: 50, value: 0.5)])
       assert Adapter.Inner.span(container) == 50
     end
-
   end
 
   describe "Chunk" do
@@ -137,11 +139,13 @@ test "Inner.span/1 返回最后一个控制点的 tick" do
       ]
 
       container = CatmullRom.new(points: pts, tension: 0.5)
-      chunk = Chunk.new(
-        adapter: CatmullRom,
-        container: container,
-        start_tick: 960
-      )
+
+      chunk =
+        Chunk.new(
+          adapter: CatmullRom,
+          container: container,
+          start_tick: 960
+        )
 
       assert is_binary(chunk.id)
       assert String.starts_with?(chunk.id, "CurveChunk_")
@@ -195,10 +199,11 @@ test "Inner.span/1 返回最后一个控制点的 tick" do
       pts_a = [ControlPoint.new(tick: 0, value: 0.2)]
       pts_b = [ControlPoint.new(tick: 0, value: 0.8)]
 
-      chunk_a = Chunk.new(adapter: CatmullRom, container: CatmullRom.new(points: pts_a),
-                          start_tick: 0)
-      chunk_b = Chunk.new(adapter: CatmullRom, container: CatmullRom.new(points: pts_b),
-                          start_tick: 0)
+      chunk_a =
+        Chunk.new(adapter: CatmullRom, container: CatmullRom.new(points: pts_a), start_tick: 0)
+
+      chunk_b =
+        Chunk.new(adapter: CatmullRom, container: CatmullRom.new(points: pts_b), start_tick: 0)
 
       channel = Channel.update(Channel.new(name: :pitch), chunks: [chunk_a, chunk_b])
       assert length(channel.chunks) == 2

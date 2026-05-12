@@ -1,20 +1,11 @@
 defmodule EquinoxDomain.Curve.Adapter.CatmullRom do
   @moduledoc "Catmull-Rom 曲线适配器（naive 参考实现）"
 
-  use EquinoxDomain.Curve.Adapter
-
   @type t :: %__MODULE__{
           points: [ControlPoint.t()],
           tension: float()
         }
-  defstruct points: [], tension: 0.5
-
-  # 可以用 Object 替换？
-  @impl true
-  def new(attrs) do
-    attrs = Map.new(attrs)
-    struct!(__MODULE__, attrs)
-  end
+  use EquinoxDomain.Curve.Adapter, keys: [points: [], tension: 0.5]
 
   defimpl Inner, for: __MODULE__ do
     def control_points(%{points: points}), do: points
