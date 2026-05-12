@@ -19,7 +19,7 @@ defmodule EquinoxDomain.Score.Key do
   # ---- 基本的 CRUD ----
 
   # 新建
-  @callback new(any()) :: key_struct()
+  @callback new(any()) :: {:ok, key_struct()} | {:error, term()}
 
   # ---- 创建 ----
 

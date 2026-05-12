@@ -38,8 +38,8 @@ defmodule EquinoxDomain.Util.Model do
       """
       def new(attrs) do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys) do
-          Map.pop(normalized, :id, generate_id(unquote(id_prefix)))
-          |> then(fn {id, attrs} -> struct(__MODULE__, Map.put(attrs, :id, id)) end)
+          {id, attrs} = Map.pop(normalized, :id, generate_id(unquote(id_prefix)))
+          {:ok, struct(__MODULE__, Map.put(attrs, :id, id))}
         end
       end
 

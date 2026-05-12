@@ -10,10 +10,10 @@ defmodule EquinoxDomain.Score.Key.TwelveET do
   # ---- Key 行为 ----
 
   @impl true
-  def new(midi) when is_number(midi), do: %__MODULE__{midi: midi}
+  def new(midi) when is_number(midi), do: {:ok, %__MODULE__{midi: midi}}
 
   @impl true
-  def from_midi(midi, _ctx), do: {:ok, new(midi)}
+  def from_midi(midi, _ctx), do: new(midi)
 
   @impl true
   def from_score(_score_data, _type, _ctx), do: {:error, :not_implemented}
@@ -27,7 +27,7 @@ defmodule EquinoxDomain.Score.Key.TwelveET do
   def dump(%__MODULE__{midi: midi}), do: {:ok, %{"midi" => midi}}
 
   @impl true
-  def load(%{"midi" => midi}) when is_number(midi), do: {:ok, new(midi)}
+  def load(%{"midi" => midi}) when is_number(midi), do: new(midi)
 
   def load(_), do: {:error, {:invalid_payload, __MODULE__}}
 

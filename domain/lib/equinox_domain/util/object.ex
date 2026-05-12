@@ -33,7 +33,7 @@ defmodule EquinoxDomain.Util.Object do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys),
              obj = struct(__MODULE__, normalized),
              {:ok, obj} <- validate(obj) do
-          obj
+          {:ok, obj}
         end
       end
 
@@ -46,7 +46,7 @@ defmodule EquinoxDomain.Util.Object do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys),
              new_obj = struct(obj, normalized),
              {:ok, new_obj} <- validate(new_obj) do
-          new_obj
+          {:ok, new_obj}
         end
       end
 
