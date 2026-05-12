@@ -9,6 +9,9 @@ defmodule EquinoxDomain.Util.Object do
   - `update/2`
   """
 
+  @callback validate(new_object :: struct()) :: :ok | {:error, term()}
+  @optional_callbacks [validate: 1]
+
   defmacro __using__(opts) do
     # 和 Domain 一样，这里一般是代码编写除了问题，可以 raise
     keys = Keyword.fetch!(opts, :keys)
@@ -19,14 +22,18 @@ defmodule EquinoxDomain.Util.Object do
       @keys unquote(keys)
       defstruct @keys
 
+      @behaviour EquinoxDomain.Util.Object
+
       @doc """
       根据属性创建新的值对象。
 
       `attrs` 可以是 map 或 keyword list，键可以使用原子或字符串。
       """
       def new(attrs) do
-        with {:ok, normalized} <- normalize_attrs(attrs, @keys) do
-          struct(__MODULE__, normalized)
+        with {:ok, normalized} <- normalize_attrs(attrs, @keys),
+             obj = struct(__MODULE__, normalized),
+             {:ok, obj} <- validate(obj) do
+          obj
         end
       end
 
@@ -36,10 +43,16 @@ defmodule EquinoxDomain.Util.Object do
       `attrs` 格式同 `new/1`。
       """
       def update(obj, attrs) do
-        with {:ok, normalized} <- normalize_attrs(attrs, @keys) do
-          struct(obj, normalized)
+        with {:ok, normalized} <- normalize_attrs(attrs, @keys),
+             new_obj = struct(obj, normalized),
+             {:ok, new_obj} <- validate(new_obj) do
+          new_obj
         end
       end
+
+      @impl true
+      def validate(obj), do: {:ok, obj}
+      defoverridable validate: 1
     end
   end
 end

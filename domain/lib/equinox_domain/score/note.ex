@@ -43,6 +43,15 @@ defmodule EquinoxDomain.Score.Note do
           metadata: %{}
         }
 
+  # ---- 领域相关的验证函数 ----
+
+  @impl true
+  def validate(%__MODULE__{start_tick: start_tick}) when start_tick < 0,
+    do: {:error, {:invalid_negative_tick, start_tick}}
+
+  def validate(%__MODULE__{duration_tick: duration_tick}) when duration_tick < 0,
+    do: {:error, {:invalid_negative_tick, duration_tick}}
+
   # ---- 业务函数 ----
   # 业务函数返回 {:ok, result} 或 {:error, reason}
 
@@ -57,10 +66,10 @@ defmodule EquinoxDomain.Score.Note do
     {new_key, new_key_or_tick} = new_key_or_tick |> Map.new() |> Map.pop(:key, note.key)
     {new_start_tick, new_key_or_tick} = Map.pop(new_key_or_tick, :start_tick, note.start_tick)
 
-    with 0 <- map_size(new_key_or_tick), true <- new_start_tick >= 0 do
-      {:ok, %{note | key: new_key, start_tick: new_start_tick}}
+    with 0 <- map_size(new_key_or_tick),
+         {:ok, new_note} <- update(note, key: new_key, start_tick: new_start_tick) do
+      {:ok, new_note}
     else
-      false -> {:error, {:invalid_negative_tick, new_start_tick}}
       _num -> {:error, {:extra_fields_exist, new_key_or_tick}}
     end
   end
@@ -68,10 +77,8 @@ defmodule EquinoxDomain.Score.Note do
   @doc "拖拽时长"
   @spec drag_duration(t(), non_neg_integer()) :: {:ok, t()} | {:error, term()}
   def drag_duration(note, new_duraion) do
-    with true <- new_duraion >= 0 do
-      {:ok, %{note | duration_tick: new_duraion}}
-    else
-      false -> {:error, {:invalid_negative_tick, new_duraion}}
+    with {:ok, new_note} <- update(note, duration_tick: new_duraion) do
+      {:ok, new_note}
     end
   end
 

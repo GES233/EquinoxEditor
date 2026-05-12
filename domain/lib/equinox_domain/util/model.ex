@@ -11,6 +11,9 @@ defmodule EquinoxDomain.Util.Model do
   以及加载必要的辅助函数（属性标准化、ID 生成）。
   """
 
+  @callback validate(model :: struct()) :: {:ok, struct()} | {:error, term()}
+  @optional_callbacks [validate: 1]
+
   defmacro __using__(opts) do
     # 这里一般是代码编写除了问题，可以 raise
     keys = Keyword.fetch!(opts, :keys)
@@ -19,6 +22,8 @@ defmodule EquinoxDomain.Util.Model do
     quote do
       import EquinoxDomain.Helpers, only: [normalize_attrs: 2]
       import EquinoxDomain.Util.ID, only: [generate_id: 1]
+
+      @behaviour EquinoxDomain.Util.Model
 
       @keys unquote(keys)
       defstruct @keys
@@ -45,10 +50,16 @@ defmodule EquinoxDomain.Util.Model do
       """
       def update(model, attrs) do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys),
-             :ok <- if(Map.has_key?(normalized, :id), do: {:error, :id_immutable}, else: :ok) do
-          {:ok, struct(model, attrs)}
+             :ok <- if(Map.has_key?(normalized, :id), do: {:error, :id_immutable}, else: :ok),
+             new_model = struct(model, attrs),
+             {:ok, new_model} <- validate(new_model) do
+          {:ok, new_model}
         end
       end
+
+      @impl true
+      def validate(model), do: {:ok, model}
+      defoverridable validate: 1
     end
   end
 end
