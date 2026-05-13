@@ -1,13 +1,23 @@
 defmodule EquinoxDomain.Curve.ControlPoint do
-  # 控制点
-  # tick 为相对于所在 Chunk.start_tick 的偏移
+  # --------------------------------------------------
+  # tick: non_neg_integer  (Chunk.start_tick  + offset)
+  # value: float           (parameter value, e.g. cents, ratio)
+  #
+  # handle_left / handle_right  are MEANS of Bezier
+  # nil  -> auto (1/3 rule or mirror)
+  # %{tick: integer(), value: float()}  -> offset from anchor
+  #
+  # CatmullRom / Linear / Step ignore these handles.
+  # --------------------------------------------------
 
-  # 考虑两端的端点？
-  # 考虑吧，(0, value), (span, value')
+  @type handle :: %{tick: integer(), value: float()} | nil
 
   @type t :: %__MODULE__{
           tick: non_neg_integer(),
-          value: float()
+          value: float(),
+          handle_left: handle(),
+          handle_right: handle()
         }
-  use EquinoxDomain.Util.Object, keys: [:tick, :value]
+
+  use EquinoxDomain.Util.Object, keys: [:tick, :value, handle_left: nil, handle_right: nil]
 end
