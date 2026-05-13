@@ -52,6 +52,11 @@ defmodule EquinoxDomain.Score.Note do
   def validate(%__MODULE__{duration_tick: duration_tick}) when duration_tick < 0,
     do: {:error, {:invalid_negative_tick, duration_tick}}
 
+  def validate(%__MODULE__{lyric: lyric}) when not (is_nil(lyric) or is_binary(lyric)),
+    do: {:error, {:lyric_not_support, lyric}}
+
+  def validate(_), do: :ok
+
   # ---- 业务函数 ----
   # 业务函数返回 {:ok, result} 或 {:error, reason}
 
@@ -66,9 +71,8 @@ defmodule EquinoxDomain.Score.Note do
     {new_key, new_key_or_tick} = new_key_or_tick |> Map.new() |> Map.pop(:key, note.key)
     {new_start_tick, new_key_or_tick} = Map.pop(new_key_or_tick, :start_tick, note.start_tick)
 
-    with 0 <- map_size(new_key_or_tick),
-         {:ok, new_note} <- update(note, key: new_key, start_tick: new_start_tick) do
-      {:ok, new_note}
+    with 0 <- map_size(new_key_or_tick) do
+      update(note, key: new_key, start_tick: new_start_tick)
     else
       _num -> {:error, {:extra_fields_exist, new_key_or_tick}}
     end
@@ -77,27 +81,21 @@ defmodule EquinoxDomain.Score.Note do
   @doc "拖拽时长"
   @spec drag_duration(t(), non_neg_integer()) :: {:ok, t()} | {:error, term()}
   def drag_duration(note, new_duraion) do
-    with {:ok, new_note} <- update(note, duration_tick: new_duraion) do
-      {:ok, new_note}
-    end
+    update(note, duration_tick: new_duraion)
   end
 
   @doc "修改歌词"
   @spec update_lyric(t(), String.t() | nil) :: {:ok, t()} | {:error, term()}
   def update_lyric(note, new_lyric) do
-    case new_lyric do
-      nil -> {:ok, %{note | lyric: nil}}
-      new_lyric when is_binary(new_lyric) -> {:ok, %{note | lyric: new_lyric}}
-      _ -> {:error, :lyric_not_support}
-    end
+    update(note, lyric: new_lyric)
   end
 
   @doc "修改标注"
   @spec update_annotation(t(), String.t() | nil) :: {:ok, t()} | {:error, term()}
   def update_annotation(note, new_annotation) do
     case new_annotation do
-      nil -> {:ok, %{note | annotation: nil}}
-      new_annotation when is_binary(new_annotation) -> {:ok, %{note | annotation: new_annotation}}
+      nil -> update(note, annotation: nil)
+      new_annotation when is_binary(new_annotation) -> update(note, annotation: new_annotation)
       _ -> {:error, :annotation_not_support}
     end
   end
@@ -107,14 +105,14 @@ defmodule EquinoxDomain.Score.Note do
   @doc "更新附属的元数据，通过合并并入 current_metadata"
   @spec update_metadata(t(), map()) :: {:ok, t()} | {:error, term()}
   def update_metadata(note, new_metadata) when is_map(new_metadata) do
-    {:ok, %{note | metadata: Map.merge(note.metadata, new_metadata)}}
+    update(note, metadata: Map.merge(note.metadata, new_metadata))
   end
 
   @doc """
   读取元数据。
 
-  * 无 key 时返回全部
-  * 传 key 时返回 ok_or_err
+  * get_metadata/1 返回全部（带 ok tuple）
+  * get_metadata/2 返回 ok_or_err
   """
   @spec get_metadata(t()) :: {:ok, metadata()}
   def get_metadata(note), do: {:ok, note.metadata}
@@ -134,7 +132,7 @@ defmodule EquinoxDomain.Score.Note do
   def remove_metadata(note, :all), do: %{note | metadata: %{}}
 
   def remove_metadata(note, keys) when is_list(keys) do
-    %{note | metadata: Map.drop(note.metadata, keys)}
+    update(note, metadata: Map.drop(note.metadata, keys))
   end
 
   # ---- 音符切分与合并 ----
@@ -159,22 +157,21 @@ defmodule EquinoxDomain.Score.Note do
         {:error, {:split_tick_after_note, split_tick, note_end}}
 
       true ->
-        before = %{note | duration_tick: split_tick - note.start_tick}
-
-        after_note =
-          %{
-            start_tick: split_tick,
-            duration_tick: note_end - split_tick,
-            key: note.key,
-            lyric: note.lyric,
-            slice_flag: note.slice_flag,
-            annotation: note.annotation,
-            metadata: note.metadata
-          }
-          |> Map.merge(normalize_attrs(attrs, @keys))
-          |> new()
-
-        {:ok, [before, after_note]}
+        with {:ok, before} <- update(note, duration_tick: split_tick - note.start_tick),
+             {:ok, after_note} <-
+               %{
+                 start_tick: split_tick,
+                 duration_tick: note_end - split_tick,
+                 key: note.key,
+                 lyric: note.lyric,
+                 slice_flag: note.slice_flag,
+                 annotation: note.annotation,
+                 metadata: note.metadata
+               }
+               |> Map.merge(normalize_attrs(attrs, @keys))
+               |> new() do
+          {:ok, [before, after_note]}
+        end
     end
   end
 
@@ -232,7 +229,6 @@ defmodule EquinoxDomain.Score.Note do
     # 这里可能需要讨论下
     annotation = note1.annotation || note2.annotation
 
-    merged =
       %{
         start_tick: start_tick,
         duration_tick: end_tick - start_tick,
@@ -243,8 +239,6 @@ defmodule EquinoxDomain.Score.Note do
         metadata: Map.merge(note1.metadata, note2.metadata)
       }
       |> new()
-
-    {:ok, merged}
   end
 
   defp serialize_slice_flag(:auto), do: {:ok, "auto"}
