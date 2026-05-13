@@ -15,12 +15,10 @@ defmodule EquinoxDomain.Port.Resolver.Operate do
   @typedoc "解析器处理的负载——具体形状取决于 Declaration.shape"
   @type payload :: term()
 
+  # @doc "获得可被序列化的标识。"
+  # @calbback signature() :: binary()
+
   @doc "合并 base 与 delta/override，返回解析后的 payload。"
   @callback merge(base :: payload() | nil, delta_or_override :: payload()) ::
               {:ok, payload()} | {:error, term()}
-
-  @doc "将 :override 原子映射到内置模块，其他原子原样返回。"
-  @spec resolve_module(:override | module()) :: module()
-  def resolve_module(:override), do: EquinoxDomain.Port.Resolver.Operate.Override
-  def resolve_module(mod) when is_atom(mod), do: mod
 end

@@ -1,25 +1,35 @@
 defmodule EquinoxDomain.Score.Phoneme do
   @moduledoc """
-  音素模型——纯身份载体。
+  音素值对象，只描述音素符号与类别，不携带最终时域信息。
 
-  Phoneme 仅携带 symbol 与 type，不包含时域信息。
-  时长与偏移由 Engine 预测，通过 Port 投影层流入 Kernel 解析器，
-  最终以 TimedEvent 的形式进入 Resolved Input。
+  在默认流程中，phoneme sequence 可由 phonemization adapter
+  从 lyric / language / note context 派生，因此它可以作为 Kernel Projection
+  存在，而不必天然成为 Domain fact。
 
-  音素本身由 G2P 适配器产出，不作为 Domain 事实持久化，
-  除非用户通过 Adoption Command 将其锁定为 Declaration 的 override。
+  当用户显式锁定或编辑音素序列时，该编辑应作为
+  `Port.Declaration` 的 override 或其他 Domain fact 持久化。
 
-  ## 辅音提前量 (Consonant Preutterance)
+  ## 时长
 
-  旧 `note_offset`（可为负，表示辅音相对于所属音符起点的偏移）
-  已从此 Domain 模型移除。辅音提前量现在由 duration adapter
-  在 Projection 阶段计算，以 `TimedEvent{at: negative_tick}`
-  的形式进入 Resolved Input。约束（最大提前量、是否允许跨 note 边界）
-  存在 `Port.Declaration.constraints` 中（如 `consonant_preutter_limit`）。
+  Phoneme timing，包括 duration、boundary、preutterance 等，不属于
+  Phoneme 本体。它们由 timing declaration、adapter projection、
+  user override 和 resolver 共同产生，最终形成 Kernel/Compiler 层的
+  Resolved Event Sequence。
 
-  渲染层面：Segment 的 `context_start_sec` / `context_end_sec` 提供
-  声学 padding，确保辅音发声区间被覆盖。
+  ## Preutterance
+
+  Domain 不再直接存储辅音提前量。
+  辅音提前量由 timing adapter / resolver 在 Projection 或 Resolve 阶段计算。
+  用户可通过 Declaration constraints 表达策略，例如：
+
+  - consonant_preutter_limit
+  - allow_cross_note_boundary
+  - min_consonant_duration
+
+  Segment 的 context_start_sec / context_end_sec 只提供渲染所需声学 margin，
+  不代表 Domain 中存在实际音素提前时间。
   """
+
 
   @type symbol :: String.t()
   @type phoneme_type :: :consonant | :vowel | :silence
