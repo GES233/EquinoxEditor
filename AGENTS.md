@@ -101,13 +101,14 @@ Short, load-bearing decisions. New Agents MUST read these before touching Kernel
 
 ### ADR-001 — Slicer is a one-way projection (Notes → Utterance)
 
-`EquinoxDomain.Score.Slicer` consumes a flat list of `Note`s and produces `Utterance` structs. An `Utterance` groups contiguous notes + phonemes into a continuous vocal phrase, and is the stable carrier of note↔phoneme mapping for a track. It also stores phoneme timing and reserves a render window before rendering.
+`EquinoxDomain.Score.Slicer` consumes a flat list of `Note`s and produces `Utterance` structs. An `Utterance` groups contiguous notes into a continuous vocal phrase — the fundamental unit for engine projection and rendering.
 
 Once an Utterance exists, it becomes the authoritative container for its notes and persists across edits; it is not regenerated on every slicer run. Re-running the slicer over a Track does **not** silently mutate existing Utterances; callers must explicitly reconcile.
 
 - `Note.slice_flag` (`:auto | :force_slice | :force_merge`) is an input signal for the slicer (manual overrides + rest-gap hints), not a runtime sync channel.
 - The rendering engine consumes `Utterance` + rasterized curves via `SegmentContext`; it does not need to understand the Note domain model.
 - `Utterance` determines rasterization boundaries for both phonemes and curves.
+- **Revised by ADR-009**: Utterance no longer stores `note_phoneme_map` directly. Instead, `Utterance.declarations` declares which G2P adapter to invoke; the actual note↔phoneme mapping is a runtime Projection produced by the Kernel. This keeps Domain independent of engine-specific phoneme representations.
 
 ### ADR-002 — Curves are a Track-level layer
 
@@ -169,6 +170,52 @@ Rationale:
 - A single Protocol would force construction (which has no `Key.t()` instance yet) into awkward static functions on each module. Separating them keeps each dispatch mode in its natural home.
 
 MVP contract: MIDI/frequency (`to_midi`/`to_frequency`) are fully implemented. Staff notation (`from_score`/`to_score`) signatures are reserved but return `{:error, :not_implemented}` — no runtime cost, no interface breakage when added later.
+
+### ADR-009 — Unified Declaration → Projection → Resolution pipeline
+
+All data that can be both engine-generated and user-modified goes through one lifecycle, regardless of payload shape.
+
+**Two shapes:**
+
+| Shape | Payload | Examples |
+|---|---|---|
+| `:continuous` | `{stride, float32 binary}` | pitch delta, energy, breathiness |
+| `:event_sequence` | `[TimedEvent{at, dur, entity}]` | phoneme timing, note quantization |
+
+**Pipeline:**
+
+```
+Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
+   (what adapter,       (engine         (merged: facts   (engine output,
+    what constraints,    prediction)     + projection    not Domain fact)
+    what merge strategy)                 + overrides)
+                                                    ↓ (optional)
+                                            Adoption Command
+                                                    ↓
+                                             Domain Fact
+```
+
+**Domain types (Phase 1 — done):**
+
+- `EquinoxDomain.Port.Declaration` — serializable adapter intent: scope, adapter ref, shape discriminator, operate module, constraints, overrides, fallback.
+- `EquinoxDomain.Port.AdapterRef` — `{scope_key, signature, version, config}` resolved by Kernel's adapter registry at runtime.
+- `EquinoxDomain.Port.Resolver.Operate` — behaviour with single callback `merge/2`. Shares contract with `OrchidIntervention.Operate`. Built-in implementations: `Override`, `Delta`, `Replace`.
+- `Utterance.declarations` and `Track.declarations` fields added; `Utterance.note_phoneme_map` removed.
+- `Phoneme` reduced to pure identity `{symbol, type}` — timing moves to `TimedEvent` in resolved layer. Consonant preutterance (old `note_offset`) computed by duration adapter at Projection stage.
+
+**Pending (Phase 2 — Kernel):**
+
+- `Equinox.Kernel.Adapter.Registry` — scope-key routing from `AdapterRef` to adapter modules.
+- `Equinox.Kernel.Param.Projection` / `Event.Projection` — shape-specific projection carriers.
+- Resolver engine — consumes Declaration + Projection + Domain facts, produces Resolved Input.
+- `SegmentContext` integration — wires curve slices (ADR-002) + projection resolution into `Compiler.compile/2`.
+- Legacy loader for old `%Segment{}` fields (`phoneme_map`, etc.).
+
+**Key rules:**
+
+- Engine outputs are artifacts — never Domain facts by default.
+- Only explicit Adoption Commands convert artifacts into persistent, undoable Domain facts.
+- Domain stores declarations and user-authored deltas; Kernel executes adapters and resolves.
 
 ## 8. Do Not Do 💡
 

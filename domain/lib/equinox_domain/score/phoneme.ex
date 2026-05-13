@@ -1,29 +1,33 @@
 defmodule EquinoxDomain.Score.Phoneme do
-  @moduledoc "音素模型。"
-  # 需要 Adapter 来适配注入 IPA 、汉语拼音、拆音、含有语言 ID 的音素等情况
-  # 是不是还要考虑时域信息，比方说复元音之类的
+  @moduledoc """
+  音素模型——纯身份载体。
 
-  # 在这里构思下吧如果把辅音放开头的情况
-  # 运用隐式填充的路子
-  # 整体 offset （包括其他轨道）进行渲染
-  # 出来后再截掉
-  # 或者是一个警报，辅音空间不足，最好重新安排
-  # 那就这样：操作过程警报，渲染时实际存在就填充
+  Phoneme 仅携带 symbol 与 type，不包含时域信息。
+  时长与偏移由 Engine 预测，通过 Port 投影层流入 Kernel 解析器，
+  最终以 TimedEvent 的形式进入 Resolved Input。
 
-  # 挂载在 EquinoxDomain.Score.Utterance 下面
+  音素本身由 G2P 适配器产出，不作为 Domain 事实持久化，
+  除非用户通过 Adoption Command 将其锁定为 Declaration 的 override。
+
+  ## 辅音提前量 (Consonant Preutterance)
+
+  旧 `note_offset`（可为负，表示辅音相对于所属音符起点的偏移）
+  已从此 Domain 模型移除。辅音提前量现在由 duration adapter
+  在 Projection 阶段计算，以 `TimedEvent{at: negative_tick}`
+  的形式进入 Resolved Input。约束（最大提前量、是否允许跨 note 边界）
+  存在 `Port.Declaration.constraints` 中（如 `consonant_preutter_limit`）。
+
+  渲染层面：Segment 的 `context_start_sec` / `context_end_sec` 提供
+  声学 padding，确保辅音发声区间被覆盖。
+  """
 
   @type symbol :: String.t()
   @type phoneme_type :: :consonant | :vowel | :silence
-  @type rasterized :: term()
 
   @type t :: %__MODULE__{
           symbol: symbol(),
-          type: phoneme_type(),
-          # 之所以不是非负整数，是要考虑辅音的 offset 是负的
-          # 拍子从元音开始算
-          # 相较于上游所属音符开始时刻的 offset
-          note_offset: integer(),
-          duration_tick: integer()
+          type: phoneme_type()
         }
-  use EquinoxDomain.Util.Object, keys: [:symbol, :type, :note_offset, :duration_tick]
+
+  use EquinoxDomain.Util.Object, keys: [:symbol, :type]
 end

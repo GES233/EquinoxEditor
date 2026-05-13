@@ -17,6 +17,8 @@ defmodule EquinoxDomain.Score.Track do
       pan: 0.0,
       mute: false,
       solo: false,
+      # ---- Port 声明 ----
+      declarations: %{},
       # ---- 其他 ----
       metadata: %{}
     ],

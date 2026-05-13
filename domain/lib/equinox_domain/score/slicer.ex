@@ -14,10 +14,10 @@ defmodule EquinoxDomain.Score.Slicer do
     alias EquinoxDomain.Timeline.Tick
 
     @type t :: %__MODULE__{
-      tick_start: Tick.numeric_tick(),
-      tick_end: Tick.numeric_tick(),
-      note_ids: [ID.t(Note)]
-    }
+            tick_start: Tick.numeric_tick(),
+            tick_end: Tick.numeric_tick(),
+            note_ids: [ID.t(Note)]
+          }
     use EquinoxDomain.Util.Object,
       keys: [
         :tick_start,

@@ -6,7 +6,7 @@ defmodule EquinoxDomain.Segment do
   # 再经过 Utterance 得到一系列时间窗
   # 最后对音符/时长/曲线进行栅格化得到 Segments
   # 丢给下游的引擎
-  alias EquinoxDomain.{Timeline, Timeline.Tick, Score.Phoneme}
+  alias EquinoxDomain.{Timeline, Timeline.Tick}
 
   # 是典型的 VO （因为是运行时生成的对象）
   @type t :: %__MODULE__{
@@ -25,7 +25,7 @@ defmodule EquinoxDomain.Segment do
           context_end_sec: Timeline.physical_time(),
 
           # ---- 下游所需的栅格化数据 ----
-          phonemes: [Phoneme.rasterized()],
+          phonemes: [term()],
           curves: term()
         }
   use EquinoxDomain.Util.Object,
