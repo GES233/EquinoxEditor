@@ -145,7 +145,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
 
     @impl true
     def build_from_event(_start_tick, end_tick, _context) when is_dynamic_tick(end_tick),
-        do: {:error, :linear_requires_finite_end_tick}
+      do: {:error, :linear_requires_finite_end_tick}
 
     def build_from_event(_start_tick, _end_tick, %{bpm_start: bs, bpm_end: _be})
         when not is_number(bs) or bs <= 0,
@@ -156,7 +156,14 @@ defmodule EquinoxDomain.Timeline.Tempo do
         do: {:error, {:invalid_bpm_end, be}}
 
     def build_from_event(start_tick, end_tick, %{bpm_start: bpm_start, bpm_end: bpm_end}),
-        do: {:ok, %__MODULE__{start_tick: start_tick, end_tick: end_tick, bpm_start: bpm_start, bpm_end: bpm_end}}
+      do:
+        {:ok,
+         %__MODULE__{
+           start_tick: start_tick,
+           end_tick: end_tick,
+           bpm_start: bpm_start,
+           bpm_end: bpm_end
+         }}
 
     @impl true
     def duration_sec(%{end_tick: end_tick}) when is_dynamic_tick(end_tick), do: :infinity
@@ -175,7 +182,7 @@ defmodule EquinoxDomain.Timeline.Tempo do
         ticks * (60.0 / seg.bpm_start) / ticks_per_quarter_note()
       else
         bpm_at = seg.bpm_start + rate * ticks
-        (60.0 / (ticks_per_quarter_note() * rate)) * :math.log(bpm_at / seg.bpm_start)
+        60.0 / (ticks_per_quarter_note() * rate) * :math.log(bpm_at / seg.bpm_start)
       end
     end
 

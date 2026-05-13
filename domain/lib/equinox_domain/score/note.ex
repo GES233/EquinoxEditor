@@ -55,7 +55,7 @@ defmodule EquinoxDomain.Score.Note do
   def validate(%__MODULE__{lyric: lyric}) when not (is_nil(lyric) or is_binary(lyric)),
     do: {:error, {:lyric_not_support, lyric}}
 
-  def validate(_), do: :ok
+  def validate(model), do: {:ok, model}
 
   # ---- 业务函数 ----
   # 业务函数返回 {:ok, result} 或 {:error, reason}
@@ -229,16 +229,16 @@ defmodule EquinoxDomain.Score.Note do
     # 这里可能需要讨论下
     annotation = note1.annotation || note2.annotation
 
-      %{
-        start_tick: start_tick,
-        duration_tick: end_tick - start_tick,
-        key: note1.key,
-        lyric: lyric,
-        slice_flag: :auto,
-        annotation: annotation,
-        metadata: Map.merge(note1.metadata, note2.metadata)
-      }
-      |> new()
+    %{
+      start_tick: start_tick,
+      duration_tick: end_tick - start_tick,
+      key: note1.key,
+      lyric: lyric,
+      slice_flag: :auto,
+      annotation: annotation,
+      metadata: Map.merge(note1.metadata, note2.metadata)
+    }
+    |> new()
   end
 
   defp serialize_slice_flag(:auto), do: {:ok, "auto"}

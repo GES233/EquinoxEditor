@@ -12,9 +12,14 @@ defmodule EquinoxDomain.Curve.Adapter.BezierTest do
   end
 
   defp pt(tick, value, hl, hr) do
-    {:ok, cp} = ControlPoint.new(
-      tick: tick, value: value, handle_left: hl, handle_right: hr
-    )
+    {:ok, cp} =
+      ControlPoint.new(
+        tick: tick,
+        value: value,
+        handle_left: hl,
+        handle_right: hr
+      )
+
     cp
   end
 
@@ -55,6 +60,7 @@ defmodule EquinoxDomain.Curve.Adapter.BezierTest do
     got = decode(Inner.rasterize(bez, 0..300))
     assert hd(got) == 0.0
     assert List.last(got) == 1.0
+
     for i <- 1..300 do
       assert Enum.at(got, i) >= Enum.at(got, i - 1)
     end
@@ -80,15 +86,17 @@ defmodule EquinoxDomain.Curve.Adapter.BezierTest do
   end
 
   test "asymmetric handles create early rise, late settle" do
-    bez = build([
-      pt(0, 0.0, nil, h(50, 0.9)),
-      pt(300, 1.0, h(-50, 0.1), nil)
-    ])
+    bez =
+      build([
+        pt(0, 0.0, nil, h(50, 0.9)),
+        pt(300, 1.0, h(-50, 0.1), nil)
+      ])
+
     got = decode(Inner.rasterize(bez, 0..300))
     assert hd(got) == 0.0
     assert List.last(got) == 1.0
     early = Enum.at(got, 60)
-    late  = Enum.at(got, 240)
+    late = Enum.at(got, 240)
     assert early > 0.3
     # late section ~1.02 due to handle offsets — still near 1.0
     assert_in_delta late, 1.0, 0.05

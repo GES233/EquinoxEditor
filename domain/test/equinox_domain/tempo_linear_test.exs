@@ -97,10 +97,10 @@ defmodule EquinoxDomain.TempoLinearTest do
       {:ok, lin} = Tempo.Linear.build_from_event(0, 1920, %{bpm_start: 120, bpm_end: 120})
       {:ok, step} = Tempo.Step.build_from_event(0, 1920, %{bpm: 120})
 
-      assert_in_delta Tempo.Linear.tick_to_sec(lin, 480), Tempo.Step.tick_to_sec(step, 480),
-                      0.001
+      assert_in_delta Tempo.Linear.tick_to_sec(lin, 480), Tempo.Step.tick_to_sec(step, 480), 0.001
 
-      assert_in_delta Tempo.Linear.tick_to_sec(lin, 1920), Tempo.Step.tick_to_sec(step, 1920),
+      assert_in_delta Tempo.Linear.tick_to_sec(lin, 1920),
+                      Tempo.Step.tick_to_sec(step, 1920),
                       0.001
     end
   end
@@ -152,9 +152,11 @@ defmodule EquinoxDomain.TempoLinearTest do
   describe "TempoMap 集成" do
     test "单个 Linear 段编译" do
       {:ok, compiled} =
-        TempoMap.compile({[
-          {0, %Tempo.Event{module: Tempo.Linear, context: %{bpm_start: 120, bpm_end: 60}}}
-        ], 3840})
+        TempoMap.compile(
+          {[
+             {0, %Tempo.Event{module: Tempo.Linear, context: %{bpm_start: 120, bpm_end: 60}}}
+           ], 3840}
+        )
 
       assert tuple_size(compiled) == 1
       seg = elem(compiled, 0)
@@ -167,10 +169,12 @@ defmodule EquinoxDomain.TempoLinearTest do
 
     test "Step + Linear 混合编译" do
       {:ok, compiled} =
-        TempoMap.compile({[
-          {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: 120}}},
-          {1920, %Tempo.Event{module: Tempo.Linear, context: %{bpm_start: 120, bpm_end: 60}}}
-        ], 3840})
+        TempoMap.compile(
+          {[
+             {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: 120}}},
+             {1920, %Tempo.Event{module: Tempo.Linear, context: %{bpm_start: 120, bpm_end: 60}}}
+           ], 3840}
+        )
 
       assert tuple_size(compiled) == 2
 
@@ -186,10 +190,12 @@ defmodule EquinoxDomain.TempoLinearTest do
 
     test "跨段 tick -> sec 正确累积" do
       {:ok, compiled} =
-        TempoMap.compile({[
-          {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: 120}}},
-          {1920, %Tempo.Event{module: Tempo.Linear, context: %{bpm_start: 120, bpm_end: 60}}}
-        ], 3840})
+        TempoMap.compile(
+          {[
+             {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: 120}}},
+             {1920, %Tempo.Event{module: Tempo.Linear, context: %{bpm_start: 120, bpm_end: 60}}}
+           ], 3840}
+        )
 
       assert_in_delta TempoMap.tick_to_sec(compiled, 480), 0.5, 0.001
       assert_in_delta TempoMap.tick_to_sec(compiled, 1920), 2.0, 0.001
@@ -201,10 +207,12 @@ defmodule EquinoxDomain.TempoLinearTest do
 
     test "往返一致性" do
       {:ok, compiled} =
-        TempoMap.compile({[
-          {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: 120}}},
-          {1920, %Tempo.Event{module: Tempo.Linear, context: %{bpm_start: 120, bpm_end: 60}}}
-        ], 3840})
+        TempoMap.compile(
+          {[
+             {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: 120}}},
+             {1920, %Tempo.Event{module: Tempo.Linear, context: %{bpm_start: 120, bpm_end: 60}}}
+           ], 3840}
+        )
 
       for tick <- [0, 480, 1920, 2400, 3000] do
         sec = TempoMap.tick_to_sec(compiled, tick)

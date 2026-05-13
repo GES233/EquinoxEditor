@@ -17,7 +17,6 @@ defmodule EquinoxDomain.Curve.Adapter.Bezier do
   use EquinoxDomain.Curve.Adapter, keys: [points: []]
 
   defimpl Inner, for: __MODULE__ do
-
     def control_points(%{points: pts}), do: pts
 
     def span(%{points: []}), do: 0
@@ -65,14 +64,17 @@ defmodule EquinoxDomain.Curve.Adapter.Bezier do
         {p1.tick + cp2.tick, p1.value + cp2.value},
         {p1.tick, p1.value}
       }
+
       build_segments(rest, p1, [seg | acc])
     end
 
     defp resolve_handle(pt, side, default_tick) do
-      h = case side do
-        :right -> pt.handle_right
-        :left  -> pt.handle_left
-      end
+      h =
+        case side do
+          :right -> pt.handle_right
+          :left -> pt.handle_left
+        end
+
       case h do
         nil -> %{tick: default_tick, value: 0.0}
         %{tick: t, value: v} -> %{tick: t, value: v}

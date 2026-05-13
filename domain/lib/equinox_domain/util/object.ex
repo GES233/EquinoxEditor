@@ -9,7 +9,7 @@ defmodule EquinoxDomain.Util.Object do
   - `update/2`
   """
 
-  @callback validate(new_object :: struct()) :: :ok | {:error, term()}
+  @callback validate(new_object :: struct()) :: {:ok, struct()} | {:error, term()}
   @optional_callbacks [validate: 1]
 
   defmacro __using__(opts) do
