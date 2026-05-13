@@ -118,8 +118,102 @@ defmodule EquinoxDomain.Timeline.Tempo do
     def load(_), do: {:error, {:invalid_data, __MODULE__}}
   end
 
-  # 线性渐变速度
-  defmodule Linear, do: nil
+  defmodule Linear do
+    @moduledoc """
+    线性渐变速度段。
+
+    在 `start_tick` 到 `end_tick` 之间，BPM 从 `bpm_start` 均匀变化到 `bpm_end`。
+
+    ## 数学
+
+        bpm(t) = bpm_start + rate * t
+        rate = (bpm_end - bpm_start) / duration_ticks
+
+        sec(t) = (60 / (TPQN * rate)) * ln(bpm(t) / bpm_start)   (rate != 0)
+        sec(t) = t * (60 / bpm_start) / TPQN                      (rate = 0, 退化为恒定)
+    """
+
+    alias EquinoxDomain.Timeline.Tempo.{Segment, Event}
+    alias EquinoxDomain.Timeline.Tick
+    import Tick
+
+    use Segment
+
+    @serialize_identifier "Linear"
+
+    defstruct [:start_tick, :end_tick, :bpm_start, :bpm_end]
+
+    @impl true
+    def build_from_event(_start_tick, end_tick, _context) when is_dynamic_tick(end_tick),
+        do: {:error, :linear_requires_finite_end_tick}
+
+    def build_from_event(_start_tick, _end_tick, %{bpm_start: bs, bpm_end: _be})
+        when not is_number(bs) or bs <= 0,
+        do: {:error, {:invalid_bpm_start, bs}}
+
+    def build_from_event(_start_tick, _end_tick, %{bpm_start: _bs, bpm_end: be})
+        when not is_number(be) or be <= 0,
+        do: {:error, {:invalid_bpm_end, be}}
+
+    def build_from_event(start_tick, end_tick, %{bpm_start: bpm_start, bpm_end: bpm_end}),
+        do: {:ok, %__MODULE__{start_tick: start_tick, end_tick: end_tick, bpm_start: bpm_start, bpm_end: bpm_end}}
+
+    @impl true
+    def duration_sec(%{end_tick: end_tick}) when is_dynamic_tick(end_tick), do: :infinity
+
+    def duration_sec(seg) do
+      tick_to_sec(seg, seg.end_tick - seg.start_tick)
+    end
+
+    @impl true
+    def tick_to_sec(_seg, 0), do: 0.0
+
+    def tick_to_sec(seg, ticks) do
+      rate = rate(seg)
+
+      if rate == 0.0 do
+        ticks * (60.0 / seg.bpm_start) / ticks_per_quarter_note()
+      else
+        bpm_at = seg.bpm_start + rate * ticks
+        (60.0 / (ticks_per_quarter_note() * rate)) * :math.log(bpm_at / seg.bpm_start)
+      end
+    end
+
+    @impl true
+    def sec_to_tick(_seg, sec) when sec == 0.0, do: 0
+
+    def sec_to_tick(seg, offset_sec) do
+      rate = rate(seg)
+
+      if rate == 0.0 do
+        round(offset_sec * seg.bpm_start * ticks_per_quarter_note() / 60.0)
+      else
+        bpm_at = seg.bpm_start * :math.exp(offset_sec * rate * ticks_per_quarter_note() / 60.0)
+        round((bpm_at - seg.bpm_start) / rate)
+      end
+    end
+
+    @impl true
+    def signature, do: @serialize_identifier
+
+    @impl true
+    def dump(%Event{module: __MODULE__, context: %{bpm_start: bs, bpm_end: be}}) do
+      {:ok, %{"bpm_start" => bs, "bpm_end" => be}}
+    end
+
+    @impl true
+    def load(%{"bpm_start" => bs, "bpm_end" => be}) when is_number(bs) and is_number(be) do
+      {:ok, %Event{module: __MODULE__, context: %{bpm_start: bs, bpm_end: be}}}
+    end
+
+    def load(_), do: {:error, {:invalid_data, __MODULE__}}
+
+    # 计算 BPM 变化率（每 tick 的 BPM 变化量）
+    defp rate(%{bpm_start: bs, bpm_end: be, start_tick: st, end_tick: et}) do
+      duration = et - st
+      (be - bs) / duration
+    end
+  end
 
   # 应用曲线
   # 这里的曲线要和 `EquinoxDomain.Curve` 区分开

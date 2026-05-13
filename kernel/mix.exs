@@ -38,7 +38,7 @@ defmodule EquinoxKernel.MixProject do
   defp deps do
     [
       ## 领域模型
-      # {:equinox_domain, path: "./domain"}
+      {:equinox_domain, path: "../domain"},
       ## Orchid 生态
       {:orchid, "~> 0.6"},
       {:orchid_symbiont, "~> 0.2"},
