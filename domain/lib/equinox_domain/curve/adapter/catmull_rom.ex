@@ -1,6 +1,8 @@
 defmodule EquinoxDomain.Curve.Adapter.CatmullRom do
   @moduledoc "Catmull-Rom 曲线适配器（naive 参考实现）"
 
+  alias EquinoxDomain.Curve.ControlPoint
+
   @type t :: %__MODULE__{
           points: [ControlPoint.t()],
           tension: float()

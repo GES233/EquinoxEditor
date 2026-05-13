@@ -67,9 +67,7 @@ defmodule EquinoxDomain.Curve.Adapter do
   end
 
   def __after_compile__(env, _bytecode) do
-    unless Protocol.assert_impl!(EquinoxDomain.Curve.Adapter.Inner, env.module) do
-      :ok
-    end
+    Protocol.assert_impl!(EquinoxDomain.Curve.Adapter.Inner, env.module)
   rescue
     ArgumentError ->
       IO.warn(

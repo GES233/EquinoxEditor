@@ -10,7 +10,14 @@ defmodule EquinoxDomain.Score.Slicer do
 
   defmodule Window do
     @moduledoc "一个切片窗口，包含时间范围与音符 ID 列表。"
+    alias EquinoxDomain.Util.ID
+    alias EquinoxDomain.Timeline.Tick
 
+    @type t :: %__MODULE__{
+      tick_start: Tick.numeric_tick(),
+      tick_end: Tick.numeric_tick(),
+      note_ids: [ID.t(Note)]
+    }
     use EquinoxDomain.Util.Object,
       keys: [
         :tick_start,
