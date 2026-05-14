@@ -84,6 +84,9 @@ defmodule EquinoxDomain.Timeline.Tempo do
     def build_from_event(start_tick, end_tick, %{bpm: bpm}),
       do: {:ok, %__MODULE__{start_tick: start_tick, end_tick: end_tick, bpm: bpm}}
 
+    def build_from_event(_, _, invalid_context), do:
+      {:error, {:invalid_tempo_context, invalid_context}}
+
     @impl true
     def duration_sec(%{end_tick: end_tick}) when is_dynamic_tick(end_tick), do: :infinity
 
@@ -164,6 +167,9 @@ defmodule EquinoxDomain.Timeline.Tempo do
            bpm_start: bpm_start,
            bpm_end: bpm_end
          }}
+
+    def build_from_event(_, _, invalid_context), do:
+      {:error, {:invalid_tempo_context, invalid_context}}
 
     @impl true
     def duration_sec(%{end_tick: end_tick}) when is_dynamic_tick(end_tick), do: :infinity
