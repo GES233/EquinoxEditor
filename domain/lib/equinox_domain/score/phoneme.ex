@@ -30,7 +30,6 @@ defmodule EquinoxDomain.Score.Phoneme do
   不代表 Domain 中存在实际音素提前时间。
   """
 
-
   @type symbol :: String.t()
   @type phoneme_type :: :consonant | :vowel | :silence
 
