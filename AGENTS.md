@@ -37,7 +37,7 @@ The `EquinoxDomain` module lives in `domain/` as a **separate, zero-dependency E
 **Key design decisions**:
 - `use EquinoxDomain.Util.Model, keys: [...], id_prefix: "Xxx_"` auto-generates `new/1` and `update/2` for all domain structs. `update/2` returns `{:ok, model} | {:error, reason}`.
 - `Note.slice_flag` uses `:auto | :force_slice | :force_merge` (simpler than kernel's tuple-based version).
-- `Track` holds `notes: %{}` (map by id) and `curve_clusters: %{}`.
+- `Track` holds `notes: %{}` (map by id) and `data_channels: %{Channel.channel() => [LayerChunk.t()]}` (unified curve + adoption data).
 - `Phoneme` is a standalone value object with identity fields (`symbol`, `type`). Timing (tick_offset, duration_tick, preutterance) lives in `TimedEvent` at the Kernel projection layer (see ADR-009).
 - `Utterance` replaces the kernel's `Segment` concept — it groups contiguous notes by time window and determines rasterization boundaries for the render pipeline. Phonemes are a runtime projection (see ADR-009); the engine does not need to understand the Note domain model.
 - `Segment` is a pure rendering-context VO (acoustic boundaries, `phonemes`/`curves`) — not a note container. The Domain defines the struct; `phonemes` and `curves` are populated by the Kernel at compile time and do not participate in serialization.
@@ -70,7 +70,7 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 - **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte.
 - **Stateless Kernel**: The Kernel (`Equinox.Kernel.*`) is pure-functional wherever possible. Domain types come from `EquinoxDomain.*`. Persistent state lives in downstream consumers (`Equinox.Session.Server`, `ui_shell`). The only tolerated stateful Kernel component is `Equinox.Kernel.StepRegistry` (build-time catalog, not session state). `Equinox.Editor.*` is partially obsolete and is no longer considered an independent concept. 💡
 - **Slicer Model**: Slicing is a pure one-way projection `Notes → Slice → Utterance`. `Slicer` never mutates `Utterance`s after materialization; later edits happen on `Track.notes` with automatic slice repair. `slice_flag` (`:auto | :force_slice | :force_merge`) on `Note` is an *input signal* for `Slicer`, not a post-hoc synchronization channel. 💡
-- **Curves belong to Track, not Utterance/Segment**: Continuous parameter curves (pitch, energy, breathiness, …) are stored as `Curve.Cluster`s on `Track`. Utterances hold only `note_ids`; phonemes are runtime projection. Segments are pure rendering-context VOs. At compile time, the Compiler slices relevant curves into the active `SegmentContext`. 💡
+- **Curves belong to Track, not Utterance/Segment**: Continuous parameter data (pitch, energy, breathiness, …) are stored as `[LayerChunk]` in `Track.data_channels`. Utterances hold only `note_ids`; phonemes are runtime projection. Segments are pure rendering-context VOs. At compile time, the Compiler slices `data_channels` into the `RenderRequest` that feeds the Compiler. 💡
 - **UI Layout Hierarchy**:
   - `EditorLive` (Main Shell) -> Top-level dispatcher.
   - `TrackList` -> Vertical stack for mute/solo.
@@ -113,13 +113,13 @@ Without user intervention, `Window`s flow directly into the Compiler and are dis
 Once an `Utterance` exists, it becomes the authoritative container for its notes and persists across edits; it is not regenerated on every slicer run. Re-running the slicer over a Track does **not** silently mutate existing `Utterance`s; callers must explicitly reconcile new `Window`s against existing `Utterance`s (matched by `note_ids` overlap).
 
 - `Note.slice_flag` (`:auto | :force_slice | :force_merge`) is an input signal for the slicer (manual overrides + rest-gap hints), not a runtime sync channel.
-- The rendering engine consumes `Utterance` + curve slices via `SegmentContext`; it does not need to understand the Note domain model.
+- The rendering engine consumes `RenderRequest` (which carries notes, data_slices, tempo_segments, and declarations); it does not need to understand the Note domain model.
 - `Utterance` determines rasterization boundaries for both phonemes and curves.
 - **Revised during ADR-009 implementation**: Utterance no longer holds `declarations` or `note_phoneme_map`. Port declarations live on `Track.presets[active_preset]` and are injected at compile time. The `note↔phoneme` mapping is a runtime Projection produced by the Kernel. `Window` was introduced as the Slicer's direct output (replacing the old Notes→Utterance shortcut), and Utterance materialization was made lazy — gated on user intervention.
 
 ### ADR-002 — Curves are a Track-level layer
 
-Continuous parameter curves live on `Track.curve_clusters`, keyed by `param_name :: atom() | binary()` (e.g., `:pitch`, `:energy`). They are orthogonal to Utterance/Segment boundaries and survive re-slicing.
+All time-varying data — curves, adopted engine output, timing — lives in `Track.data_channels` as `[LayerChunk.t()]`, keyed by `Channel.channel()`. Each `LayerChunk` carries `source: :user | :adopted`; within the same channel, `:adopted` chunks override `:user` chunks on overlapping intervals. Data is orthogonal to Utterance/Segment boundaries and survives re-slicing.
 
 Rationale: Utterances are derived from Notes; forcing curves to live inside Utterances would tie curve continuity to a derivation artifact.
 
@@ -149,7 +149,7 @@ Rules:
 
 - `Equinox.Kernel`, `Equinox.Session`, and `Equinox.Editor` must not appear in the `alias`, `import`, or `use` of any `EquinoxDomain.*` module.
 - The Domain only depends on the standard library and its own internal submodules.
-- The `graph`, `cluster`, `synth_override`, and `curves` fields are Kernel compile-time concepts and must not appear on Domain structs. They live in `SegmentContext` (compile-time) or `Track` (curves).
+- The `graph`, `cluster`, `synth_override`, and `curves` fields are Kernel compile-time concepts and must not appear on Domain structs. They live in `RenderRequest` (compile-time) or `Track.data_channels`.
 - Legacy `Equinox.Domain.*` modules in `kernel/` will be replaced by `EquinoxDomain.*` during Phase 2 integration.
 
 Development order: First, complete all Domain modules and tests in `domain/`; then, integrate Domain into Kernel; and finally, handle the UI Shell.
@@ -204,7 +204,7 @@ Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
 
 **Domain types (Phase 1 — done):**
 
-- `EquinoxDomain.Port.Declaration` — serializable adapter intent: scope, adapter ref, shape discriminator, operate module, constraints, overrides, fallback.
+- `EquinoxDomain.Port.Declaration` — serializable adapter intent: scope, adapter ref, shape discriminator, operate module, constraints, fallback.
 - `EquinoxDomain.Port.AdapterRef` — `{scope_key, signature, version, config}` resolved by Kernel's adapter registry at runtime.
 - `EquinoxDomain.Port.Resolver.Operate` — behaviour with single callback `merge/2`. Shares contract with `OrchidIntervention.Operate`. Built-in implementations: `Override`, `Delta`, `Replace`.
 - `Track.presets` + `Track.active_preset` added; `Utterance.declarations` removed, replaced with `note_ids`/`start_tick`/`duration_tick`; `Utterance.note_phoneme_map` removed.
@@ -215,7 +215,7 @@ Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
 - `Equinox.Kernel.Adapter.Registry` — scope-key routing from `AdapterRef` to adapter modules.
 - `Equinox.Kernel.Param.Projection` / `Event.Projection` — shape-specific projection carriers.
 - Resolver engine — consumes Declaration + Projection + Domain facts, produces Resolved Input.
-- `SegmentContext` integration — wires curve slices (ADR-002) + projection resolution into `Compiler.compile/2`.
+- `RenderRequest` integration — wires data_channel slices + tempo_segments + adoption resolution into `Compiler.compile/1`.
 - Legacy loader for old `%Segment{}` fields (`phoneme_map`, etc.).
 
 **Key rules:**
@@ -229,7 +229,7 @@ Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
 ### Domain Red Lines (permanent)
 
 - Do not let `EquinoxDomain.*` modules import, alias, or use anything from `Equinox.Kernel.*`, `Equinox.Session.*`, or `Equinox.Editor.*`. Domain is a zero-dependency project.
-- Do not add `graph`, `cluster`, or `synth_override` fields to Domain structs. These are Kernel compile-time concepts; they belong in `SegmentContext` (ADR-006).
+- Do not add `graph`, `cluster`, or `synth_override` fields to Domain structs. These are Kernel compile-time concepts; they belong in `RenderRequest` (ADR-006).
 - Do not re-run `Slicer` implicitly during Editor note operations. Slicing is an explicit one-way projection: `Notes → Slice → Utterance` (ADR-001).
 - Do not feed raw per-frame drawing samples into Editor or History. Simplify to control points first via Douglas-Peucker (ADR-003).
 
@@ -268,7 +268,7 @@ Phase 1d ─── Polish & Serialization (domain/)
 
 Phase 2 ──── Domain-Kernel Integration (kernel/)
   Replace legacy Domain types with the new domain project.
-  Adapt Editor / Session / Compiler to Utterance + SegmentContext.
+  Adapt Editor / Session / Compiler to Utterance + RenderRequest.
   Curve compilation pipeline.
 
 Phase 3 ──── UI Shell Polish (ui_shell/)
@@ -298,7 +298,7 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 7. **Curves (pure data)** — `Curve.Chunk`, `Curve.Cluster`, `Curve.RasterCache` + rasterizer (linear / cubic / step interpolation) + stroke simplification (Douglas-Peucker).
 
 ### Phase 1b — Aggregate Roots (domain/)
-8. **Track** — Notes map (`%{note_id => Note.t()}`) + `curve_clusters: %{}`. Note CRUD at Track level (insert, delete, split, merge, update). Curve layer management.
+8. **Track** — Notes map (`%{note_id => Note.t()}`) + `data_channels: %{channel => [LayerChunk]}`. Note CRUD at Track level (insert, delete, split, merge, update). Unified data channel management (curves + adopted data).
 9. **Project** — Tracks map + project-level metadata. Track CRUD.
 10. **Utterance & Phoneme** — Utterance groups contiguous notes by time window. Phoneme is a pure identity VO (`symbol`, `type`); timing lives in `TimedEvent` (ADR-009). Utterance determines rasterization boundaries.
 
@@ -316,7 +316,7 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 17. **Domain dependency**: Add `:equinox_domain` to kernel, delete legacy `Equinox.Domain.*`, replace all references.
 18. **Slicer → Utterance**: Rewrite Slicer for new `slice_flag` model; `materialize_utterances` replaces `materialize_segments`.
 19. **Track API**: `insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note` with automatic slice repair.
-20. **SegmentContext**: Introduce `SegmentContext`, remove `graph`/`cluster`/`synth_override`/`curves` from Segment. Slice `Curve.Cluster`s into tick range, rasterize, emit `data_interventions` via Hook contract.
+20. **RenderRequest + AdoptRequest**: Introduce `RenderRequest` as Compiler's sole input (replaces SegmentContext). `RenderRequest.from_window/3` and `from_utterance/3` slice `data_channels`, resolve adopted-over-user overlaps, and pull tempo_segments + declarations. `AdoptRequest.adopt/2` writes engine output back to `Track.data_channels` as `:adopted` LayerChunks.
 21. **Editor / Session adaptation**: Editor ops → Track API → explicit materialization. Session manages `utterance_id ↔ segment_id` mapping.
 
 ### Phase 3 — UI Shell (ui_shell/)
@@ -408,15 +408,15 @@ Split into Phase 1 (domain) and Phase 2 (kernel integration).
 ### Data Structures (matching domain project)
 
 - `EquinoxDomain.Curve.Chunk`: `{id, start_tick, end_tick, control_points, rasterized | nil, source, extra}`. Control points carry `(tick, value, kind, tension)`.
-- `EquinoxDomain.Curve.Cluster`: `{param :: atom() | binary(), chunks :: [Chunk.t()], extra}`. Lives on `Track.curve_clusters`. No default mode — absent coverage means "no intervention".
+- `EquinoxDomain.LayerChunk`: `{start_tick, end_tick, payload, source :: :user | :adopted}`. Unified time-slice container for curves and adopted data. Lives in `Track.data_channels`. Within the same channel, `:adopted` chunks override `:user` chunks on overlapping intervals.
 - `EquinoxDomain.Curve.RasterCache`: `{stride, samples :: binary, fingerprint}`. Rebuildable from control points; never serialized.
-- `Equinox.Kernel.Compiler.SegmentContext`: `{utterance, curve_slices, synth_override, graph, cluster, history}`. The only struct passed into `Compiler.compile/2`.
+- `EquinoxDomain.Command.RenderRequest`: `{notes, time_range, tempo_segments, data_slices, declarations}`. The only struct passed into `Compiler.compile/1`. Constructed via `from_window/3` or `from_utterance/3`.
 
 ### Segment Shrinkage
 
 After curves integration, `%EquinoxDomain.Segment{}` retains only rendering-context fields: `track_id, utterance_id, start_tick, end_tick, core_start_sec, core_end_sec, context_start_sec, context_end_sec, phonemes, curves` (the `phonemes` and `curves` fields are populated by the Kernel at compile time and are not serialized).
 
-Removed from Kernel's legacy Segment: `curves`, `synth_override`, `graph`, `cluster`. These move to `SegmentContext` (compile-time) or `Track` (curves).
+Removed from Kernel's legacy Segment: `curves`, `synth_override`, `graph`, `cluster`. These move to `RenderRequest` (compile-time) or `Track.data_channels`.
 
 ### Curve Facade API Additions
 
@@ -428,8 +428,8 @@ Strokes are assumed already-simplified control-point chunks (see ADR-003). The E
 
 ### Compiler Integration
 
-1. Caller builds one `SegmentContext` per `(Track, Utterance)` pair, slicing all relevant `Curve.Cluster`s to `[utterance.start_tick, utterance.start_tick + utterance.duration_tick)` and rebasing to local ticks.
-2. `Compiler.compile/2` dispatches curve slices to `data_interventions`, keyed by `PortRef`. The `PortRef → Orchid key` translation reuses existing `Graph.PortRef.to_orchid_key/1`.
+1. Caller builds one `RenderRequest` per `(Track, Utterance)` pair via `RenderRequest.from_utterance/3`, which slices `data_channels`, resolves adopted-over-user overlaps, and pulls tempo_segments + declarations.
+2. `Compiler.compile/1` dispatches data_slices to `data_interventions`, keyed by `PortRef`. The `PortRef → Orchid key` translation reuses existing `Graph.PortRef.to_orchid_key/1`.
 3. Payload shape given to the Hook:
    ```text
    %{param: atom(), start_tick: non_neg_integer(), end_tick: non_neg_integer(),
@@ -442,10 +442,10 @@ Strokes are assumed already-simplified control-point chunks (see ADR-003). The E
 Pure data modules inside `domain/`, no impact on Kernel:
 
 - [ ] Complete `EquinoxDomain.Curve.Chunk` + unit tests.
-- [ ] Add `EquinoxDomain.Curve.Cluster` + unit tests (insert/replace/erase/slice).
+- [x] Add `EquinoxDomain.LayerChunk` + unit tests.
 - [ ] Add `EquinoxDomain.Curve.RasterCache` + rasterizer (linear / cubic / step interpolation).
 - [ ] Add stroke-simplification helper (Douglas-Peucker, tunable epsilon).
-- [ ] Add `curve_clusters` field to `EquinoxDomain.Score.Track`, default `%{}`.
+- [x] Add `data_channels` field to `EquinoxDomain.Score.Track`, default `%{}`.
 - [ ] Implement `Pickle` serialization for all curve types.
 
 Each step ends on a green `cd domain && mix precommit`.
@@ -454,11 +454,12 @@ Each step ends on a green `cd domain && mix precommit`.
 
 After Domain is stable:
 
-- [ ] Introduce `Equinox.Kernel.Compiler.SegmentContext` (wraps Utterance + curve slices).
+- [x] Introduce `EquinoxDomain.Command.RenderRequest` (wraps notes + time_range + tempo_segments + data_slices + declarations).
 - [ ] Remove `curves`, `synth_override`, `graph`, `cluster` from legacy `%Segment{}` and its `Jason.Encoder` impl.
 - [ ] Add legacy-tolerant loader in `Project.from_json/1` for old payloads.
-- [ ] Change primary `Compiler.compile/2` to accept `%SegmentContext{}`.
-- [ ] Update `Session.Context.dispatch_to_plans/1` to build `SegmentContext` per utterance from its owning `Track`.
+- [ ] Add `EquinoxDomain.Command.AdoptRequest` + `adopt/2` for engine output → Track write-back.
+- [x] Add `EquinoxDomain.Command.RenderRequest` (from_window/3, from_utterance/3).
+- [ ] Update `Session.Context.dispatch_to_plans/1` to build `RenderRequest` per utterance via `RenderRequest.from_utterance/3`.
 - [ ] Emit curve `data_interventions` in the Compiler.
 - [ ] Thread curve operations through `Editor.History.Operation`.
 

@@ -103,6 +103,42 @@ defmodule EquinoxDomain.Timeline.TempoMap do
     seg.start_pos + Tempo.sec_to_tick(seg.strategy, offset_sec)
   end
 
+  @doc """
+  从编译后的速度映射中，切片出覆盖 `{start_tick, end_tick}` 范围的 segments 列表。
+
+  ## Examples
+
+      iex> TempoMap.slice(compiled, 0, 1920)
+      [compiled_event_0]
+  """
+  @spec slice(t(), Tick.numeric_tick(), Tick.numeric_tick()) :: [compiled_event()]
+  def slice(compiled_tuple, start_tick, end_tick)
+      when is_numeric_tick(start_tick) and is_numeric_tick(end_tick) do
+    size = tuple_size(compiled_tuple)
+
+    Enum.reduce_while(0..(size - 1), {:cont, []}, fn i, {:cont, acc} ->
+      seg = elem(compiled_tuple, i)
+
+      cond do
+        # 区间完全在 segment 之后，后续也无需再看
+        is_numeric_tick(seg.start_pos) and seg.start_pos >= end_tick ->
+          {:halt, {:done, acc}}
+
+        # 区间完全在 segment 之前，跳过
+        is_numeric_tick(seg.end_pos) and seg.end_pos <= start_tick ->
+          {:cont, {:cont, acc}}
+
+        # 有交集，纳入
+        true ->
+          {:cont, {:cont, [seg | acc]}}
+      end
+    end)
+    |> case do
+      {:done, acc} -> Enum.reverse(acc)
+      {:cont, acc} -> Enum.reverse(acc)
+    end
+  end
+
   # ---- tick_to_sec 的工具函数 ----
 
   defp find_by_tick(tuple, target_tick),
