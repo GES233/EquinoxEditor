@@ -39,6 +39,7 @@ defmodule EquinoxDomain.Util.Model do
       def new(attrs) do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys) do
           {id, other_attrs} = Map.pop(normalized, :id, generate_id(unquote(id_prefix)))
+
           struct(__MODULE__, Map.put(other_attrs, :id, id))
           |> validate()
         end
@@ -53,7 +54,7 @@ defmodule EquinoxDomain.Util.Model do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys),
              :ok <- if(Map.has_key?(normalized, :id), do: {:error, :id_immutable}, else: :ok),
              new_model = struct(model, normalized) do
-             validate(new_model)
+          validate(new_model)
         end
       end
 

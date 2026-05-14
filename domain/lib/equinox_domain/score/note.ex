@@ -128,8 +128,8 @@ defmodule EquinoxDomain.Score.Note do
 
   @doc "移除元数据"
   # 应用于插件生命周期结束或序列化
-  @spec remove_metadata(t(), :all | [atom()]) :: t()
-  def remove_metadata(note, :all), do: %{note | metadata: %{}}
+  @spec remove_metadata(t(), :all | [atom()]) :: {:ok, t()}
+  def remove_metadata(note, :all), do: update(note, metadata: %{})
 
   def remove_metadata(note, keys) when is_list(keys) do
     update(note, metadata: Map.drop(note.metadata, keys))
@@ -157,9 +157,8 @@ defmodule EquinoxDomain.Score.Note do
         {:error, {:split_tick_after_note, split_tick, note_end}}
 
       true ->
-        with {:ok, before} <- update(note, duration_tick: split_tick - note.start_tick),
-             {:ok, after_note} <-
-               %{
+        with {:ok, extra_attrs} <-
+               Map.merge(attrs, %{
                  start_tick: split_tick,
                  duration_tick: note_end - split_tick,
                  key: note.key,
@@ -167,9 +166,10 @@ defmodule EquinoxDomain.Score.Note do
                  slice_flag: note.slice_flag,
                  annotation: note.annotation,
                  metadata: note.metadata
-               }
-               |> Map.merge(normalize_attrs(attrs, @keys))
-               |> new() do
+               })
+               |> normalize_attrs(@keys),
+             {:ok, before} <- update(note, duration_tick: split_tick - note.start_tick),
+             {:ok, after_note} <- new(extra_attrs) do
           {:ok, [before, after_note]}
         end
     end

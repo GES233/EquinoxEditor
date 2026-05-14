@@ -6,6 +6,7 @@ defmodule EquinoxDomain.PortTest do
   defp build_decl(target, shape \\ :event_sequence) do
     {:ok, adapter} = AdapterRef.new(scope_key: target, signature: "v1")
     {:ok, operate} = OperateRef.new(signature: "override")
+
     Declaration.new(
       scope: {:utterance, target},
       target: target,
@@ -41,18 +42,21 @@ defmodule EquinoxDomain.PortTest do
       {:ok, g2p} = build_decl("g2p")
       {:ok, dur} = build_decl("duration", :continuous)
 
-      {:ok, preset} = Preset.new(
-        name: "ok",
-        declarations: %{"g2p" => g2p, "duration" => dur},
-        artifact: ["g2p"],
-        allow_adopt: ["g2p"]
-      )
+      {:ok, preset} =
+        Preset.new(
+          name: "ok",
+          declarations: %{"g2p" => g2p, "duration" => dur},
+          artifact: ["g2p"],
+          allow_adopt: ["g2p"]
+        )
+
       assert preset.artifact == ["g2p"]
       assert preset.allow_adopt == ["g2p"]
     end
 
     test "artifact 不在 declarations 中则拒绝" do
       {:ok, g2p} = build_decl("g2p")
+
       assert Preset.new(
                name: "bad",
                declarations: %{"g2p" => g2p},
@@ -62,6 +66,7 @@ defmodule EquinoxDomain.PortTest do
 
     test "allow_adopt 不在 declarations 中则拒绝" do
       {:ok, g2p} = build_decl("g2p")
+
       assert Preset.new(
                name: "bad",
                declarations: %{"g2p" => g2p},
@@ -73,6 +78,7 @@ defmodule EquinoxDomain.PortTest do
     test "allow_adopt 在 declarations 但不在 artifact 中则拒绝" do
       {:ok, g2p} = build_decl("g2p")
       {:ok, dur} = build_decl("duration", :continuous)
+
       assert Preset.new(
                name: "bad",
                declarations: %{"g2p" => g2p, "duration" => dur},
@@ -83,6 +89,7 @@ defmodule EquinoxDomain.PortTest do
 
     test "多个错误时优先报 artifact_not_in_declarations" do
       {:ok, decl} = build_decl("g2p")
+
       assert Preset.new(
                name: "multi",
                declarations: %{"g2p" => decl},
@@ -99,17 +106,41 @@ defmodule EquinoxDomain.PortTest do
     end
 
     test "artifact_not_in_declarations" do
-      p = struct!(Preset, %{name: "x", declarations: %{}, artifact: ["x"], allow_adopt: [], metadata: %{}})
+      p =
+        struct!(Preset, %{
+          name: "x",
+          declarations: %{},
+          artifact: ["x"],
+          allow_adopt: [],
+          metadata: %{}
+        })
+
       assert Preset.validate(p) == {:error, {:artifact_not_in_declarations, ["x"]}}
     end
 
     test "adopt_not_in_declarations" do
-      p = struct!(Preset, %{name: "x", declarations: %{}, artifact: [], allow_adopt: ["x"], metadata: %{}})
+      p =
+        struct!(Preset, %{
+          name: "x",
+          declarations: %{},
+          artifact: [],
+          allow_adopt: ["x"],
+          metadata: %{}
+        })
+
       assert Preset.validate(p) == {:error, {:adopt_not_in_declarations, ["x"]}}
     end
 
     test "adopt_not_in_artifact" do
-      p = struct!(Preset, %{name: "x", declarations: %{"x" => nil}, artifact: [], allow_adopt: ["x"], metadata: %{}})
+      p =
+        struct!(Preset, %{
+          name: "x",
+          declarations: %{"x" => nil},
+          artifact: [],
+          allow_adopt: ["x"],
+          metadata: %{}
+        })
+
       assert Preset.validate(p) == {:error, {:adopt_not_in_artifact, ["x"]}}
     end
   end

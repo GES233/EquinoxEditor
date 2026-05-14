@@ -36,11 +36,10 @@ defmodule EquinoxDomain.Score.Slicer do
     def append(%__MODULE__{} = window, %Note{} = note) do
       note_end = note.start_tick + note.duration_tick
 
-      %{
-        window
-        | tick_end: max(window.tick_end, note_end),
-          note_ids: window.note_ids ++ [note.id]
-      }
+      update(window,
+        tick_end: max(window.tick_end, note_end),
+        note_ids: window.note_ids ++ [note.id]
+      )
     end
   end
 
@@ -51,26 +50,39 @@ defmodule EquinoxDomain.Score.Slicer do
   @default_gap_tolerance 64
 
   @doc "将音符列表划分为时间窗口。"
-  @spec index([Note.t()], [option]) :: [Window.t()]
+  @spec index([Note.t()], [option]) :: {:ok, [Window.t()]} | {:error, term()}
   def index(notes, opts \\ [])
 
-  def index([], _opts), do: []
+  def index([], _opts), do: {:ok, []}
 
   def index(notes, opts) when is_list(notes) do
     gap_tolerance = Keyword.get(opts, :gap_tolerance, @default_gap_tolerance)
 
     sorted = Enum.sort_by(notes, & &1.start_tick)
 
-    {windows, current} =
-      Enum.reduce(sorted, {[], nil}, fn note, {acc, current} ->
-        case do_insert(note, current, gap_tolerance) do
-          {:merge, updated} -> {acc, updated}
-          {:split, new} -> {[current | acc], new}
-        end
-      end)
+    Enum.reduce_while(sorted, {:ok, [], nil}, fn note, {:ok, acc, current} ->
+      case do_insert(note, current, gap_tolerance) do
+        {:merge, {:ok, updated}} ->
+          {:cont, {:ok, acc, updated}}
 
-    # 将最后一个窗口放入结果
-    Enum.reverse([current | windows])
+        {:split, {:ok, new}} ->
+          acc = if is_nil(current), do: acc, else: [current | acc]
+          {:cont, {:ok, acc, new}}
+
+        {_op, {:error, _reason} = err} ->
+          {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, acc, nil} ->
+        {:ok, Enum.reverse(acc)}
+
+      {:ok, acc, current} ->
+        {:ok, Enum.reverse([current | acc])}
+
+      {:error, _reason} = err ->
+        err
+    end
   end
 
   # ---- 内部逻辑 ----
