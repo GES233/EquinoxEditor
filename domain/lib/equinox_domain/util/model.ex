@@ -6,6 +6,7 @@ defmodule EquinoxDomain.Util.Model do
 
   - 结构体定义
   - `new/1`
+  - `validate/1`
   - `update/2`
 
   以及加载必要的辅助函数（属性标准化、ID 生成）。
@@ -15,7 +16,7 @@ defmodule EquinoxDomain.Util.Model do
   @optional_callbacks [validate: 1]
 
   defmacro __using__(opts) do
-    # 这里一般是代码编写除了问题，可以 raise
+    # 这里一般是代码编写出了问题，可以 raise
     keys = Keyword.fetch!(opts, :keys)
     id_prefix = Keyword.get(opts, :id_prefix)
 
@@ -30,12 +31,7 @@ defmodule EquinoxDomain.Util.Model do
 
       # ---- 自动生成的构造/修改函数 ----
 
-      @doc """
-      根据属性创建新的结构体。
-
-      `attrs` 可以是 map 或 keyword list，键可以使用原子或字符串。
-      如果未提供 `:id`，会自动调用 `generate_id/0` 生成 ID。
-      """
+      @doc "根据属性创建新的结构体。"
       def new(attrs) do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys) do
           {id, other_attrs} = Map.pop(normalized, :id, generate_id(unquote(id_prefix)))
@@ -45,11 +41,7 @@ defmodule EquinoxDomain.Util.Model do
         end
       end
 
-      @doc """
-      修改已有结构体的属性（不允许修改 `:id`）。
-
-      `attrs` 格式同 `new/1`。
-      """
+      @doc "修改已有结构体的属性（不允许修改 ID）"
       def update(model, attrs) do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys),
              :ok <- if(Map.has_key?(normalized, :id), do: {:error, :id_immutable}, else: :ok),

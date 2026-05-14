@@ -6,6 +6,7 @@ defmodule EquinoxDomain.Util.Object do
 
   - 结构体定义
   - `new/1`
+  - `validate/1`
   - `update/2`
   """
 
@@ -24,11 +25,7 @@ defmodule EquinoxDomain.Util.Object do
 
       @behaviour EquinoxDomain.Util.Object
 
-      @doc """
-      根据属性创建新的值对象。
-
-      `attrs` 可以是 map 或 keyword list，键可以使用原子或字符串。
-      """
+      @doc "根据属性创建新的值对象。"
       def new(attrs) do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys),
              obj = struct(__MODULE__, normalized),
@@ -37,11 +34,7 @@ defmodule EquinoxDomain.Util.Object do
         end
       end
 
-      @doc """
-      修改已有值对象的属性。
-
-      `attrs` 格式同 `new/1`。
-      """
+      @doc "修改已有值对象的属性。"
       def update(obj, attrs) do
         with {:ok, normalized} <- normalize_attrs(attrs, @keys),
              new_obj = struct(obj, normalized),
