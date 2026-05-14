@@ -3,8 +3,7 @@ defmodule Equinox.Domain.Slicer do
   将一条完整的轨道（Track）中的 Notes 根据休止符间隔拆分成多个 Slice 或 Segment 候选。
   """
 
-  alias Equinox.Domain.Note
-  alias Equinox.Editor.Segment
+  alias Equinox.Domain.{Note, Segment}
   alias Equinox.Track
 
   @default_min_rest_ticks 960
