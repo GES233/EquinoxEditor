@@ -158,7 +158,12 @@ defmodule EquinoxDomain.Score.Note do
 
       true ->
         with {:ok, extra_attrs} <-
-               Map.merge(attrs, %{
+               attrs
+               |> normalize_attrs(@keys),
+             {:ok, before} <- update(note, duration_tick: split_tick - note.start_tick),
+             {:ok, after_note} <-
+               extra_attrs
+               |> Map.merge(%{
                  start_tick: split_tick,
                  duration_tick: note_end - split_tick,
                  key: note.key,
@@ -167,9 +172,7 @@ defmodule EquinoxDomain.Score.Note do
                  annotation: note.annotation,
                  metadata: note.metadata
                })
-               |> normalize_attrs(@keys),
-             {:ok, before} <- update(note, duration_tick: split_tick - note.start_tick),
-             {:ok, after_note} <- new(extra_attrs) do
+               |> new() do
           {:ok, [before, after_note]}
         end
     end
@@ -253,6 +256,7 @@ defmodule EquinoxDomain.Score.Note do
   # ---- 序列化与反序列化 ----
   # @behaviour EquinoxDomain.Util.Pickle
 
+  # 可以尝试一下 Pickle 的 scope 路线
   @spec serialize(t()) :: {:ok, Pickle.serialized()} | {:error, term()}
   def serialize(note) do
     with {:ok, start_tick} <- Tick.serialize(note.start_tick),

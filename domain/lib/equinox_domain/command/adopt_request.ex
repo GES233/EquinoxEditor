@@ -29,6 +29,7 @@ defmodule EquinoxDomain.Command.AdoptRequest do
       time_range: {0, 0}
     ]
 
+  # 这个还是有点太粗糙了，后面会考虑的细一点
   @doc """
   将采纳请求写入 Track，返回更新后的 Track。
 
