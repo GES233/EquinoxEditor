@@ -1,7 +1,7 @@
 defmodule EquinoxDomain.CurveTest do
   use ExUnit.Case, async: true
 
-  alias EquinoxDomain.Curve.{ControlPoint, Chunk, Channel, Adapter}
+  alias EquinoxDomain.Curve.{ControlPoint, Chunk, Cluster, Adapter}
   alias EquinoxDomain.Curve.Adapter.CatmullRom
 
   describe "ControlPoint" do
@@ -163,21 +163,21 @@ defmodule EquinoxDomain.CurveTest do
     end
   end
 
-  describe "Channel" do
-    test "new/1 创建 Channel" do
-      {:ok, channel} = Channel.new(name: :pitch)
+  describe "Cluster" do
+    test "new/1 创建 Cluster" do
+      {:ok, channel} = Cluster.new(name: :pitch)
       assert channel.name == :pitch
       assert channel.chunks == []
       assert channel.extra == %{}
     end
 
-    test "update/2 修改 Channel 属性" do
+    test "update/2 修改 Cluster 属性" do
       {:ok, cp} = ControlPoint.new(tick: 0, value: 0.5)
       {:ok, container} = CatmullRom.new(points: [cp])
       {:ok, chunk} = Chunk.new(adapter: CatmullRom, container: container, start_tick: 0)
 
-      {:ok, ch} = Channel.new(name: :pitch)
-      {:ok, channel} = Channel.update(ch, chunks: [chunk])
+      {:ok, ch} = Cluster.new(name: :pitch)
+      {:ok, channel} = Cluster.update(ch, chunks: [chunk])
 
       assert channel.name == :pitch
       assert length(channel.chunks) == 1
@@ -197,8 +197,8 @@ defmodule EquinoxDomain.CurveTest do
       {:ok, chunk_b} =
         Chunk.new(adapter: CatmullRom, container: container_b, start_tick: 0)
 
-      {:ok, ch} = Channel.new(name: :pitch)
-      {:ok, channel} = Channel.update(ch, chunks: [chunk_a, chunk_b])
+      {:ok, ch} = Cluster.new(name: :pitch)
+      {:ok, channel} = Cluster.update(ch, chunks: [chunk_a, chunk_b])
       assert length(channel.chunks) == 2
       assert hd(Enum.reverse(channel.chunks)).container == container_b
     end

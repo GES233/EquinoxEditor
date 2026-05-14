@@ -1,8 +1,8 @@
-defmodule EquinoxDomain.Curve.Channel do
+defmodule EquinoxDomain.Curve.Cluster do
   @moduledoc """
   一系列曲线组成的通道，是承载单个轨道内同类参数的容器。
 
-  通道的名称就是其 `name` ，也是 Track.curve_channels 的对应键。
+  通道的名称就是其 `name` ，也是 Track.curve_clusters 的对应键。
 
   一般的讲，总会是后面修改的覆盖前面的（依照 z-order）。
   """

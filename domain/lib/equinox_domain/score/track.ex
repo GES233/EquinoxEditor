@@ -9,7 +9,7 @@ defmodule EquinoxDomain.Score.Track do
       notes: %{},
       # 作为可选项的索引
       # ---- 连续参数层 (synth) ----
-      curve_channels: %{},
+      curve_clusters: %{},
       # ---- Mix Automation ----
       mix_automation: %{},
       # ---- Mix 静态值 (非自动化的默认值) ----
