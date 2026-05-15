@@ -222,64 +222,77 @@ Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
 - Only explicit Adoption Commands convert artifacts into persistent, undoable Domain facts.
 - Domain stores declarations and user-authored deltas; Kernel executes adapters and resolves.
 
-### ADR-010 — Retire Utterance: Window as transient render boundary, Track data channels as the sole persistence for interventions
+### ADR-010 — Retire Utterance: Window + DataChannels + Artifact Pipeline
 
-**Background**
+#### Summary
 
-In the original design, `Utterance` was intended as a persistent entity sitting between `Note` and the render pipeline, serving three roles: representing a Slicer-produced window, anchoring user edits (curves, phoneme timing, etc.), and providing stable render boundaries for the Compiler.
-
-After ADR-009, those roles have been redistributed:
-
-- Window boundaries are adequately expressed by `Slicer.Window` (transient).
-- User edits and adopted engine outputs are stored as `LayerChunk`s on `Track.data_channels`.
-- Render input is constructed via `RenderRequest.from_window/3`.
-- Cache identity is derived from `RenderRequest` content hashing — no entity ID required.
-- Declarations live on `Track.presets[active_preset]`; the `note ↔ phoneme` mapping is a runtime Projection.
-
-What remains of `Utterance` is a bare `{id, track_id, note_ids, time_range}` tuple with no independent business semantics. Keeping it forces the Slicer-re-run reconciliation problem (ADR-001) without delivering proportional value.
-
-**Decision**
-
-Equinox Domain does not introduce or persist `Utterance`. The pipeline becomes:
+`Utterance` is retired. The pipeline becomes:
 
 ```text
-Track.notes
-  → Slicer.index/2
-  → [Window]
-  → RenderRequest.from_window/3
-  → Kernel Compiler
+Track.notes → Slicer.index/2 → [Window] → RenderRequest.from_window/3 → Kernel → Artifact → optional AdoptRequest → Track.data_channels
 ```
 
-`Window` is the Slicer's sole output:
+#### Core Decisions
 
-- transient, immutable, no persistent ID
-- not serialized into the project file
-- not a Domain aggregate root
-- regenerated from scratch on every Slicer run; no reconciliation logic
+**1. Window is the Slicer's sole output.**
 
-All user contributions and engine adoptions — hand-drawn curves, corrected phoneme timing, adopted durations, overridden parameters — are persisted uniformly in `Track.data_channels :: %{Channel.channel() => [LayerChunk.t()]}`, distinguished by `LayerChunk.source` (`:user | :adopted`).
+- Transient, immutable, no persistent ID, never serialized.
+- Regenerated from scratch on every Slicer run; no reconciliation logic.
 
-**Anchoring rules**
+**2. `Track.data_channels` is the sole persistence for all interventions.**
 
-- User edits anchor to **absolute tick ranges**, orthogonal to Slicer windowing. Re-running the Slicer never mutates `data_channels`; it only shifts the windows used by subsequent `RenderRequest`s.
-- `Segment` identity is `{track_id, start_tick, end_tick}`. No Window-derived key is needed.
-- `Window` is immutable. Edits flow through `Track.notes` / `Track.data_channels` APIs and become visible on the next Slicer run.
+- User-drawn curves, adopted engine output, timing corrections — all stored as `LayerChunk`s keyed by `Channel.channel()`.
+- Editing and adoption anchor to absolute tick ranges, orthogonal to Slicer windows.
+- Re-running the Slicer never mutates `data_channels`.
 
-**Adoption time basis**
+**3. `RenderRequest.from_window/3` is the only Compiler entry point.**
 
-- `AdoptRequest.time_range` is expressed in ticks. The caller is responsible for any `sec → tick` conversion before invoking `adopt/2`.
-- The internal time structure of `payload` (e.g. `stride` units for `:continuous`, `at` semantics for `:event_sequence`) is governed by the channel's schema. The Domain does not impose one.
-- Adopted data is treated as a **frozen engine artifact** at the moment of adoption. Subsequent `TempoMap` changes do not retroactively adjust `data_channels`; re-adopting is the canonical way to restore consistency.
-- Cross-tempo adoption semantics and optional physical-time-native persistence are deferred to a follow-up ADR.
+- Slices `data_channels`, resolves adopted-over-user overlaps, pulls `tempo_segments` + `declarations`.
+- `RenderRequest.from_utterance/3` is removed from the planned API surface.
+- `tempo_segments` lives on `RenderRequest`; tick → physical-time conversion happens in Kernel/Compiler, never in UI.
 
-**Consequences**
+**4. `Artifact` is the engine's temporary result container.**
 
-- ADR-001 is superseded: Slicer is a pure projection `Notes → [Window]`; no materialization step exists. The two "intervention" triggers from ADR-001 collapse into ordinary writes against `Track.data_channels`.
-- ADR-002 wording: curves are derived alongside Windows from Notes, never owned by a persistent slice entity.
-- ADR-009 loses its Utterance-materialization clause; `Track.presets` and the Declaration/Projection/Resolution pipeline are unaffected.
-- `RenderRequest.from_utterance/3` is removed from the planned API surface; only `from_window/3` remains.
-- `Session` no longer maintains a `utterance_id ↔ segment_id` map.
-- Phase 1b drops the `Utterance` aggregate; `Phoneme` remains as a pure VO. Phase 1c's "materialization as an explicit step" item is removed.
+- Engine output is an artifact — not a Domain fact by default.
+- Used for UI display, diagnostics, diff, and user approval.
+- Not serialized into the project file.
+- Only explicit adoption writes it back to `Track.data_channels`.
+
+**5. `EventSeq` is a rich domain model for `:event_sequence` payloads.**
+
+- Contains `[TimedEvent.t()]` where each event holds `{at, duration, entity, metadata}`.
+- `TimedEvent` anchors to the outer container (`LayerChunk.start_tick` or `Artifact.time_range`) via relative tick offsets.
+- `EventSeq` owns its own validation, clipping, shifting, and rebasing — `LayerChunk` owns the outer time boundary.
+- Domain checks structural legality only (non-negative durations, valid ordering, etc.). Adapter-specific semantics (phoneme validity, preutterance rules, cross-note constraints) are not Domain's responsibility.
+
+**6. `Declaration.constraints` are opaque adapter config.**
+
+- Domain stores them but never interprets them.
+- Validation of constraint semantics belongs to the Adapter / Kernel plugin that registered the operate signature.
+
+**7. Inference-time merge is plugin-owned.**
+
+- How upstream projection + user intervention + adapter config are combined into a resolved input is decided by each Adapter/Plugin, not by Domain.
+
+**8. Adoption conflict is user-decided.**
+
+- When an `AdoptRequest` overlaps existing user/adopted data, the system must detect the conflict and surface it to the user.
+- Domain does not silently resolve overlap. The user chooses a strategy (replace, keep, fill-gaps, manual merge, etc.) before data is written.
+- The current `AdoptRequest.adopt/2` implementation that silently trims overlapping chunks is temporary and will be replaced by a conflict-aware two-phase flow.
+
+**9. `Segment` retains only rendering-context fields.**
+
+- `{track_id, start_tick, end_tick, core_start/end_sec, context_start/end_sec, phonemes, curves}`.
+- `phonemes` and `curves` are Kernel compile-time caches, not serialized.
+- Identity derives from `{track_id, start_tick, end_tick}` or RenderRequest content hash.
+
+#### Supersedes / Consequences
+
+- ADR-001 materialization clause: superseded. Slicer is a pure projection `Notes → [Window]`.
+- ADR-002 wording: curves (and all time-varying interventions) derive alongside Windows, never owned by a persistent slice entity.
+- ADR-009 Utterance-materialization clause: removed. `Track.presets` and the Declaration → Projection → Resolution pipeline are unaffected.
+- Session no longer maintains `utterance_id ↔ segment_id` mapping.
+- Phase milestones referencing Utterance materialization (1b/1c) are updated to reference Window + DataChannels.
 
 ## 8. Do Not Do 💡
 
