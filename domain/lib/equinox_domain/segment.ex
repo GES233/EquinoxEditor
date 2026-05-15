@@ -1,18 +1,12 @@
 defmodule EquinoxDomain.Segment do
   # 渲染的最小上下文单位
 
-  # Track[Notes & Curves] -> Slicer & Utterance -> Segments
-  # 先经过 Slicer 处理音符
-  # 再经过 Utterance 得到一系列时间窗
-  # 最后对音符/时长/曲线进行栅格化得到 Segments
-  # 丢给下游的引擎
   alias EquinoxDomain.{Timeline, Timeline.Tick}
 
   # 是典型的 VO （因为是运行时生成的对象）
   @type t :: %__MODULE__{
           # ---- 业务标识 ----
           track_id: EquinoxDomain.Util.ID.t(),
-          utterance_id: EquinoxDomain.Util.ID.t(),
           start_tick: Tick.numeric_tick(),
           end_tick: Tick.numeric_tick(),
 
@@ -20,7 +14,6 @@ defmodule EquinoxDomain.Segment do
           # 实际发声的有效区间
           core_start_sec: Timeline.physical_time(),
           core_end_sec: Timeline.physical_time(),
-          # 提供给声学模型的预留上下文（Padding）
           context_start_sec: Timeline.physical_time(),
           context_end_sec: Timeline.physical_time(),
 
@@ -31,7 +24,6 @@ defmodule EquinoxDomain.Segment do
   use EquinoxDomain.Util.Object,
     keys: [
       :track_id,
-      :utterance_id,
       :start_tick,
       :end_tick,
       :core_start_sec,

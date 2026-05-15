@@ -2,9 +2,6 @@ defmodule EquinoxDomain.Command.RenderRequest do
   @moduledoc """
   渲染请求——Compiler 的统一入口。
 
-  无论来自预览（Window）还是已材料化的 Utterance，都先构造成 RenderRequest，
-  Compiler 只认这一种类型。
-
   构造时自动完成：
   - 从 Track 查询 Note 本体
   - 切片 data_channels，并做 adopted-over-user 的分辨
@@ -18,7 +15,6 @@ defmodule EquinoxDomain.Command.RenderRequest do
     Timeline.Tick,
     Score.Note,
     Score.Track,
-    Score.Utterance,
     Port.Declaration,
     Port.Channel,
     Port.Preset,
@@ -66,33 +62,6 @@ defmodule EquinoxDomain.Command.RenderRequest do
       new(
         track_id: track.id,
         note_ids: window.note_ids,
-        notes: notes,
-        time_range: time_range,
-        tempo_segments: tempo_segs,
-        data_slices: data_slices,
-        declarations: declarations
-      )
-    end
-  end
-
-  @doc """
-  从 Utterance（已材料化路径）构建 RenderRequest。
-
-  Utterance 的材料化意味着其对应时间范围内一定存在 adopted 数据，
-  data_slices 中 adopted 会覆盖同 channel 的 user 重叠区间。
-  """
-  @spec from_utterance(Utterance.t(), Track.t(), TempoMap.t()) :: {:ok, t()} | {:error, term()}
-  def from_utterance(%Utterance{} = utterance, %Track{} = track, tempo_map) do
-    time_range = {utterance.start_tick, utterance.start_tick + utterance.duration_tick}
-    {t0, t1} = time_range
-
-    with {:ok, notes} <- lookup_notes(track, utterance.note_ids),
-         tempo_segs = TempoMap.slice(tempo_map, t0, t1),
-         data_slices = slice_and_resolve(track, time_range),
-         declarations = active_declarations(track) do
-      new(
-        track_id: track.id,
-        note_ids: utterance.note_ids,
         notes: notes,
         time_range: time_range,
         tempo_segments: tempo_segs,

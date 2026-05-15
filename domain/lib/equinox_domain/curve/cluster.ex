@@ -16,7 +16,6 @@ defmodule EquinoxDomain.Curve.Cluster do
 
   # 这个模块作为聚合根吧
   # 最需要聚合的部分是栅格化的部分
-  # 我们需要获得从 Utterance 得到的片段
   # 再结合 TempoMap 本体以及「基于物理时间长度的 grid_width」
   # 得到片段与栅格化数据的序列
   # 形如 %{{start_tick, end_tick} => [data_seq]}

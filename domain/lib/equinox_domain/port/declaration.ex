@@ -7,7 +7,7 @@ defmodule EquinoxDomain.Port.Declaration do
   @type shape :: :continuous | :event_sequence
 
   @type t :: %__MODULE__{
-          scope: {:utterance, binary()} | {:track, binary()} | {:note, binary()},
+          scope: {:track, binary()} | {:note, binary()},
           target: Channel.channel(),
           adapter: AdapterRef.t(),
           shape: shape(),
