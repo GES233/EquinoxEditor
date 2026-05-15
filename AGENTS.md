@@ -377,7 +377,10 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 ### Phase 1d — Polish & Serialization (domain/)
 14. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo. **Blocked on Track + Project CRUD**.
 15. **Session / RenderRequest** — `Session` (selection, clipboard, viewport) — **manual review in progress**; `Command.RenderRequest` done.
-16. **Pickle + comprehensive tests** — `Pickle` protocol implementations for all domain types + full test coverage. Curve type Pickle **deferred** pending curve model stabilization.
+16. **Pickle + comprehensive tests** — **暂缓。** 当前三层 Pickle 协议（`Pickle` / `Pickle.Pure` / `Pickle.Plugable`）过度设计了——只有 `Tick`、`Key`、`Tempo` 事件有实现，而核心聚合根（`Project`、`Track`、`Note`）反而没接。建议方向：
+    - Phase 1d 只需做一个最简单的 Jason JSON 序列化——`Util.Model` 已自动生成 `new/1`，直接用 `Jason.Encoder` derive 就能持久化 Project/Track/Note。
+    - `Pickle.Plugable` 的 scope/signature dispatch 机制（envelope 格式 + registry）暂时搁置，等引擎接口（`data_intervention` 契约、`AdoptRequest` 回写格式）明确后再决定是否需要这么复杂的 layer。
+    - Curve 类型的序列化同样 **deferred** pending curve model stabilization。
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
 17. **Domain dependency**: Add `:equinox_domain` to kernel, delete legacy `Equinox.Domain.*`, replace all references.
