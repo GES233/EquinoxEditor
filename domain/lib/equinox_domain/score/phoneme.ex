@@ -19,7 +19,8 @@ defmodule EquinoxDomain.Score.Phoneme do
   ## Preutterance
 
   Domain 不再直接存储辅音提前量。
-  辅音提前量由 timing adapter / resolver 在 Projection 或 Resolve 阶段计算。
+
+  辅音提前量由模型与用户干涉经 resolver 在 Projection 或 Resolve 阶段计算。
   用户可通过 Declaration constraints 表达策略，例如：
 
   - consonant_preutter_limit

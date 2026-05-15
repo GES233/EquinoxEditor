@@ -4,6 +4,7 @@ defmodule EquinoxDomain.Port.OperateRef do
   Domain 只保存 operate 的稳定标识。
   Kernel Registry 负责解析为具体实现。
   """
+
   @type t :: %__MODULE__{
           signature: binary(),
           version: binary() | nil,

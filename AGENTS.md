@@ -193,9 +193,9 @@ All data that can be both engine-generated and user-modified goes through one li
 
 ```
 Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
-   (what adapter,       (engine         (merged: facts   (engine output,
-    what constraints,    prediction)     + projection    not Domain fact)
-    what merge strategy)                 + overrides)
+   (what constraints,   (engine         (merged: facts   (engine output,
+    what merge strategy) prediction)     + projection    not Domain fact)
+                                         + overrides)
                                                     ↓ (optional)
                                             Adoption Command
                                                     ↓
@@ -204,15 +204,13 @@ Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
 
 **Domain types (Phase 1 — done):**
 
-- `EquinoxDomain.Port.Declaration` — serializable adapter intent: scope, adapter ref, shape discriminator, operate module, constraints, fallback.
-- `EquinoxDomain.Port.AdapterRef` — `{scope_key, signature, version, config}` resolved by Kernel's adapter registry at runtime.
+- `EquinoxDomain.Port.Declaration` — serializable adapter intent: scope, hape discriminator, operate module, constraints, fallback.
 - `EquinoxDomain.Port.Resolver.Operate` — behaviour with single callback `merge/2`. Shares contract with `OrchidIntervention.Operate`. Built-in implementations: `Override`, `Delta`, `Replace`.
 - `Track.presets` + `Track.active_preset` added; `Utterance.declarations` removed, replaced with `note_ids`/`start_tick`/`duration_tick`; `Utterance.note_phoneme_map` removed.
-- `Phoneme` reduced to pure identity `{symbol, type}` — timing moves to `TimedEvent` in resolved layer. Consonant preutterance (old `note_offset`) computed by duration adapter at Projection stage.
+- `Phoneme` reduced to pure identity `{symbol, type}` — timing moves to `TimedEvent` in resolved layer. Consonant preutterance (old `note_offset`) computed by duration calculate service at Projection stage.
 
 **Pending (Phase 2 — Kernel):**
 
-- `Equinox.Kernel.Adapter.Registry` — scope-key routing from `AdapterRef` to adapter modules.
 - `Equinox.Kernel.Param.Projection` / `Event.Projection` — shape-specific projection carriers.
 - Resolver engine — consumes Declaration + Projection + Domain facts, produces Resolved Input.
 - `RenderRequest` integration — wires data_channel slices + tempo_segments + adoption resolution into `Compiler.compile/1`.
@@ -224,61 +222,64 @@ Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
 - Only explicit Adoption Commands convert artifacts into persistent, undoable Domain facts.
 - Domain stores declarations and user-authored deltas; Kernel executes adapters and resolves.
 
-### [WIP]ADR-010 - Retire Utterance: Window/Slice as transient render boundary, Track data channels as persistent intervention storage
+### ADR-010 — Retire Utterance: Window as transient render boundary, Track data channels as the sole persistence for interventions
 
-**Background**:
+**Background**
 
-In early design, Utterance was envisioned as a persistent entity situated between the Note and the rendering pipeline, used for:
+In the original design, `Utterance` was intended as a persistent entity sitting between `Note` and the render pipeline, serving three roles: representing a Slicer-produced window, anchoring user edits (curves, phoneme timing, etc.), and providing stable render boundaries for the Compiler.
 
-* Representing a continuous window of notes divided by the Slicer
-* Serving as an anchor point for users editing phonemes, curves, timing, and other data
-* Providing stable rendering boundaries for the Kernel/Compiler
+After ADR-009, those roles have been redistributed:
 
-However, with the implementation of ADR-009, the responsibilities of Utterance were gradually fragmented:
+- Window boundaries are adequately expressed by `Slicer.Window` (transient).
+- User edits and adopted engine outputs are stored as `LayerChunk`s on `Track.data_channels`.
+- Render input is constructed via `RenderRequest.from_window/3`.
+- Cache identity is derived from `RenderRequest` content hashing — no entity ID required.
+- Declarations live on `Track.presets[active_preset]`; the `note ↔ phoneme` mapping is a runtime Projection.
 
-* Slice boundaries can be temporarily represented by Slicer.Window / Slice
-* User edits and adoption results can be directly persisted to Track.data_channels
-* Rendering input can be constructed using RenderRequest.from_window/3
-* Cached identity can be generated using RenderRequest fingerprint or slice fingerprint
+What remains of `Utterance` is a bare `{id, track_id, note_ids, time_range}` tuple with no independent business semantics. Keeping it forces the Slicer-re-run reconciliation problem (ADR-001) without delivering proportional value.
 
-Therefore, retaining Utterance would introduce additional synchronization issues.
+**Decision**
 
-**Decision**:
-
-Equinox Domain no longer introduces or persists Utterance.
-
-The output of the Slicer is a temporary Window/Slice:
+Equinox Domain does not introduce or persist `Utterance`. The pipeline becomes:
 
 ```text
 Track.notes
   → Slicer.index/2
-  → [Window | Slice]
+  → [Window]
   → RenderRequest.from_window/3
   → Kernel Compiler
 ```
 
-A Window/Slice represents the timeframe and set of notes required for a single render, preview, cache build, but it:
+`Window` is the Slicer's sole output:
 
-* Has no persistent ID
-* Does not enter the project file
-* Does not support user edits
-* Is not used as a Domain aggregate root
-* Does not undergo materialization after reslicing
+- transient, immutable, no persistent ID
+- not serialized into the project file
+- not a Domain aggregate root
+- regenerated from scratch on every Slicer run; no reconciliation logic
 
-All user involvement, adoption results, and engine output data are uniformly written to:
+All user contributions and engine adoptions — hand-drawn curves, corrected phoneme timing, adopted durations, overridden parameters — are persisted uniformly in `Track.data_channels :: %{Channel.channel() => [LayerChunk.t()]}`, distinguished by `LayerChunk.source` (`:user | :adopted`).
 
-```elixir
-Track.data_channels :: %{Channel.channel() => [LayerChunk.t()]}
-```
+**Anchoring rules**
 
-e.g.:
+- User edits anchor to **absolute tick ranges**, orthogonal to Slicer windowing. Re-running the Slicer never mutates `data_channels`; it only shifts the windows used by subsequent `RenderRequest`s.
+- `Segment` identity is `{track_id, start_tick, end_tick}`. No Window-derived key is needed.
+- `Window` is immutable. Edits flow through `Track.notes` / `Track.data_channels` APIs and become visible on the next Slicer run.
 
-* User hand-draws pitch curve
-* User corrects phoneme timing
-* User adopts engine-generated duration
-* User overrides energy/breathiness/phoneme sequence
+**Adoption time basis**
 
-All of these are expressed as LayerChunk on a certain channel.
+- `AdoptRequest.time_range` is expressed in ticks. The caller is responsible for any `sec → tick` conversion before invoking `adopt/2`.
+- The internal time structure of `payload` (e.g. `stride` units for `:continuous`, `at` semantics for `:event_sequence`) is governed by the channel's schema. The Domain does not impose one.
+- Adopted data is treated as a **frozen engine artifact** at the moment of adoption. Subsequent `TempoMap` changes do not retroactively adjust `data_channels`; re-adopting is the canonical way to restore consistency.
+- Cross-tempo adoption semantics and optional physical-time-native persistence are deferred to a follow-up ADR.
+
+**Consequences**
+
+- ADR-001 is superseded: Slicer is a pure projection `Notes → [Window]`; no materialization step exists. The two "intervention" triggers from ADR-001 collapse into ordinary writes against `Track.data_channels`.
+- ADR-002 wording: curves are derived alongside Windows from Notes, never owned by a persistent slice entity.
+- ADR-009 loses its Utterance-materialization clause; `Track.presets` and the Declaration/Projection/Resolution pipeline are unaffected.
+- `RenderRequest.from_utterance/3` is removed from the planned API surface; only `from_window/3` remains.
+- `Session` no longer maintains a `utterance_id ↔ segment_id` map.
+- Phase 1b drops the `Utterance` aggregate; `Phoneme` remains as a pure VO. Phase 1c's "materialization as an explicit step" item is removed.
 
 ## 8. Do Not Do 💡
 

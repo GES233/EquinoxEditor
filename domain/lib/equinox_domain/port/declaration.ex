@@ -1,6 +1,8 @@
 defmodule EquinoxDomain.Port.Declaration do
   @moduledoc "通用声明——描述一个在特定 scope 上的外部适配器的运行策略。"
   # 虽然涉及整个生命周期，但不需要显式 ID
+  # 此前这里有 Adapter ，但被我砍掉了，因为这部分是计算干的活
+  # 唯一涉及领域的也就是
 
   alias EquinoxDomain.Port.{AdapterRef, OperateRef, Channel}
 
@@ -9,7 +11,6 @@ defmodule EquinoxDomain.Port.Declaration do
   @type t :: %__MODULE__{
           scope: {:track, binary()} | {:note, binary()},
           target: Channel.channel(),
-          adapter: AdapterRef.t(),
           shape: shape(),
           operate: OperateRef.t(),
           constraints: %{optional(atom()) => term()},
@@ -21,7 +22,6 @@ defmodule EquinoxDomain.Port.Declaration do
     keys: [
       :scope,
       :target,
-      :adapter,
       :shape,
       :operate,
       constraints: %{},
