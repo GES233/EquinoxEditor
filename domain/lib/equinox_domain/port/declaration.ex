@@ -4,7 +4,7 @@ defmodule EquinoxDomain.Port.Declaration do
   # 此前这里有 Adapter ，但被我砍掉了，因为这部分是计算干的活
   # 唯一涉及领域的也就是
 
-  alias EquinoxDomain.Port.{AdapterRef, OperateRef, Channel}
+  alias EquinoxDomain.Port.{OperateRef, Channel}
 
   @type shape :: :continuous | :event_sequence
 
