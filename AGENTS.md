@@ -39,7 +39,7 @@ The `EquinoxDomain` module lives in `domain/` as a **separate, zero-dependency E
 - `Note.slice_flag` uses `:auto | :force_slice | :force_merge` (simpler than kernel's tuple-based version).
 - `Track` holds `notes: %{}` (map by id) and `data_channels: %{Channel.channel() => [LayerChunk.t()]}` (unified curve + adoption data).
 - `Phoneme` is a standalone value object with identity fields (`symbol`, `type`). Timing (tick_offset, duration_tick, preutterance) lives in `TimedEvent` at the Kernel projection layer (see ADR-009).
-- `Utterance` replaces the kernel's `Segment` concept — it groups contiguous notes by time window and determines rasterization boundaries for the render pipeline. Phonemes are a runtime projection (see ADR-009); the engine does not need to understand the Note domain model.
+- `Window` replaces the kernel's `Segment` concept — it groups contiguous notes by time window and determines rasterization boundaries for the render pipeline. Phonemes are a runtime projection (see ADR-009); the engine does not need to understand the Note domain model.
 - `Segment` is a pure rendering-context VO (acoustic boundaries, `phonemes`/`curves`) — not a note container. The Domain defines the struct; `phonemes` and `curves` are populated by the Kernel at compile time and do not participate in serialization.
 
 **Build/Test**: `cd domain && mix test` | **Pre-commit**: `cd domain && mix precommit`
@@ -66,11 +66,11 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 > In this document, "Editor" refers to the entire Equinox application.
 
 - **Domain-First Development**: `EquinoxDomain.*` (in `domain/`) is the cornerstone of the project. All domain models (data structures + pure functional logic) must be completed and thoroughly tested at this layer before development of the Kernel or UI Shell can begin. The Domain project is prohibited from depending on Kernel or UI modules.💡
-- **Pure Data**: `Project`, `Track`, `Utterance`, `Note`, `Phoneme` are pure data structures (JSON/Pickle serializable). `Segment` is also of type Domain, but its `phonemes` and `curves` fields are cached at runtime and do not participate in serialization. No Ecto schemas, no executable closures inside them.
+- **Pure Data**: `Project`, `Track`, `Note`, `Phoneme` are pure data structures (JSON/Pickle serializable). `Segment` is also of type Domain, but its `phonemes` and `curves` fields are cached at runtime and do not participate in serialization. No Ecto schemas, no executable closures inside them.
 - **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte.
 - **Stateless Kernel**: The Kernel (`Equinox.Kernel.*`) is pure-functional wherever possible. Domain types come from `EquinoxDomain.*`. Persistent state lives in downstream consumers (`Equinox.Session.Server`, `ui_shell`). The only tolerated stateful Kernel component is `Equinox.Kernel.StepRegistry` (build-time catalog, not session state). `Equinox.Editor.*` is partially obsolete and is no longer considered an independent concept. 💡
-- **Slicer Model**: Slicing is a pure one-way projection `Notes → Slice → Utterance`. `Slicer` never mutates `Utterance`s after materialization; later edits happen on `Track.notes` with automatic slice repair. `slice_flag` (`:auto | :force_slice | :force_merge`) on `Note` is an *input signal* for `Slicer`, not a post-hoc synchronization channel. 💡
-- **Curves belong to Track, not Utterance/Segment**: Continuous parameter data (pitch, energy, breathiness, …) are stored as `[LayerChunk]` in `Track.data_channels`. Utterances hold only `note_ids`; phonemes are runtime projection. Segments are pure rendering-context VOs. At compile time, the Compiler slices `data_channels` into the `RenderRequest` that feeds the Compiler. 💡
+- **Slicer Model**: Slicing is a pure one-way projection `Notes → [Window]`. `Slicer` produces transient `Window` structs; later edits happen on `Track.notes` with automatic slice repair. `slice_flag` (`:auto | :force_slice | :force_merge`) on `Note` is an *input signal* for `Slicer`, not a post-hoc synchronization channel. 💡
+- **Curves belong to Track, not Window/Segment**: Continuous parameter data (pitch, energy, breathiness, …) are stored as `[LayerChunk]` in `Track.data_channels`. Windows hold only `note_ids`; phonemes are runtime projection. Segments are pure rendering-context VOs. At compile time, the Compiler slices `data_channels` into the `RenderRequest` that feeds the Compiler. 💡
 - **UI Layout Hierarchy**:
   - `EditorLive` (Main Shell) -> Top-level dispatcher.
   - `TrackList` -> Vertical stack for mute/solo.
@@ -99,29 +99,24 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 Short, load-bearing decisions. New Agents MUST read these before touching Kernel code.
 
-### ADR-001 — Slicer is a one-way projection (Notes → Window), Utterance is lazily materialized
+### ADR-001 — Slicer is a one-way projection (Notes → Window)
+
+> **Superseded by ADR-010.** The `Utterance` entity described below was retired. Rationale: Utterance originally carried phoneme timing and engine-adopted data, coupling the core domain to a specific phonetics backend. Moving phonetics-support code out of the domain (into external adapters/plugins) enables multi-backend engine adaptation — DiffSinger, NNSVS, world-level synthesizers, or custom G2P pipelines can plug in without the domain knowing their internals. The `Window` struct (transient, no identity, not serialized) is now the Slicer's sole output; all persistent interventions live in `Track.data_channels`.
 
 `EquinoxDomain.Score.Slicer` consumes a flat list of `Note`s and produces `Window` structs — transient time-window descriptors. A `Window` is a pure slice artifact; it has no identity and is not persisted.
 
-`Window` becomes `Utterance` (a persistent entity with `id` and `track_id`) only when the user explicitly intervenes. Intervention occurs in two forms:
-
-1. **Adoption** — the user approves an engine-generated Artifact (e.g. phoneme timing from G2P). The Projection is promoted to a Domain fact, and the affected `Window` is materialized into an `Utterance`.
-2. **Manual tool** — the user draws/edit curves, adjusts phoneme boundaries, or otherwise modifies data on a `Window`'s territory. This forces materialization of that `Window` into an `Utterance` so the edit has a persistent anchor.
-
-Without user intervention, `Window`s flow directly into the Compiler and are discarded — no `Utterance` is created.
-
-Once an `Utterance` exists, it becomes the authoritative container for its notes and persists across edits; it is not regenerated on every slicer run. Re-running the slicer over a Track does **not** silently mutate existing `Utterance`s; callers must explicitly reconcile new `Window`s against existing `Utterance`s (matched by `note_ids` overlap).
+Without user intervention, `Window`s flow directly into the Compiler and are discarded — no persistent entity is created. All user interventions (curve strokes, engine output adoption) write to `Track.data_channels` as `LayerChunk`s, orthogonal to Slicer windows.
 
 - `Note.slice_flag` (`:auto | :force_slice | :force_merge`) is an input signal for the slicer (manual overrides + rest-gap hints), not a runtime sync channel.
 - The rendering engine consumes `RenderRequest` (which carries notes, data_slices, tempo_segments, and declarations); it does not need to understand the Note domain model.
-- `Utterance` determines rasterization boundaries for both phonemes and curves.
-- **Revised during ADR-009 implementation**: Utterance no longer holds `declarations` or `note_phoneme_map`. Port declarations live on `Track.presets[active_preset]` and are injected at compile time. The `note↔phoneme` mapping is a runtime Projection produced by the Kernel. `Window` was introduced as the Slicer's direct output (replacing the old Notes→Utterance shortcut), and Utterance materialization was made lazy — gated on user intervention.
+- `Window` determines rasterization boundaries for both phonemes and curves.
+- **Revised during ADR-009 implementation**: Port declarations live on `Track.presets[active_preset]` and are injected at compile time. The `note↔phoneme` mapping is a runtime Projection produced by the Kernel. `Window` is the Slicer's direct output — no intermediate entity is materialized.
 
 ### ADR-002 — Curves are a Track-level layer
 
-All time-varying data — curves, adopted engine output, timing — lives in `Track.data_channels` as `[LayerChunk.t()]`, keyed by `Channel.channel()`. Each `LayerChunk` carries `source: :user | :adopted`; within the same channel, `:adopted` chunks override `:user` chunks on overlapping intervals. Data is orthogonal to Utterance/Segment boundaries and survives re-slicing.
+All time-varying data — curves, adopted engine output, timing — lives in `Track.data_channels` as `[LayerChunk.t()]`, keyed by `Channel.channel()`. Each `LayerChunk` carries `source: :user | :adopted`; within the same channel, `:adopted` chunks override `:user` chunks on overlapping intervals. Data is orthogonal to Window/Segment boundaries and survives re-slicing.
 
-Rationale: Utterances are derived from Notes; forcing curves to live inside Utterances would tie curve continuity to a derivation artifact.
+Rationale: Windows are derived from Notes; forcing curves to live inside a slice entity would tie curve continuity to a derivation artifact.
 
 ### ADR-003 — Control points authoritative, rasterization is cache
 
@@ -133,7 +128,7 @@ Hand-drawn strokes from the UI are simplified (Douglas-Peucker or similar) into 
 
 The Kernel does not hardcode the semantics of any curve parameter. At compile time, the Compiler:
 
-1. Slices the relevant `Curve.Cluster`s into the Utterance's tick range.
+1. Slices the relevant `Curve.Cluster`s into the Window's tick range.
 2. Rasterizes the slice to a binary payload tagged with `param_name`.
 3. Emits a `data_intervention` keyed by `PortRef`.
 
@@ -206,7 +201,7 @@ Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
 
 - `EquinoxDomain.Port.Declaration` — serializable adapter intent: scope, hape discriminator, operate module, constraints, fallback.
 - `EquinoxDomain.Port.Resolver.Operate` — behaviour with single callback `merge/2`. Shares contract with `OrchidIntervention.Operate`. Built-in implementations: `Override`, `Delta`, `Replace`.
-- `Track.presets` + `Track.active_preset` added; `Utterance.declarations` removed, replaced with `note_ids`/`start_tick`/`duration_tick`; `Utterance.note_phoneme_map` removed.
+- `Track.presets` + `Track.active_preset` added; declarations live on `Track.presets[active_preset]` (no longer on a slice entity). `note_phoneme_map` moved to the Kernel Projection layer.
 - `Phoneme` reduced to pure identity `{symbol, type}` — timing moves to `TimedEvent` in resolved layer. Consonant preutterance (old `note_offset`) computed by duration calculate service at Projection stage.
 
 **Pending (Phase 2 — Kernel):**
@@ -291,6 +286,7 @@ Track.notes → Slicer.index/2 → [Window] → RenderRequest.from_window/3 → 
 - ADR-001 materialization clause: superseded. Slicer is a pure projection `Notes → [Window]`.
 - ADR-002 wording: curves (and all time-varying interventions) derive alongside Windows, never owned by a persistent slice entity.
 - ADR-009 Utterance-materialization clause: removed. `Track.presets` and the Declaration → Projection → Resolution pipeline are unaffected.
+- **Rationale for retiring Utterance**: Utterance coupled the core domain to phonetics-backend assumptions (phoneme timing, G2P pipelines). Removing it moves phonetics-support code to external adapters/plugins, enabling multi-backend engine adaptation (DiffSinger, NNSVS, custom G2P, etc.) without domain changes.
 - Session no longer maintains `utterance_id ↔ segment_id` mapping.
 - Phase milestones referencing Utterance materialization (1b/1c) are updated to reference Window + DataChannels.
 
@@ -300,7 +296,7 @@ Track.notes → Slicer.index/2 → [Window] → RenderRequest.from_window/3 → 
 
 - Do not let `EquinoxDomain.*` modules import, alias, or use anything from `Equinox.Kernel.*`, `Equinox.Session.*`, or `Equinox.Editor.*`. Domain is a zero-dependency project.
 - Do not add `graph`, `cluster`, or `synth_override` fields to Domain structs. These are Kernel compile-time concepts; they belong in `RenderRequest` (ADR-006).
-- Do not re-run `Slicer` implicitly during Editor note operations. Slicing is an explicit one-way projection: `Notes → Slice → Utterance` (ADR-001).
+- Do not re-run `Slicer` implicitly during Editor note operations. Slicing is an explicit one-way projection: `Notes → [Window]` (ADR-001, ADR-010).
 - Do not feed raw per-frame drawing samples into Editor or History. Simplify to control points first via Douglas-Peucker (ADR-003).
 
 ### Kernel Guidelines
@@ -322,23 +318,24 @@ Current priority: **Phase 1a → 1b → 1c → 1d (Domain MVP) → Phase 2 (Doma
 
 ```
 Phase 1a ─── Standalone Domain Models (domain/)
-  Key.TwelveET, Note (pitch/duration/timing), Curves (Chunk/Layer/RasterCache),
-  Timeline (TimeSigMap, Tempo.Linear, Tempo.Curve), Douglas-Peucker simplification.
+  Key.TwelveET, Note (pitch/duration/timing).
+  Deferred: Curves rasterization/simplification (pending ADR-010 apply_intervention design),
+  Tempo.Curve (reserved for Kernel NIF integration verification).
 
 Phase 1b ─── Aggregate Roots (domain/)
-  Track, Project, Utterance, Phoneme linkage.
+  Track, Project, Phoneme linkage.
   Note CRUD at Track level.
 
-Phase 1c ─── Slicer & Materialization (domain/)
-  Note.slice_flag, Slicer: Notes → Utterance projection,
-  Track note CRUD with slice repair, Segment (rendering context VO).
+Phase 1c ─── Slicer (domain/)
+  Note.slice_flag, Slicer: Notes → [Window] projection,
+  Track note CRUD with slice repair.
 
 Phase 1d ─── Polish & Serialization (domain/)
   Editing commands, Session/RenderRequest, Pickle + comprehensive tests.
 
 Phase 2 ──── Domain-Kernel Integration (kernel/)
   Replace legacy Domain types with the new domain project.
-  Adapt Editor / Session / Compiler to Utterance + RenderRequest.
+  Adapt Editor / Session / Compiler to Window + RenderRequest.
   Curve compilation pipeline.
 
 Phase 3 ──── UI Shell Polish (ui_shell/)
@@ -357,37 +354,37 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 **Completed sector list:**
 - Core timeline: `Tick`, `TempoMap`, `Tempo.Step`, `Grid`
 - Utilities: `Util.Model`, `Util.Object`, `Util.ID`, `Util.Pickle`, `Helpers`
-- Score data structures: `Note` (partial), `Phoneme`, `Utterance` (skeletal), `Track` (skeletal, +`presets`/`active_preset`), `Project` (skeletal)
+- Score data structures: `Note` (partial), `Phoneme`, `Track` (skeletal, +`presets`/`active_preset`), `Project` (skeletal)
 - VO: `Segment` (rendering context)
-- Curve skeletal: `Curve.Chunk`
+- Curve: `Curve.Chunk` (struct + adapter/container pattern); `Curve.Cluster` (skeletal); rasterization & simplification deferred (ADR-010 pending)
 - Key: behaviour + Inner protocol + `Key.TwelveET` implementation — MIDI/frequency conversion complete; staff notation (`from_score`/`to_score`) deferred to post-MVP(signatures reserved, stubs return `{:error, :not_implemented}`)
 
 ### Phase 1a — Standalone Domain Models (domain/)
 5. **Note (standalone)** — Note struct with duration, pitch, timing (`start_tick`, `duration_tick`). Pure value fields; no Track-level concerns.
-6. **Timeline** — `TimeSigMap.compile/1`, `Tempo.Linear`, `Tempo.Curve`. Musical time ↔ physical time conversion.
-7. **Curves (pure data)** — `Curve.Chunk`, `Curve.Cluster`, `Curve.RasterCache` + rasterizer (linear / cubic / step interpolation) + stroke simplification (Douglas-Peucker).
+6. **Timeline** — `TimeSigMap.compile/1`, `Tempo.Linear`. Musical time ↔ physical time conversion. `Tempo.Curve` deferred — reserved as a Kernel NIF integration verification point.
+7. **Curves (pure data)** — `Curve.Chunk` (done). `Curve.Cluster` (skeletal — needs design clarification with `data_channel`). RasterCache, rasterizer, Douglas-Peucker simplification: **deferred** — these plug into ADR-010's `apply_intervention` / `apply_approve` flow, which needs further design before implementation.
 
 ### Phase 1b — Aggregate Roots (domain/)
-8. **Track** — Notes map (`%{note_id => Note.t()}`) + `data_channels: %{channel => [LayerChunk]}`. Note CRUD at Track level (insert, delete, split, merge, update). Unified data channel management (curves + adopted data).
-9. **Project** — Tracks map + project-level metadata. Track CRUD.
-10. **Utterance & Phoneme** — Utterance groups contiguous notes by time window. Phoneme is a pure identity VO (`symbol`, `type`); timing lives in `TimedEvent` (ADR-009). Utterance determines rasterization boundaries.
+8. **Track** — Notes map (`%{note_id => Note.t()}`) + `data_channels: %{channel => [LayerChunk]}`. Note CRUD at Track level (insert, delete, split, merge, update). **Blocked**: `data_channel` ↔ `notes` relationship needs design clarification before Track operations can be finalized.
+9. **Project** — Tracks map + project-level metadata. Track CRUD. **Blocked on Track completion**.
+10. **Phoneme** — Phoneme is a pure identity VO (`symbol`, `type`); timing lives in `TimedEvent` (ADR-009). Slicer-produced `Window` determines rasterization boundaries.
 
-### Phase 1c — Slicer & Materialization (domain/)
-11. **Slicer** — `Note.slice_flag` (`:auto | :force_slice | :force_merge`). Rest-gap slicing. `Notes → Slice → Utterance` projection. Materialization as an explicit step.
-12. **Track slice repair** — After insert/delete/split/merge/update, auto-repair `slice_flag` in affected interval.
+### Phase 1c — Slicer (domain/)
+11. **Slicer** — `Note.slice_flag` (`:auto | :force_slice | :force_merge`). Rest-gap slicing. `Notes → [Window]` projection. No materialization step — Window is transient.
+12. **Track slice repair** — After insert/delete/split/merge/update, auto-repair `slice_flag` in affected interval. **Blocked on Track note CRUD**.
 13. **Segment** — Rendering context VO: acoustic boundaries, `phonemes`/`curves`. The Domain defines the struct; fields are populated by the Kernel at compile time and do not participate in serialization (see ADR-007).
 
 ### Phase 1d — Polish & Serialization (domain/)
-14. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo.
-15. **Session / RenderRequest** — `Session` (selection, clipboard, viewport) and `Command.RenderRequest`.
-16. **Pickle + comprehensive tests** — `Pickle` protocol implementations for all domain types + full test coverage.
+14. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo. **Blocked on Track + Project CRUD**.
+15. **Session / RenderRequest** — `Session` (selection, clipboard, viewport) — **manual review in progress**; `Command.RenderRequest` done.
+16. **Pickle + comprehensive tests** — `Pickle` protocol implementations for all domain types + full test coverage. Curve type Pickle **deferred** pending curve model stabilization.
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
 17. **Domain dependency**: Add `:equinox_domain` to kernel, delete legacy `Equinox.Domain.*`, replace all references.
-18. **Slicer → Utterance**: Rewrite Slicer for new `slice_flag` model; `materialize_utterances` replaces `materialize_segments`.
+18. **Slicer → Window**: Rewrite Slicer for new `slice_flag` model; Window-based slicing replaces `materialize_segments`.
 19. **Track API**: `insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note` with automatic slice repair.
-20. **RenderRequest + AdoptRequest**: Introduce `RenderRequest` as Compiler's sole input (replaces SegmentContext). `RenderRequest.from_window/3` and `from_utterance/3` slice `data_channels`, resolve adopted-over-user overlaps, and pull tempo_segments + declarations. `AdoptRequest.adopt/2` writes engine output back to `Track.data_channels` as `:adopted` LayerChunks.
-21. **Editor / Session adaptation**: Editor ops → Track API → explicit materialization. Session manages `utterance_id ↔ segment_id` mapping.
+20. **RenderRequest + AdoptRequest**: Introduce `RenderRequest` as Compiler's sole input (replaces SegmentContext). `RenderRequest.from_window/3` slices `data_channels`, resolves adopted-over-user overlaps, and pulls tempo_segments + declarations. `AdoptRequest.adopt/2` writes engine output back to `Track.data_channels` as `:adopted` LayerChunks.
+21. **Editor / Session adaptation**: Editor ops → Track API. Session manages selection, clipboard, and viewport state.
 
 ### Phase 3 — UI Shell (ui_shell/)
 22. **Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances.
@@ -396,14 +393,14 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
     - Frontend: WebComponent wrapping for SvelteFlow, third-party UI `.js` via dynamic `<script type="module">`.
     - Backend: Distributed Erlang — isolated BEAM `Engine Node` per Session for Orchid graph execution, hot-load `.beam` modules without risking the Phoenix `Web Node`.
 
-## Slicer Semantics & Utterance Materialization
+## Slicer Semantics
 
 ### Slicer Scenarios
 
 - **Continuous Notes Import**: MIDI/ustx import produces dense note sequences. Default behavior: derive initial slice boundaries from rest-gap detection (`min_rest_ticks` threshold). This covers the majority of initial modeling.
 - **Manual Override**: User can explicitly mark a note with `:force_slice` or `:force_merge`, overriding automatic derivation.
 - **Edit Repair**: After split/merge/drag/time-change operations, locally recalculate and repair `slice_flag` to ensure slices don't dangle or overlap.
-- **Materialization**: Slice semantics are note-level; generating/updating `Utterance` is a separate, explicit step — never an implicit side effect of note edits. 💡
+- **Window Semantics**: Slice semantics are note-level; `Window` is a transient projection — never a persisted entity. User interventions write to `Track.data_channels` as `LayerChunk`s, orthogonal to Slicer windows. 💡
 
 ### `slice_flag` Design
 
@@ -417,7 +414,7 @@ Define `slice_flag` on `EquinoxDomain.Score.Note` as:
 - `:force_slice`: force a slice boundary at this note's start (equivalent to the next note being `{:on_start, new_id}`). A single `:force_slice` note forms a standalone utterance.
 - `:force_merge`: prevent a slice boundary even if a rest gap exceeds the threshold.
 
-The Slicer produces `Window` structs — transient time-window descriptors. `Utterance` is lazily materialized from `Window` only upon user intervention (Adoption or manual tool). The rendering engine works with `Utterance` + curve slices; it does not need to understand the Note domain model.
+The Slicer produces `Window` structs — transient time-window descriptors. `Window` is never persisted; it flows directly into the Compiler for preview/playback. The rendering engine works with `Window` + curve slices via `RenderRequest`; it does not need to understand the Note domain model.
 
 ### Note Editing Functions (`EquinoxDomain.Score.Note`)
 
@@ -449,20 +446,14 @@ After each track edit, repair algorithm:
 4. Preserve user `:force_slice` / `:force_merge` overrides where possible.
 5. Ensure consistency: no orphaned boundaries.
 
-### Materialization Flow
-
-Editor/Session layer (steps marked `[auto]` / `[explicit]`):
+### Data Flow
 
 1. [auto] Track edits update `track.notes` with repaired `slice_flag`.
-2. [auto] Slicer produces `Window` structs: `Notes → Slice → [Window]`.
-3. [lazy] No `Utterance` is created unless user intervenes (Adoption or manual tool).
-   Windows flow directly into the Compiler for preview/playback.
-4. [explicit] On user intervention, the affected `Window` is materialized into an `Utterance`
-   with persistent `id`, `track_id`, `note_ids`, `start_tick`, `duration_tick`.
-5. [explicit] On re-slice, new `Window`s are matched against existing `Utterance`s
-   by `note_ids` overlap; matched `Utterance`s are preserved (retaining user customizations).
-6. [auto] Compiler renders from `Utterance` (when present) or `Window` (preview) —
-   both determine rasterization boundaries for phonemes and curves.
+2. [auto] Slicer produces `Window` structs: `Notes → [Window]`.
+3. [auto] `Window`s flow into `RenderRequest.from_window/3` → `Compiler.compile/1` for preview/playback.
+4. [explicit] User interventions (curve strokes, engine output adoption) write to `Track.data_channels` as `LayerChunk`s — orthogonal to Slicer windows.
+5. [auto] On re-slice, new `Window`s are generated from scratch; `data_channels` survive unaffected.
+6. [auto] Compiler renders from `RenderRequest` (which carries `Window` note_ids + `data_channels` slices) — `RenderRequest` determines rasterization boundaries for phonemes and curves.
 
 ## Curves
 
@@ -471,7 +462,7 @@ Split into Phase 1 (domain) and Phase 2 (kernel integration).
 ### Goals
 
 1. Continuous parameter curves become a first-class, **Track-scoped** data layer.
-2. Utterance is a data container (`note_ids`, `start_tick`, `duration_tick`) materialized lazily; Segment is a pure rendering context VO.
+2. Window is the Slicer's transient output (`note_ids`, `tick_start`, `tick_end`); Segment is a pure rendering context VO.
 3. Compiler becomes the sole translator from `Curve.Cluster` → `data_intervention`.
 4. Kernel stays semantics-agnostic about individual curve parameters; consumption is Orchid Hook territory.
 
@@ -484,7 +475,7 @@ Split into Phase 1 (domain) and Phase 2 (kernel integration).
 
 ### Segment Shrinkage
 
-After curves integration, `%EquinoxDomain.Segment{}` retains only rendering-context fields: `track_id, utterance_id, start_tick, end_tick, core_start_sec, core_end_sec, context_start_sec, context_end_sec, phonemes, curves` (the `phonemes` and `curves` fields are populated by the Kernel at compile time and are not serialized).
+After curves integration, `%EquinoxDomain.Segment{}` retains only rendering-context fields: `track_id, start_tick, end_tick, core_start_sec, core_end_sec, context_start_sec, context_end_sec, phonemes, curves` (the `phonemes` and `curves` fields are populated by the Kernel at compile time and are not serialized).
 
 Removed from Kernel's legacy Segment: `curves`, `synth_override`, `graph`, `cluster`. These move to `RenderRequest` (compile-time) or `Track.data_channels`.
 
@@ -498,7 +489,7 @@ Strokes are assumed already-simplified control-point chunks (see ADR-003). The E
 
 ### Compiler Integration
 
-1. Caller builds one `RenderRequest` per `(Track, Utterance)` pair via `RenderRequest.from_utterance/3`, which slices `data_channels`, resolves adopted-over-user overlaps, and pulls tempo_segments + declarations.
+1. Caller builds one `RenderRequest` per `Window` via `RenderRequest.from_window/3`, which slices `data_channels`, resolves adopted-over-user overlaps, and pulls tempo_segments + declarations.
 2. `Compiler.compile/1` dispatches data_slices to `data_interventions`, keyed by `PortRef`. The `PortRef → Orchid key` translation reuses existing `Graph.PortRef.to_orchid_key/1`.
 3. Payload shape given to the Hook:
    ```text
@@ -511,12 +502,12 @@ Strokes are assumed already-simplified control-point chunks (see ADR-003). The E
 
 Pure data modules inside `domain/`, no impact on Kernel:
 
-- [ ] Complete `EquinoxDomain.Curve.Chunk` + unit tests.
+- [x] Add `EquinoxDomain.Curve.Chunk` (struct + adapter/container pattern).
 - [x] Add `EquinoxDomain.LayerChunk` + unit tests.
-- [ ] Add `EquinoxDomain.Curve.RasterCache` + rasterizer (linear / cubic / step interpolation).
-- [ ] Add stroke-simplification helper (Douglas-Peucker, tunable epsilon).
+- [ ] Add `EquinoxDomain.Curve.RasterCache` + rasterizer — **deferred**: plugs into ADR-010 `apply_intervention` / `apply_approve` flow.
+- [ ] Add stroke-simplification helper (Douglas-Peucker) — **deferred**: same as above.
 - [x] Add `data_channels` field to `EquinoxDomain.Score.Track`, default `%{}`.
-- [ ] Implement `Pickle` serialization for all curve types.
+- [ ] Implement `Pickle` serialization for all curve types — **deferred**: pending curve model stabilization.
 
 Each step ends on a green `cd domain && mix precommit`.
 
@@ -524,12 +515,11 @@ Each step ends on a green `cd domain && mix precommit`.
 
 After Domain is stable:
 
-- [x] Introduce `EquinoxDomain.Command.RenderRequest` (wraps notes + time_range + tempo_segments + data_slices + declarations).
+- [x] Introduce `EquinoxDomain.Command.RenderRequest` (wraps notes + time_range + tempo_segments + data_slices + declarations; `from_window/3` done).
+- [x] Add `EquinoxDomain.Command.AdoptRequest` + `adopt/2` — basic implementation done (silent overlap trim); conflict-aware two-phase flow pending (see ADR-010).
 - [ ] Remove `curves`, `synth_override`, `graph`, `cluster` from legacy `%Segment{}` and its `Jason.Encoder` impl.
 - [ ] Add legacy-tolerant loader in `Project.from_json/1` for old payloads.
-- [ ] Add `EquinoxDomain.Command.AdoptRequest` + `adopt/2` for engine output → Track write-back.
-- [x] Add `EquinoxDomain.Command.RenderRequest` (from_window/3, from_utterance/3).
-- [ ] Update `Session.Context.dispatch_to_plans/1` to build `RenderRequest` per utterance via `RenderRequest.from_utterance/3`.
+- [ ] Update `Session.Context.dispatch_to_plans/1` to build `RenderRequest` per Window via `RenderRequest.from_window/3`.
 - [ ] Emit curve `data_interventions` in the Compiler.
 - [ ] Thread curve operations through `Editor.History.Operation`.
 
