@@ -224,6 +224,62 @@ Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
 - Only explicit Adoption Commands convert artifacts into persistent, undoable Domain facts.
 - Domain stores declarations and user-authored deltas; Kernel executes adapters and resolves.
 
+### [WIP]ADR-010 - Retire Utterance: Window/Slice as transient render boundary, Track data channels as persistent intervention storage
+
+**Background**:
+
+In early design, Utterance was envisioned as a persistent entity situated between the Note and the rendering pipeline, used for:
+
+* Representing a continuous window of notes divided by the Slicer
+* Serving as an anchor point for users editing phonemes, curves, timing, and other data
+* Providing stable rendering boundaries for the Kernel/Compiler
+
+However, with the implementation of ADR-009, the responsibilities of Utterance were gradually fragmented:
+
+* Slice boundaries can be temporarily represented by Slicer.Window / Slice
+* User edits and adoption results can be directly persisted to Track.data_channels
+* Rendering input can be constructed using RenderRequest.from_window/3
+* Cached identity can be generated using RenderRequest fingerprint or slice fingerprint
+
+Therefore, retaining Utterance would introduce additional synchronization issues.
+
+**Decision**:
+
+Equinox Domain no longer introduces or persists Utterance.
+
+The output of the Slicer is a temporary Window/Slice:
+
+```text
+Track.notes
+  → Slicer.index/2
+  → [Window | Slice]
+  → RenderRequest.from_window/3
+  → Kernel Compiler
+```
+
+A Window/Slice represents the timeframe and set of notes required for a single render, preview, cache build, but it:
+
+* Has no persistent ID
+* Does not enter the project file
+* Does not support user edits
+* Is not used as a Domain aggregate root
+* Does not undergo materialization after reslicing
+
+All user involvement, adoption results, and engine output data are uniformly written to:
+
+```elixir
+Track.data_channels :: %{Channel.channel() => [LayerChunk.t()]}
+```
+
+e.g.:
+
+* User hand-draws pitch curve
+* User corrects phoneme timing
+* User adopts engine-generated duration
+* User overrides energy/breathiness/phoneme sequence
+
+All of these are expressed as LayerChunk on a certain channel.
+
 ## 8. Do Not Do 💡
 
 ### Domain Red Lines (permanent)
