@@ -43,7 +43,8 @@ defmodule EquinoxKernel.MixProject do
       {:orchid, "~> 0.6"},
       {:orchid_symbiont, "~> 0.2"},
       {:orchid_stratum, "~> 0.2"},
-      {:orchid_intervention, "~> 0.1"},
+      {:orchid_intervention, "~> 0.2"},
+      {:oi, "~> 0.7"},
       ## NIF
       # Rust? Zig?
       ## 序列化
