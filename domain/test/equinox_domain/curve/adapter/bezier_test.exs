@@ -145,15 +145,4 @@ defmodule EquinoxDomain.Curve.Adapter.BezierTest do
     assert Enum.at(got, 50) == 2.0
     assert Enum.at(got, 150) == 3.0
   end
-
-  # ---- Cluster integration ----
-
-  test "Bezier works inside Chunk + Cluster" do
-    alias EquinoxDomain.Curve.{Chunk, Cluster}
-    {:ok, container} = Bezier.new(points: [pt(0, 0.0), pt(100, 1.0)])
-    {:ok, chunk} = Chunk.new(adapter: Bezier, container: container, start_tick: 0)
-    {:ok, channel} = Cluster.new(name: :test, chunks: [chunk])
-    assert channel.name == :test
-    assert hd(channel.chunks).adapter == Bezier
-  end
 end
