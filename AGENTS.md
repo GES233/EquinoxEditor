@@ -290,9 +290,13 @@ Track.notes → Slicer.index/2 → [Window] → RenderRequest.from_window/3 → 
 - Session no longer maintains `utterance_id ↔ segment_id` mapping.
 - Phase milestones referencing Utterance materialization (1b/1c) are updated to reference Window + DataChannels.
 
+### ADR-011 — Boundary Ownership (reserved)
+
+Phrase-boundary ownership and preutterance overflow semantics. Cache strategy delegated to OrchidStratum; see ADR-010 §Caching Strategy for cross-phrase hash bypass mechanics.
+
 ### ADR-012 — Phoneme Timing Delta: Identity-Anchored Intervention
 
-**Status**: draft | **Date**: 2026-07-02 | **Extends**: ADR-009 (Operate.Delta), ADR-010 (EventSeq entity)
+**Status**: spike-validated | **Date**: 2026-07-02 | **Extends**: ADR-009 (Operate.Delta), ADR-010 (EventSeq entity)
 
 #### Context
 
@@ -382,8 +386,9 @@ Domain never touches engines, never interprets phoneme semantics. Identity strin
 #### Caching Strategy (cross-phrase bypass + intra-phrase delta-rebase)
 
 Phrase-level is the correct caching granularity, not frame-level. Two reasons:
+
 1. DiffSinger-class acoustic models are phrase-conditioned (attention/global conditioning) — any change within a phrase can affect all output frames. Frame-level incrementality is illusory at the model level.
-2. ADR-011 boundary ownership operates at phrase boundaries: preutterance overflow from phrase B into phrase A changes A's context/core boundaries → A's hash changes → A re-renders.
+2. OrchidStratum phrase-boundary ownership: preutterance overflow from phrase B into phrase A changes A's context/core boundaries → A's hash changes → A re-renders (see ADR-011).
 
 Two mechanisms, separate concerns:
 - **Hash bypass** (OrchidStratum, cross-phrase): which phrases need re-rendering? Unchanged phrases hit Stratum cache.
