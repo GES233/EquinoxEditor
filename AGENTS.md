@@ -391,7 +391,98 @@ Two mechanisms, separate concerns:
 
 Finer-grain incrementality (e.g., re-run vocoder without re-running acoustic model) is a pipeline *stage-split* concern, not a cache-granularity concern.
 
-**Resolves:** Phase 1b blocker "`data_channel` ↔ `notes` relationship" for the timing channel. Non-timing channels (pitch, energy — `shape: :continuous`) use absolute tick anchoring and are outside this ADR's scope.
+**Resolves:** Phase 1b blocker "`data_channel` ↔ `notes` relationship" for the timing channel. Non-timing channels (pitch, energy — `shape: :continuous`) use absolute tick anchoring and are outside this ADR's scope(resolced by ADR-013).
+
+### ADR-013 — Generalized Intervention Anchoring: Anchor/Operate Orthogonality
+
+#### Status
+
+Proposed. Requires spike validation on a second channel (Frame) before freezing.
+
+#### Context
+
+ADR-012 solved intervention staleness for *phoneme timing* via identity-anchored deltas with explicit rebase. The underlying problem, however, is channel-agnostic: **whenever upstream data changes, how do user interventions survive?**
+
+```text
+intervention = (anchor, delta)
+upstream change → projection recompute → anchor re-match → {rebased deltas, conflicts}
+```
+
+Other channels face the same lifecycle — notably structural segmentations produced by heuristic engines (e.g., Frame in Frame/Content theory), which are engine-generated, user-tweakable, and invalidated by upstream re-segmentation. This ADR extracts the ADR-012 mechanism into a reusable contract, of which `PhonemeTimingDelta` becomes the first instance.
+
+#### Core Decisions
+
+**1. `anchor` and `operate` are orthogonal dimensions on `Declaration`.**
+
+- `operate` (existing, ADR-009): how base + delta merge **at resolve time**.
+- `anchor` (new): how deltas **survive base changes** across projection recomputes.
+- Both are module references stored on `EquinoxDomain.Port.Declaration`. Domain stores them; Kernel executes them.
+
+**2. `Anchor` is a Domain behaviour with two callbacks.**
+
+```elixir
+defmodule EquinoxDomain.Port.Intervention.Anchor do
+  @callback identities(projection :: term()) :: [identity :: term()]
+  @callback rebase(deltas :: [delta], old :: [identity], new :: [identity]) ::
+              {rebased :: [delta], conflicts :: [conflict]}
+end
+```
+
+- `identity` remains an **adapter-owned opaque term** (ADR-012 rule 1). Domain requires only determinism and comparability, never interprets the shape.
+- `rebase/3` is a pure function. Vanished identities become explicit conflict markers — Domain detects, never silently discards (ADR-012 rule 3, generalized).
+
+**3. Built-in anchor kinds: exactly two, no more until a third use case exists.**
+
+| Anchor | Shape affinity | Rebase behavior |
+|---|---|---|
+| `Anchor.AbsoluteTick` | `:continuous` (pitch, energy, …) | No-op — absolute tick anchoring survives upstream changes trivially |
+| `Anchor.IdentityPath` | `:event_sequence` (phoneme timing, Frame, …) | Identity re-match; mismatches → conflicts |
+
+Anti-overengineering rule (lesson from the three-layer Pickle protocol): do **not** introduce a grand unified anchor abstraction or a third built-in kind speculatively. Each new anchor kind requires a concrete channel that demands it.
+
+**4. Trigger inversion: rebase is idempotent, not event-driven.**
+
+There is **no taxonomy of "boundary-changing edit events"**. Instead:
+
+- Kernel invokes `rebase/3` unconditionally after every projection recompute.
+- A projection fingerprint (identity-list hash) short-circuits the no-op case: identical fingerprint → skip rebase entirely.
+- This unifies with ADR-012's phrase-level caching: Stratum hash hit → projection not recomputed → rebase never reached; hash miss → projection recomputed → rebase runs automatically. **One fingerprint mechanism serves both cache bypass and intervention survival.**
+
+**5. Identity stability is the adapter's obligation, outside this mechanism.**
+
+Generalizing ADR-012's "syllable-rooted, not note-rooted" lesson:
+
+> **Identity must be rooted in the most stable upstream entity the adapter can name.**
+
+If an engine's segmentation is unstable (small input changes reshuffle all identities), rebase degrades into a conflict storm. This is an adapter/engine defect — fix segmentation stability or identity design, never patch the anchoring mechanism with fuzzy matching.
+
+**6. `PhonemeTimingDelta` is retrofitted as the first `Anchor.IdentityPath` instance.**
+
+ADR-012's struct and `rebase/2` logic are preserved; they become the reference implementation behind the behaviour. No semantic change — only the contract moves from module-specific to behaviour-conformant.
+
+#### Layered Responsibility
+
+| Layer | Responsibility |
+|---|---|
+| Domain | delta structs, `Anchor` behaviour, built-in anchor implementations (pure rebase logic) |
+| Kernel Resolution | projection recompute → fingerprint compare → `rebase/3` → surface conflicts to Session/UI |
+| Adapter | identity generation (`projection → [identity]`); guarantees determinism and stability |
+| UI Shell | conflict presentation and user-decided resolution (per ADR-010 rule 8) |
+
+#### Spike Plan (blocking before freeze)
+
+Mirror ADR-012's spike discipline, targeting the Frame channel:
+
+- **Spike A (Domain)**: `Anchor.IdentityPath.rebase/3` against Frame-shaped identities — survival, mismatch conflict, reorder scenarios.
+- **Spike B (Adapter)**: Frame identity **stability** under heuristic-engine recompute — perturb inputs, measure identity churn. If churn is high, the spike verdict is "fix the engine's identity design", not "extend the mechanism".
+- **Spike C (Kernel)**: fingerprint short-circuit — verify rebase is skipped on identical projections and that this composes with Stratum hash bypass.
+
+#### Supersedes / Consequences
+
+- ADR-012 is **not** superseded; it is narrowed to "the phoneme-timing instance of ADR-013" plus its caching-strategy notes (which ADR-013 rule 4 now generalizes).
+- ADR-009's `Declaration` gains an `anchor` field. Existing declarations without one default by shape: `:continuous → AbsoluteTick`, `:event_sequence → IdentityPath`.
+- ADR-012's closing note ("non-timing channels use absolute tick anchoring and are outside this ADR's scope") is resolved: they are now inside ADR-013's scope as the trivial anchor kind.
+- Resolves the open Phase 1b question "anchor semantics for `:continuous` channels" (Milestone 8) — answer: absolute tick, no-op rebase, no new mechanism.
 
 ## 8. Do Not Do 💡
 
@@ -468,7 +559,7 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 7. **Curves (pure data)** — `Curve.Chunk` (done). `Curve.Cluster` (skeletal — needs design clarification with `data_channel`). RasterCache, rasterizer, Douglas-Peucker simplification: **deferred** — these plug into ADR-010's `apply_intervention` / `apply_approve` flow, which needs further design before implementation.
 
 ### Phase 1b — Aggregate Roots (domain/)
-8. **Track** — Notes map (`%{note_id => Note.t()}`) + `data_channels: %{channel => [LayerChunk]}`. Note CRUD at Track level (insert, delete, split, merge, update). **Partially resolved by ADR-012**: timing channel (`shape: :event_sequence`) uses identity-anchored delta. Non-timing channels (`shape: :continuous`, e.g., pitch/energy) still need anchor semantics (future ADR).
+8. **Track** — Notes map (`%{note_id => Note.t()}`) + `data_channels: %{channel => [LayerChunk]}`. Note CRUD at Track level (insert, delete, split, merge, update). **Partially resolved by ADR-012**: timing channel (`shape: :event_sequence`) uses identity-anchored delta. Non-timing channels (`shape: :continuous`, e.g., pitch/energy) still need anchor semantics (resolved in ADR-013).
 9. **Project** — Tracks map + project-level metadata. Track CRUD. **Blocked on Track completion**.
 10. **Phoneme** — Pure identity VO (`symbol`, `type`); timing lives in `TimedEvent` (ADR-009). User timing edits as `PhonemeTimingDelta` (ADR-012). Slicer-produced `Window` determines rasterization boundaries.
 
