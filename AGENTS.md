@@ -97,397 +97,47 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 ## 7. Architecture Decision Records 💡
 
-Short, load-bearing decisions. New Agents MUST read these before touching Kernel code.
+Domain / sequence / intervention / windowing decisions that belong to the **zongzi** kernel live **in the zongzi repo** (no numeric ADR ids):
 
-### ADR-001 — Slicer is a one-way projection (Notes → Window)
+`../zongzi/docs/zh/spec/decisions/` (or your checkout of [SynapticStrings/Zongzi](https://github.com/SynapticStrings/Zongzi) → `docs/zh/spec/decisions/`).
 
-> **Superseded by ADR-010.** The `Utterance` entity described below was retired. Rationale: Utterance originally carried phoneme timing and engine-adopted data, coupling the core domain to a specific phonetics backend. Moving phonetics-support code out of the domain (into external adapters/plugins) enables multi-backend engine adaptation — DiffSinger, NNSVS, world-level synthesizers, or custom G2P pipelines can plug in without the domain knowing their internals. The `Window` struct (transient, no identity, not serialized) is now the Slicer's sole output; all persistent interventions live in `Track.data_channels`.
+Index: `decisions/README.md`.
 
-`EquinoxDomain.Score.Slicer` consumes a flat list of `Note`s and produces `Window` structs — transient time-window descriptors. A `Window` is a pure slice artifact; it has no identity and is not persisted.
+| zongzi decision file | Equinox concern |
+|---|---|
+| `slicer-is-projection.md` | Notes → transient windows; no phrase entity |
+| `transient-render-closure.md` | Interventions not keyed by window id |
+| `windowing-post-rebase.md` | post-rebase `Strategy.window/1`; Engine check/render (`[Segment]`) |
+| `control-points-authoritative.md` | Curve points vs raster cache |
+| `key-behaviour-and-protocol.md` | Key dual dispatch |
+| `declaration-projection-resolution.md` | Declaration lifecycle |
+| `intervention-semantics.md` | What is / is not an intervention |
+| `anchor-operate-orthogonality.md` | Structural rebase ⊥ semantic resolve |
+| `boundary-ownership-open.md` | Pad pierce / phrase hash — **Host/Kernel choice** |
 
-Without user intervention, `Window`s flow directly into the Compiler and are discarded — no persistent entity is created. All user interventions (curve strokes, engine output adoption) write to `Track.data_channels` as `LayerChunk`s, orthogonal to Slicer windows.
+### Equinox-only (not in zongzi)
 
-- `Note.slice_flag` (`:auto | :force_slice | :force_merge`) is an input signal for the slicer (manual overrides + rest-gap hints), not a runtime sync channel.
-- The rendering engine consumes `RenderRequest` (which carries notes, data_slices, tempo_segments, and declarations); it does not need to understand the Note domain model.
-- `Window` determines rasterization boundaries for both phonemes and curves.
-- **Revised during ADR-009 implementation**: Port declarations live on `Track.presets[active_preset]` and are injected at compile time. The `note↔phoneme` mapping is a runtime Projection produced by the Kernel. `Window` is the Slicer's direct output — no intermediate entity is materialized.
+These remain product / shell / Orchid concerns; they are **not** duplicated into zongzi:
 
-### ADR-002 — Curves are a Track-level layer
+- **Track.data_channels / LayerChunk persistence** — editor storage for curves & adoptions
+- **Domain–Kernel–Session–UI layering** (`EquinoxDomain` vs Kernel import bans)
+- **RenderRequest / Compiler / Orchid Hook** wiring (`param_name → port`)
+- **Raster NIF placement** in Kernel (Domain keeps pure reference)
+- **UI History**, Douglas-Peucker before History, LiveView bridge
+- **Phrase cache implementation** (e.g. Stratum) — constrained by zongzi `boundary-ownership-open`, implemented here
 
-All time-varying data — curves, adopted engine output, timing — lives in `Track.data_channels` as `[LayerChunk.t()]`, keyed by `Channel.channel()`. Each `LayerChunk` carries `source: :user | :adopted`; within the same channel, `:adopted` chunks override `:user` chunks on overlapping intervals. Data is orthogonal to Window/Segment boundaries and survives re-slicing.
+### Historical note
 
-Rationale: Windows are derived from Notes; forcing curves to live inside a slice entity would tie curve continuity to a derivation artifact.
+Former numbered ADR-001…014 text that described pure domain rules was **migrated** into zongzi `docs/zh/spec/decisions/*` and de-Equinox'd (no `EquinoxDomain` / Track / Compiler requirements in the kernel docs). Prefer the zongzi files as source of truth for those rules.
 
-### ADR-003 — Control points authoritative, rasterization is cache
-
-A `CurveChunk` stores sparse control points as truth and a raster cache (`stride` + `binary` samples) as a derivable artifact. Only control points are serialized; raster caches are rebuilt on demand.
-
-Hand-drawn strokes from the UI are simplified (Douglas-Peucker or similar) into control points **before** they enter the editing pipeline / `History`. Raw per-pixel samples never reach History.
-
-### ADR-004 — Curves enter the pipeline as data interventions
-
-The Kernel does not hardcode the semantics of any curve parameter. At compile time, the Compiler:
-
-1. Slices the relevant `Curve.Cluster`s into the Window's tick range.
-2. Rasterizes the slice to a binary payload tagged with `param_name`.
-3. Emits a `data_intervention` keyed by `PortRef`.
-
-An **Orchid Hook** (user-supplied, registered via `Configurator.plugins`) maps `param_name → (target_node, target_port)` and consumes the payload. Validation is delegated to `Orchid.Param` typing.
-
-### ADR-005 — (retired, absorbed into Phase 3; numbering preserved)
-
-### ADR-006 — Domain-Kernel Layered Decoupling
-
-`EquinoxDomain` (in `domain/`) is a separate, zero-dependency Elixir project and the lowest layer. The Kernel can consume Domain types, but the Domain never references the Kernel.
-
-Rules:
-
-- `Equinox.Kernel`, `Equinox.Session`, and `Equinox.Editor` must not appear in the `alias`, `import`, or `use` of any `EquinoxDomain.*` module.
-- The Domain only depends on the standard library and its own internal submodules.
-- The `graph`, `cluster`, `synth_override`, and `curves` fields are Kernel compile-time concepts and must not appear on Domain structs. They live in `RenderRequest` (compile-time) or `Track.data_channels`.
-- Legacy `Equinox.Domain.*` modules in `kernel/` will be replaced by `EquinoxDomain.*` during Phase 2 integration.
-
-Development order: First, complete all Domain modules and tests in `domain/`; then, integrate Domain into Kernel; and finally, handle the UI Shell.
-
-### ADR-007 — Rasterization Strategy (Domain behaviour, Kernel/NIF implementation)
-
-Rasterization of control points into sample sequences is a performance-sensitive one-dimensional time-series operation. The strategy:
-
-1. The Domain layer defines rasterization behavior (pure Elixir reference implementation).
-2. The Kernel/NIF layer can be replaced with a high-performance implementation, using behavior contract constraints on the interface.
-3. All rasterized data is cached at runtime and does not participate in serialization.
-
-Rationale: Domain already possesses complete semantics for one-dimensional time series, but extensive rasterization on BEAM may present a performance bottleneck. Separating the definition and implementation allows for subsequent replacement with NIF without affecting the pure functional properties of the Domain layer.
-
-### ADR-008 — Key is a Behaviour + nested Protocol, not a single Protocol
-
-Pitch representation (`EquinoxDomain.Score.Key`) uses a dual-discipline architecture:
-
-- **`Key` (Behaviour)**: Construction callbacks (`new/1`, `from_score/3`, `from_midi/2`). Module-level dispatch — the caller must know which tuning implementation to invoke. Wrapper functions (`Key.new/2`, `Key.from_midi/3`) proxy to the concrete module for polymorphic factory dispatch.
-- **`Key.Inner` (Protocol)**: Outbound conversion functions (`to_midi/1`, `to_frequency/2`, `to_score/3`). Value-level dispatch — any `Key` struct automatically routes to the correct implementation.
-
-Rationale:
-- Construction needs module-level knowledge (you must choose TwelveET vs Pythagorean vs Just), which suits Behaviour.
-- Conversion needs value-level polymorphism (a Track holds `Key.t()` and calls `Key.Inner.to_midi/1` without knowing the tuning), which suits Protocol.
-- A single Protocol would force construction (which has no `Key.t()` instance yet) into awkward static functions on each module. Separating them keeps each dispatch mode in its natural home.
-
-MVP contract: MIDI/frequency (`to_midi`/`to_frequency`) are fully implemented. Staff notation (`from_score`/`to_score`) signatures are reserved but return `{:error, :not_implemented}` — no runtime cost, no interface breakage when added later.
-
-### ADR-009 — Unified Declaration → Projection → Resolution pipeline
-
-All data that can be both engine-generated and user-modified goes through one lifecycle, regardless of payload shape.
-
-**Two shapes:**
-
-| Shape | Payload | Examples |
-|---|---|---|
-| `:continuous` | `{stride, float32 binary}` | pitch delta, energy, breathiness |
-| `:event_sequence` | `[TimedEvent{at, dur, entity}]` | phoneme timing, note quantization |
-
-**Pipeline:**
-
-```
-Domain Declaration  →  Projection  →  Resolved Input  →  Artifact
-   (what constraints,   (engine         (merged: facts   (engine output,
-    what merge strategy) prediction)     + projection    not Domain fact)
-                                         + overrides)
-                                                    ↓ (optional)
-                                            Adoption Command
-                                                    ↓
-                                             Domain Fact
-```
-
-**Domain types (Phase 1 — done):**
-
-- `EquinoxDomain.Port.Declaration` — serializable adapter intent: scope, hape discriminator, operate module, constraints, fallback.
-- `EquinoxDomain.Port.Resolver.Operate` — behaviour with single callback `merge/2`. Shares contract with `OrchidIntervention.Operate`. Built-in implementations: `Override`, `Delta`, `Replace`.
-- `Track.presets` + `Track.active_preset` added; declarations live on `Track.presets[active_preset]` (no longer on a slice entity). `note_phoneme_map` moved to the Kernel Projection layer.
-- `Phoneme` reduced to pure identity `{symbol, type}` — timing moves to `TimedEvent` in resolved layer. Consonant preutterance (old `note_offset`) computed by duration calculate service at Projection stage.
-
-**Pending (Phase 2 — Kernel):**
-
-- `Equinox.Kernel.Param.Projection` / `Event.Projection` — shape-specific projection carriers.
-- Resolver engine — consumes Declaration + Projection + Domain facts, produces Resolved Input.
-- `RenderRequest` integration — wires data_channel slices + tempo_segments + adoption resolution into `Compiler.compile/1`.
-- Legacy loader for old `%Segment{}` fields (`phoneme_map`, etc.).
-
-**Key rules:**
-
-- Engine outputs are artifacts — never Domain facts by default.
-- Only explicit Adoption Commands convert artifacts into persistent, undoable Domain facts.
-- Domain stores declarations and user-authored deltas; Kernel executes adapters and resolves.
-
-### ADR-010 — Retire Utterance: Window + DataChannels + Artifact Pipeline
-
-#### Summary
-
-`Utterance` is retired. The pipeline becomes:
+When implementing Equinox Host glue:
 
 ```text
-Track.notes → Slicer.index/2 → [Window] → RenderRequest.from_window/3 → Kernel → Artifact → optional AdoptRequest → Track.data_channels
+edit → zongzi Timeline → Anchor.rebase_all → Windowing.Strategy.window → [Segment]
+  → Engine.check(%{segments: ...}) → (user resolution) → Engine.render(%{segments: ...})
 ```
 
-#### Core Decisions
-
-**1. Window is the Slicer's sole output.**
-
-- Transient, immutable, no persistent ID, never serialized.
-- Regenerated from scratch on every Slicer run; no reconciliation logic.
-
-**2. `Track.data_channels` is the sole persistence for all interventions.**
-
-- User-drawn curves, adopted engine output, timing corrections — all stored as `LayerChunk`s keyed by `Channel.channel()`.
-- Editing and adoption anchor to absolute tick ranges, orthogonal to Slicer windows.
-- Re-running the Slicer never mutates `data_channels`.
-
-**3. `RenderRequest.from_window/3` is the only Compiler entry point.**
-
-- Slices `data_channels`, resolves adopted-over-user overlaps, pulls `tempo_segments` + `declarations`.
-- `RenderRequest.from_utterance/3` is removed from the planned API surface.
-- `tempo_segments` lives on `RenderRequest`; tick → physical-time conversion happens in Kernel/Compiler, never in UI.
-
-**4. `Artifact` is the engine's temporary result container.**
-
-- Engine output is an artifact — not a Domain fact by default.
-- Used for UI display, diagnostics, diff, and user approval.
-- Not serialized into the project file.
-- Only explicit adoption writes it back to `Track.data_channels`.
-
-**5. `EventSeq` is a rich domain model for `:event_sequence` payloads.**
-
-- Contains `[TimedEvent.t()]` where each event holds `{at, duration, entity, metadata}`.
-- `TimedEvent` anchors to the outer container (`LayerChunk.start_tick` or `Artifact.time_range`) via relative tick offsets.
-- `EventSeq` owns its own validation, clipping, shifting, and rebasing — `LayerChunk` owns the outer time boundary.
-- Domain checks structural legality only (non-negative durations, valid ordering, etc.). Adapter-specific semantics (phoneme validity, preutterance rules, cross-note constraints) are not Domain's responsibility.
-
-**6. `Declaration.constraints` are opaque adapter config.**
-
-- Domain stores them but never interprets them.
-- Validation of constraint semantics belongs to the Adapter / Kernel plugin that registered the operate signature.
-
-**7. Inference-time merge is plugin-owned.**
-
-- How upstream projection + user intervention + adapter config are combined into a resolved input is decided by each Adapter/Plugin, not by Domain.
-
-**8. Adoption conflict is user-decided.**
-
-- When an `AdoptRequest` overlaps existing user/adopted data, the system must detect the conflict and surface it to the user.
-- Domain does not silently resolve overlap. The user chooses a strategy (replace, keep, fill-gaps, manual merge, etc.) before data is written.
-- The current `AdoptRequest.adopt/2` implementation that silently trims overlapping chunks is temporary and will be replaced by a conflict-aware two-phase flow.
-
-**9. `Segment` retains only rendering-context fields.**
-
-- `{track_id, start_tick, end_tick, core_start/end_sec, context_start/end_sec, phonemes, curves}`.
-- `phonemes` and `curves` are Kernel compile-time caches, not serialized.
-- Identity derives from `{track_id, start_tick, end_tick}` or RenderRequest content hash.
-
-#### Supersedes / Consequences
-
-- ADR-001 materialization clause: superseded. Slicer is a pure projection `Notes → [Window]`.
-- ADR-002 wording: curves (and all time-varying interventions) derive alongside Windows, never owned by a persistent slice entity.
-- ADR-009 Utterance-materialization clause: removed. `Track.presets` and the Declaration → Projection → Resolution pipeline are unaffected.
-- **Rationale for retiring Utterance**: Utterance coupled the core domain to phonetics-backend assumptions (phoneme timing, G2P pipelines). Removing it moves phonetics-support code to external adapters/plugins, enabling multi-backend engine adaptation (DiffSinger, NNSVS, custom G2P, etc.) without domain changes.
-- Session no longer maintains `utterance_id ↔ segment_id` mapping.
-- Phase milestones referencing Utterance materialization (1b/1c) are updated to reference Window + DataChannels.
-
-### ADR-011 — Boundary Ownership (reserved)
-
-Phrase-boundary ownership and preutterance overflow semantics. Cache strategy delegated to OrchidStratum; see ADR-010 §Caching Strategy for cross-phrase hash bypass mechanics.
-
-### ADR-012 — Phoneme Timing Delta: Identity-Anchored Intervention
-
-**Status**: spike-validated | **Date**: 2026-07-02 | **Extends**: ADR-009 (Operate.Delta), ADR-010 (EventSeq entity)
-
-#### Context
-
-`Port.Declaration` already defines `shape` (`:continuous` | `:event_sequence`), and `Score.Phoneme` is identity-only (`symbol` + `type`) with no timing. But user timing edits (e.g., adjusting consonant preutterance) lack a clear persistence model and staleness handling strategy.
-
-Core scenario: User hand-tunes phoneme timing across "do re mi fa sol la ti", then changes a lyric (ti → si). G2P re-runs and produces a new phoneme sequence. How should the old timing edits be handled?
-
-Mainstream SVS editors (OpenUtau, SynthV) don't address this — either discard all or hardcode rules. Equinox's Declaration → Projection → Resolution layering provides the framework.
-
-#### Decisions
-
-**1. Phoneme timing becomes explicit.** Introduce `EquinoxDomain.Port.PhonemeTimingDelta`:
-
-```elixir
-defstruct [:identity, :onset_delta_ms, :duration_delta_ms]
-```
-
-- `identity`: adapter-generated opaque path (e.g., `"syl_A/1"`, `{:phoneme, nid, 2}`). Domain only does equality comparison.
-- `onset_delta_ms` / `duration_delta_ms`: offset relative to engine's projection base, not absolute values.
-
-**2. Anchor to adapter-owned opaque identity paths.** `identity :: term()` — Domain does not prescribe identity shape. Generated by the projection adapter; Domain/Kernel only require it to be deterministic and comparable.
-
-DiffSinger adapter may produce `"syl_A/1"` (intra-syllable index); another engine may produce `{:phoneme, note_id, slot_idx}`. Granularity differences are absorbed within the adapter.
-
-Identity paths are **syllable-rooted**, not note-rooted. Melisma validates this principle:
-
-```
-"la" spans do-re-mi-fa → adapter produces "syl_do/1" (vowel anchored to syllable)
-  insert transition note → identity unchanged → delta survives (no false mismatch)
-  change "+" to "ra" → vowel slot truncated → identity vanishes → true mismatch conflict
-```
-
-If anchored to note_id or slot_idx, melisma intermediate operations would produce false mismatches on every note boundary adjustment.
-
-**3. Delta-over-projection, not absolute values.** Kernel Resolution computes:
-
-```
-resolved_timing(entity) = projection_base(entity) + user_delta(entity)
-```
-
-`projection_base` comes from the engine adapter's `project_timing/1`. When the base changes (engine upgrade, model switch), deltas replay onto the new base. Absolute values cannot rebase.
-
-**4. Identity mismatch → explicit conflict.** `rebase/2` marks vanished identities as conflicts — never silently applies or discards:
-
-```elixir
-@type conflict :: %{
-  identity: identity(),
-  onset_delta_ms: delta_ms(),
-  duration_delta_ms: delta_ms(),
-  reason: :identity_mismatch
-}
-```
-
-Domain detects, never adjudicates. The upper layer (Editor / UX) decides: discard conflicting deltas, migrate deltas to new identity (user confirmation required), or preserve conflicts for manual handling.
-
-Worst-case degradation: all lyrics changed = all identities mismatch = all deltas become conflicts = effectively "discard all", but explicit and user-informed.
-
-**5. Syllable span is an indivisible slice unit.** Melisma notes must land in the same Window — otherwise the Segment's resolved input contains partial phonemes that no engine can render.
-
-Implementation: slice repair marks continuation notes ("+") with `:force_merge`, ensuring syllables are not cut by Window boundaries. This is within ADR-001 / existing `slice_flag` semantics — no new mechanism required.
-
-#### Layered Responsibility
-
-| Layer | Responsibility |
-|---|---|
-| Domain | `PhonemeTimingDelta` struct + `rebase/2` survival check |
-| Kernel G2P | `lyric → [phoneme_identity]` — produces identity list |
-| Kernel Resolution | `projection_base + user_delta → resolved_timing`; calls `rebase/2` for staleness |
-| Engine Adapter | `identity → {onset_sec, duration_sec}` — projection_base source |
-
-Domain never touches engines, never interprets phoneme semantics. Identity strings are opaque tokens.
-
-#### Consequences
-
-**Positive:**
-- Solves the core problem blocking Equinox: staleness of user timing edits.
-- Explicit identity-mismatch conflicts are a differentiator — mainstream editors don't offer this.
-- Identity as adapter-owned opaque term: melisma validates the generalization.
-- Consistent with ADR-009/010 (Operate.Delta + EventSeq entity), no new concepts.
-- Syllable-indivisible slicing uses existing `slice_flag` — no new infrastructure.
-
-**Follow-up:**
-- Kernel layer: G2P Declaration + Resolution (`projection_base` + delta rebase).
-- `data_channels` ↔ `notes` anchoring semantics (this ADR only covers the timing channel; pitch/energy anchoring TBD).
-- Conflict UX: how Editor handles `:identity_mismatch` conflicts.
-
-#### Caching Strategy (cross-phrase bypass + intra-phrase delta-rebase)
-
-Phrase-level is the correct caching granularity, not frame-level. Two reasons:
-
-1. DiffSinger-class acoustic models are phrase-conditioned (attention/global conditioning) — any change within a phrase can affect all output frames. Frame-level incrementality is illusory at the model level.
-2. OrchidStratum phrase-boundary ownership: preutterance overflow from phrase B into phrase A changes A's context/core boundaries → A's hash changes → A re-renders (see ADR-011).
-
-Two mechanisms, separate concerns:
-- **Hash bypass** (OrchidStratum, cross-phrase): which phrases need re-rendering? Unchanged phrases hit Stratum cache.
-- **Delta rebase** (intra-phrase): when a phrase IS re-rendered, do user edits survive? Identity-anchored deltas rebase onto new projection.
-
-Finer-grain incrementality (e.g., re-run vocoder without re-running acoustic model) is a pipeline *stage-split* concern, not a cache-granularity concern.
-
-**Resolves:** Phase 1b blocker "`data_channel` ↔ `notes` relationship" for the timing channel. Non-timing channels (pitch, energy — `shape: :continuous`) use absolute tick anchoring and are outside this ADR's scope(resolced by ADR-013).
-
-### ADR-013 — Generalized Intervention Anchoring: Anchor/Operate Orthogonality
-
-#### Status
-
-Proposed. Requires spike validation on a second channel (Frame) before freezing.
-
-#### Context
-
-ADR-012 solved intervention staleness for *phoneme timing* via identity-anchored deltas with explicit rebase. The underlying problem, however, is channel-agnostic: **whenever upstream data changes, how do user interventions survive?**
-
-```text
-intervention = (anchor, delta)
-upstream change → projection recompute → anchor re-match → {rebased deltas, conflicts}
-```
-
-Other channels face the same lifecycle — notably structural segmentations produced by heuristic engines (e.g., Frame in Frame/Content theory), which are engine-generated, user-tweakable, and invalidated by upstream re-segmentation. This ADR extracts the ADR-012 mechanism into a reusable contract, of which `PhonemeTimingDelta` becomes the first instance.
-
-#### Core Decisions
-
-**1. `anchor` and `operate` are orthogonal dimensions on `Declaration`.**
-
-- `operate` (existing, ADR-009): how base + delta merge **at resolve time**.
-- `anchor` (new): how deltas **survive base changes** across projection recomputes.
-- Both are module references stored on `EquinoxDomain.Port.Declaration`. Domain stores them; Kernel executes them.
-
-**2. `Anchor` is a Domain behaviour with two callbacks.**
-
-```elixir
-defmodule EquinoxDomain.Port.Intervention.Anchor do
-  @callback identities(projection :: term()) :: [identity :: term()]
-  @callback rebase(deltas :: [delta], old :: [identity], new :: [identity]) ::
-              {rebased :: [delta], conflicts :: [conflict]}
-end
-```
-
-- `identity` remains an **adapter-owned opaque term** (ADR-012 rule 1). Domain requires only determinism and comparability, never interprets the shape.
-- `rebase/3` is a pure function. Vanished identities become explicit conflict markers — Domain detects, never silently discards (ADR-012 rule 3, generalized).
-
-**3. Built-in anchor kinds: exactly two, no more until a third use case exists.**
-
-| Anchor | Shape affinity | Rebase behavior |
-|---|---|---|
-| `Anchor.AbsoluteTick` | `:continuous` (pitch, energy, …) | No-op — absolute tick anchoring survives upstream changes trivially |
-| `Anchor.IdentityPath` | `:event_sequence` (phoneme timing, Frame, …) | Identity re-match; mismatches → conflicts |
-
-Anti-overengineering rule (lesson from the three-layer Pickle protocol): do **not** introduce a grand unified anchor abstraction or a third built-in kind speculatively. Each new anchor kind requires a concrete channel that demands it.
-
-**4. Trigger inversion: rebase is idempotent, not event-driven.**
-
-There is **no taxonomy of "boundary-changing edit events"**. Instead:
-
-- Kernel invokes `rebase/3` unconditionally after every projection recompute.
-- A projection fingerprint (identity-list hash) short-circuits the no-op case: identical fingerprint → skip rebase entirely.
-- This unifies with ADR-012's phrase-level caching: Stratum hash hit → projection not recomputed → rebase never reached; hash miss → projection recomputed → rebase runs automatically. **One fingerprint mechanism serves both cache bypass and intervention survival.**
-
-**5. Identity stability is the adapter's obligation, outside this mechanism.**
-
-Generalizing ADR-012's "syllable-rooted, not note-rooted" lesson:
-
-> **Identity must be rooted in the most stable upstream entity the adapter can name.**
-
-If an engine's segmentation is unstable (small input changes reshuffle all identities), rebase degrades into a conflict storm. This is an adapter/engine defect — fix segmentation stability or identity design, never patch the anchoring mechanism with fuzzy matching.
-
-**6. `PhonemeTimingDelta` is retrofitted as the first `Anchor.IdentityPath` instance.**
-
-ADR-012's struct and `rebase/2` logic are preserved; they become the reference implementation behind the behaviour. No semantic change — only the contract moves from module-specific to behaviour-conformant.
-
-#### Layered Responsibility
-
-| Layer | Responsibility |
-|---|---|
-| Domain | delta structs, `Anchor` behaviour, built-in anchor implementations (pure rebase logic) |
-| Kernel Resolution | projection recompute → fingerprint compare → `rebase/3` → surface conflicts to Session/UI |
-| Adapter | identity generation (`projection → [identity]`); guarantees determinism and stability |
-| UI Shell | conflict presentation and user-decided resolution (per ADR-010 rule 8) |
-
-#### Spike Plan (blocking before freeze)
-
-Mirror ADR-012's spike discipline, targeting the Frame channel:
-
-- **Spike A (Domain)**: `Anchor.IdentityPath.rebase/3` against Frame-shaped identities — survival, mismatch conflict, reorder scenarios.
-- **Spike B (Adapter)**: Frame identity **stability** under heuristic-engine recompute — perturb inputs, measure identity churn. If churn is high, the spike verdict is "fix the engine's identity design", not "extend the mechanism".
-- **Spike C (Kernel)**: fingerprint short-circuit — verify rebase is skipped on identical projections and that this composes with Stratum hash bypass.
-
-#### Supersedes / Consequences
-
-- ADR-012 is **not** superseded; it is narrowed to "the phoneme-timing instance of ADR-013" plus its caching-strategy notes (which ADR-013 rule 4 now generalizes).
-- ADR-009's `Declaration` gains an `anchor` field. Existing declarations without one default by shape: `:continuous → AbsoluteTick`, `:event_sequence → IdentityPath`.
-- ADR-012's closing note ("non-timing channels use absolute tick anchoring and are outside this ADR's scope") is resolved: they are now inside ADR-013's scope as the trivial anchor kind.
-- Resolves the open Phase 1b question "anchor semantics for `:continuous` channels" (Milestone 8) — answer: absolute tick, no-op rebase, no new mechanism.
+Do not re-introduce persistent Utterance/Segment-as-identity in Domain.
 
 ## 8. Do Not Do 💡
 
