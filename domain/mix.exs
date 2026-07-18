@@ -11,6 +11,12 @@ defmodule EquinoxDomain.MixProject do
     ]
   end
 
+  defp deps do
+    [
+      {:zongzi, git: "https://github.com/SynapticStrings/Zongzi.git", branch: "main"}
+    ]
+  end
+
   def application, do: []
 
   def cli, do: [preferred_envs: [precommit: :test]]
