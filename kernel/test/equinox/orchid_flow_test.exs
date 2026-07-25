@@ -11,8 +11,13 @@ defmodule Equinox.Kernel.OrchidFlowTest do
   }
 
   alias Equinox.Session.Context
+  alias EquinoxDomain.Command.RenderRequest
+  alias EquinoxDomain.Port.Declarations.PhonemeTiming
   alias EquinoxDomain.Score.{Project, Track}
+  alias Zongzi.Intervention
   alias Zongzi.Score.Key.TwelveET
+  alias Zongzi.Score.Tempo
+  alias Zongzi.Util.ID
 
   defmodule MockSymbiontWorker do
     use GenServer
@@ -48,6 +53,16 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     routine source, models, _opts do
       decorated = OrchidSymbiont.call(models.mock_service, {:decorate, source.lyric})
       ok(%{audio: decorated, key: source.key})
+    end
+  end
+
+  defmodule TimingSinkStep do
+    use Oi.Step, name: :timing_sink
+
+    manifest(inputs: [:timing], outputs: [audio: :map])
+
+    routine timing, _opts do
+      ok(timing)
     end
   end
 
@@ -115,7 +130,13 @@ defmodule Equinox.Kernel.OrchidFlowTest do
         lyric: "la"
       })
 
-    {:ok, project} = Project.new(id: "project_flow", name: "Flow")
+    {:ok, project} =
+      Project.new(
+        id: "project_flow",
+        name: "Flow",
+        tempo_map: [step_tempo_event(120)]
+      )
+
     {:ok, project} = Project.add_track(project, track)
 
     assert {:ok, {^graph, %Oi.Compiled{} = compiled}, _cache} =
@@ -133,7 +154,15 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     {context, dispatch} = Context.prepare_dispatch(ctx)
 
     unit_id = {track_id, 0}
-    assert %{session_id: ^session_id, units: [{^unit_id, _, _, %Oi.Compiled{}}]} = dispatch
+
+    assert %{
+             session_id: ^session_id,
+             units: [{^unit_id, _, %RenderRequest{} = request, %Oi.Compiled{}}]
+           } = dispatch
+
+    assert request.time_range == {0, 720}
+    assert length(request.notes) == 2
+    assert request.interventions == []
 
     # 喂 source 的悬空输入（模拟上游产物已在黑板上）
     note_input_key = {unit_id, "source|note"}
@@ -162,8 +191,8 @@ defmodule Equinox.Kernel.OrchidFlowTest do
              ])
   end
 
-  test "interventions feed the run when blackboard misses (memory + producer override)" do
-    session_id = "orchid-flow-intervention-session"
+  test "channel spec resolves interventions end-to-end (dangling memory + producer override)" do
+    session_id = "orchid-flow-timing-session"
     assert {:ok, _pid} = Oi.Runtime.Session.ensure_started(session_id)
 
     on_exit(fn ->
@@ -172,32 +201,84 @@ defmodule Equinox.Kernel.OrchidFlowTest do
 
     OrchidSymbiont.register(session_id, :mock_service, {MockSymbiontWorker, [prefix: "intv"]})
 
-    graph = build_flow_graph()
-    track_id = "track_intv"
+    track_id = "track_timing"
     unit_id = {track_id, 0}
+    {dispatch, mounted, base} = build_timing_dispatch(session_id, track_id)
 
-    assert {:ok, {unit_graph, %Oi.Compiled{} = compiled}, _cache} =
-             Compiler.compile_track(track_id, graph)
+    assert %{units: [{^unit_id, _, %RenderRequest{interventions: [^mounted]}, %Oi.Compiled{}}]} =
+             dispatch
 
-    # {:port, :source, :note} 既是 source 的悬空输入端口，又是通往 decorate 的
-    # producer 输出端口：同一干预同时覆盖两条装配路径。
-    interventions = %{{:port, :source, :note} => %{input: %{lyric: "forced", key: 61}}}
-
-    dispatch = %{
-      session_id: session_id,
-      units: [{unit_id, unit_graph, interventions, compiled}]
+    channels = %{
+      PhonemeTiming.channel() => %{
+        projection: fn _request -> {:ok, base} end,
+        # 函数形 target：同时覆盖 dangling（sink 收 resolved 投影）与
+        # producer override（source|note 固定 note map）两条装配路径
+        target: fn artifact ->
+          [
+            {{:port, :timing_sink, :timing}, artifact},
+            {{:port, :source, :note}, %{lyric: "forced", key: 61}}
+          ]
+        end
+      }
     }
 
-    assert {:ok, executed_blackboard} = Runner.run(dispatch, Blackboard.new())
+    assert {:ok, executed_blackboard} =
+             Runner.run(dispatch, Blackboard.new(), channels: channels)
 
     unit_outputs = Blackboard.fetch_via_segment(executed_blackboard, unit_id)
 
+    # resolve 产物：delta 应用到 base（onset +10ms / duration +20ms）后合回全量投影
+    resolved = %{"ph_a" => [0.01, 0.14], "ph_b" => [0.12, 0.24]}
+
     note_input_key = {unit_id, "source|note"}
     audio_output_key = {unit_id, "decorate|audio"}
+    timing_input_key = {unit_id, "timing_sink|timing"}
+    timing_output_key = {unit_id, "timing_sink|audio"}
 
-    # 无 Stratum 插件时输出为裸 payload
-    assert %{^note_input_key => %{lyric: "forced", key: 61}} = unit_outputs
-    assert %{^audio_output_key => %{audio: "intv:forced", key: 61}} = unit_outputs
+    assert unit_outputs[timing_input_key] == resolved
+    assert unit_outputs[timing_output_key] == resolved
+    assert unit_outputs[note_input_key] == %{lyric: "forced", key: 61}
+    assert unit_outputs[audio_output_key] == %{audio: "intv:forced", key: 61}
+  end
+
+  test "check aggregates conflicts and skips execution when projection drifted" do
+    session_id = "orchid-flow-conflict-session"
+    track_id = "track_conflict"
+    unit_id = {track_id, 0}
+    {dispatch, mounted, _base} = build_timing_dispatch(session_id, track_id)
+
+    # mount 时 snapshot 取自 base；check 投影漂移 → snapshot_mismatch 冲突
+    drifted = %{"ph_a" => [0.0, 0.15], "ph_b" => [0.15, 0.24]}
+
+    channels = %{
+      PhonemeTiming.channel() => %{
+        projection: fn _request -> {:ok, drifted} end,
+        target: {:port, :timing_sink, :timing}
+      }
+    }
+
+    # Runner 整体 error：check 先于任何执行，黑板不被污染
+    assert {:error, {:check_failed, [entry]}} =
+             Runner.run(dispatch, Blackboard.new(), channels: channels)
+
+    assert entry.unit_id == unit_id
+    assert entry.channel == PhonemeTiming.channel()
+    assert entry.kind == :conflict
+    assert entry.intervention_id == mounted.id
+    assert {:snapshot_mismatch, _old, _new} = entry.reason
+  end
+
+  test "check reports unknown_channel when interventions lack a channel spec" do
+    session_id = "orchid-flow-unknown-session"
+    track_id = "track_unknown"
+    unit_id = {track_id, 0}
+    {dispatch, _mounted, _base} = build_timing_dispatch(session_id, track_id)
+
+    assert {:error, {:check_failed, [entry]}} = Runner.run(dispatch, Blackboard.new())
+
+    assert entry.unit_id == unit_id
+    assert entry.channel == PhonemeTiming.channel()
+    assert entry.kind == :unknown_channel
   end
 
   defp build_flow_graph do
@@ -218,6 +299,79 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     })
     |> Graph.add_edge(Edge.new(:source, :note, :decorate, :note))
   end
+
+  defp build_timing_graph do
+    build_flow_graph()
+    |> Graph.add_node(%Node{
+      id: :timing_sink,
+      container: TimingSinkStep,
+      inputs: [:timing],
+      outputs: [:audio],
+      options: []
+    })
+  end
+
+  # phoneme_timing 端到端夹具：两音符（0..240 / 240..720 无间隙 → 单窗口
+  # start 0），首音符上挂载一条 phoneme_timing 干预；工程带 120bpm step tempo
+  defp build_timing_dispatch(session_id, track_id) do
+    graph = build_timing_graph()
+
+    {:ok, track} = Track.new(id: track_id, name: "Timing")
+
+    {:ok, track, note1} =
+      Track.insert_note(track, %{
+        start_tick: 0,
+        duration_tick: 240,
+        key: twelve_et(60),
+        lyric: "la"
+      })
+
+    {:ok, track, _note2} =
+      Track.insert_note(track, %{
+        start_tick: 240,
+        duration_tick: 480,
+        key: twelve_et(60),
+        lyric: "la"
+      })
+
+    base = %{"ph_a" => [0.0, 0.12], "ph_b" => [0.12, 0.24]}
+
+    {:ok, intervention} =
+      Intervention.new(
+        id: ID.generate_id("iv_"),
+        channel: PhonemeTiming.channel(),
+        declaration: PhonemeTiming
+      )
+
+    payload = %{
+      range: [0, 240],
+      deltas: [%{identity: "ph_a", onset_delta_ms: 10, duration_delta_ms: 20}]
+    }
+
+    {:ok, track, mounted} =
+      Track.mount_intervention(track, intervention, payload, note1.seq_id, base)
+
+    {:ok, project} =
+      Project.new(
+        id: "project_#{track_id}",
+        name: "Timing",
+        tempo_map: [step_tempo_event(120)]
+      )
+
+    {:ok, project} = Project.add_track(project, track)
+
+    ctx =
+      session_id
+      |> Context.new(project)
+      |> then(fn ctx -> %{ctx | graphs: %{track_id => graph}} end)
+
+    {_ctx, dispatch} = Context.prepare_dispatch(ctx)
+
+    {dispatch, mounted, base}
+  end
+
+  # zongzi tempo 源事件：`{tick, %Tempo.Event{module, context}}`
+  defp step_tempo_event(bpm), do: {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: bpm}}}
 
   defp twelve_et(midi) do
     {:ok, key} = TwelveET.new(midi)

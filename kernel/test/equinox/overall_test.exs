@@ -4,16 +4,24 @@ defmodule Equinox.OverallTest do
   alias Equinox.Kernel.{Blackboard, Graph, StepRegistry}
   alias Equinox.Session
   alias Equinox.Session.Server
+  alias EquinoxDomain.Port.Declarations.PhonemeTiming
   alias EquinoxDomain.Score.{Project, Track}
   alias Zongzi.Score.Key.TwelveET
+  alias Zongzi.Score.Tempo
   alias Zongzi.Util.ID
 
   test "overall kernel flow covers registry, server editing APIs, and session lifecycle" do
     assert {:ok, phonemizer_spec} = StepRegistry.lookup(:phonemizer)
     assert phonemizer_spec.inputs == [:notes]
 
-    # domain 夹具：工程 + 一轨 + 一个音符（全部经 domain API 构造）
-    {:ok, project} = Project.new(id: ID.generate_id("Project_"), name: "Overall Flow")
+    # domain 夹具：工程（带 120bpm step tempo）+ 一轨 + 一个音符（全部经 domain API 构造）
+    {:ok, project} =
+      Project.new(
+        id: ID.generate_id("Project_"),
+        name: "Overall Flow",
+        tempo_map: [step_tempo_event(120)]
+      )
+
     {:ok, track} = Track.new(id: ID.generate_id("Track_"), name: "Lead")
 
     {:ok, track, _note} =
@@ -109,6 +117,50 @@ defmodule Equinox.OverallTest do
     assert stored.metadata["ui_state"] == %{focused_window: 0, zoom: 1.5}
     assert length(Track.active_notes(stored)) == 2
 
+    # ---- adopt_intervention：采纳引擎产出为轨道干预 ----
+    [{first_seq, _first_note} | _] = Track.active_notes(stored)
+
+    projection = %{"ph_a" => [0.0, 0.12], "ph_b" => [0.12, 0.24]}
+
+    assert {:ok, adopted_track, intervention} =
+             Server.adopt_intervention(
+               server,
+               track_id,
+               [
+                 channel: PhonemeTiming.channel(),
+                 declaration: PhonemeTiming,
+                 seq_id: first_seq,
+                 payload: %{
+                   range: [0, 240],
+                   deltas: [%{identity: "ph_a", onset_delta_ms: 10, duration_delta_ms: 20}]
+                 }
+               ],
+               projection
+             )
+
+    assert [^intervention] = adopted_track.interventions
+    assert String.starts_with?(intervention.id, "iv_")
+    assert intervention.channel == PhonemeTiming.channel()
+    assert intervention.snapshot == %{"ph_a" => [0.0, 0.12]}
+
+    # Server 状态里的 track 也已写入同一条干预
+    assert {:ok, stored} = Project.get_track(Server.get_view(server).project, track_id)
+    assert [^intervention] = stored.interventions
+
+    # seq_id 非 active → 显式报错
+    assert {:error, :not_active} =
+             Server.adopt_intervention(
+               server,
+               track_id,
+               [
+                 channel: PhonemeTiming.channel(),
+                 declaration: PhonemeTiming,
+                 seq_id: 999_999,
+                 payload: %{range: [0, 240], deltas: []}
+               ],
+               projection
+             )
+
     # ---- dispatch 冒烟：cast 驱动完整编译-渲染链路 ----
     # 异步调度，空 Graph 可能瞬间完成 —— 不等中间态，直接校验最终结果
     assert :ok = Server.dispatch(server, [])
@@ -132,6 +184,9 @@ defmodule Equinox.OverallTest do
     assert {:error, :session_not_found} = Session.resolve(session_id)
     assert {:error, :session_not_found} = Oi.Runtime.Session.resolve(session_id)
   end
+
+  # zongzi tempo 源事件：`{tick, %Tempo.Event{module, context}}`
+  defp step_tempo_event(bpm), do: {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: bpm}}}
 
   defp twelve_et(midi) do
     {:ok, key} = TwelveET.new(midi)

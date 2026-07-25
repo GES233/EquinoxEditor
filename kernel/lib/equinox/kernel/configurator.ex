@@ -4,19 +4,30 @@ defmodule Equinox.Kernel.Configurator do
   在调度边界创建一次，向下传递到 Engine/Worker 和插件链。
   """
 
+  alias Equinox.Kernel.Graph
+  alias EquinoxDomain.Command.RenderRequest
+
+  @typedoc "通道规格：`projection` 以窗口 RenderRequest 求通道投影；`target` 为 PortRef 直取，或 artifact → [{PortRef, value}] 的一元 fan-out 函数。"
+  @type channel_spec :: %{
+          projection: (RenderRequest.t() -> {:ok, term()} | {:error, term()}),
+          target: Graph.PortRef.t() | (term() -> [{Graph.PortRef.t(), term()}])
+        }
+
   @type t :: %__MODULE__{
           plugins: [{module(), context :: any()}],
           orchid_baggage: map(),
           orchid_opts: keyword(),
           concurrency: pos_integer(),
-          timeout: timeout()
+          timeout: timeout(),
+          channels: %{atom() => channel_spec()}
         }
 
   defstruct plugins: [],
             orchid_baggage: %{},
             orchid_opts: [],
             concurrency: System.schedulers_online(),
-            timeout: :infinity
+            timeout: :infinity,
+            channels: %{}
 
   @spec new(keyword()) :: t()
   def new(opts \\ []) do
@@ -25,7 +36,8 @@ defmodule Equinox.Kernel.Configurator do
       orchid_baggage: opts |> Keyword.get(:orchid_baggage, []) |> Enum.into(%{}),
       orchid_opts: Keyword.get(opts, :orchid_opts, []),
       concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
-      timeout: Keyword.get(opts, :timeout, :infinity)
+      timeout: Keyword.get(opts, :timeout, :infinity),
+      channels: opts |> Keyword.get(:channels, %{}) |> Map.new()
     }
   end
 

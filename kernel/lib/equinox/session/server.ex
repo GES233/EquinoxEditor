@@ -14,7 +14,9 @@ defmodule Equinox.Session.Server do
 
   alias Equinox.Session.Context
   alias Equinox.Kernel.{Graph, Runner}
+  alias EquinoxDomain.Command.AdoptRequest
   alias EquinoxDomain.Score.{Project, Track}
+  alias Zongzi.Intervention
   alias Zongzi.Util.ID
 
   # ---- Client API ----
@@ -68,6 +70,19 @@ defmodule Equinox.Session.Server do
           :ok | {:error, {:track_not_found, term()}}
   def update_synth_graph(server, track_id, graph),
     do: GenServer.call(server, {:update_synth_graph, track_id, graph})
+
+  @doc """
+  采纳引擎产出为轨道干预（`AdoptRequest` 流程：新建 intervention →
+  `Track.mount_intervention/5` 派生锚点并写 snapshot → 写回 Project）。
+
+  `attrs` 须含 `:channel` / `:declaration` / `:seq_id` / `:payload`；
+  `projection` 由调用方供给（将来是引擎/黑板产物，当前只接 API）。
+  `seq_id` 非 active 报 `{:error, :not_active}`。
+  """
+  @spec adopt_intervention(GenServer.server(), term(), map() | keyword(), term()) ::
+          {:ok, Track.t(), Intervention.t()} | {:error, term()}
+  def adopt_intervention(server, track_id, attrs, projection),
+    do: GenServer.call(server, {:adopt_intervention, track_id, attrs, projection})
 
   @doc "触发一次渲染 dispatch（异步）。"
   @spec dispatch(GenServer.server(), keyword()) :: :ok
@@ -198,6 +213,17 @@ defmodule Equinox.Session.Server do
 
       {:error, _} = err ->
         {:reply, err, state}
+    end
+  end
+
+  def handle_call({:adopt_intervention, track_id, attrs, projection}, _from, state) do
+    with {:ok, track} <- Project.get_track(state.project, track_id),
+         {:ok, request} <- AdoptRequest.new(Map.new(attrs)),
+         {:ok, track, intervention} <- AdoptRequest.adopt(request, track, projection),
+         {:ok, project} <- Project.update_track(state.project, track_id, track) do
+      {:reply, {:ok, track, intervention}, %{state | project: project}}
+    else
+      {:error, _} = err -> {:reply, err, state}
     end
   end
 

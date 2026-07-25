@@ -128,6 +128,7 @@ These remain product / shell / Orchid concerns; they are **not** duplicated into
 - **slice_flag semantics** — Caller-side windowing override (`Note.metadata` + `Score.SliceFlag` + `Score.SlicePolicy`); deliberately not upstreamed, since zongzi removed the field.
 - **Track as zongzi Caller** — timeline/notes_by_seq/interventions trio, sync contract, `rebase_interventions/1` orchestration.
 - **synth_graph Session-side storage** — graph/cluster are Kernel compile-time concepts; during the Phase 2 interim they live in `Session.Context.graphs` (`%{track_id => Graph.t()}`) and move into `RenderRequest` with item 20.
+- **channel spec (projection/target) contract** — channel→port binding and projection supply are Host-side configuration (`Configurator.channels`), injected into the Runner check phase; they never enter zongzi.
 - **Domain–Kernel–Session–UI layering** (`EquinoxDomain` vs Kernel import bans)
 - **RenderRequest / Compiler / Orchid Hook** wiring (`param_name → port`)
 - **Raster NIF placement** in Kernel (Domain keeps pure reference)
@@ -246,7 +247,7 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 17. **Domain dependency** — done (Phase 2 mid-stage): legacy `Equinox.{Track, Project, Editor, Domain.*, Util.{Id, Attrs}}` deleted; kernel and ui_shell consume `EquinoxDomain.*` + zongzi directly (`:zongzi` path dep added to both).
 18. **Slicer → Windowing** — done: the legacy `materialize_segments` path is gone; `Track.slice/2` → `[Zongzi.Windowing.Segment]` drives dispatch (unit id `{track_id, window.start_tick}`; the UI's "segment" is a presenter-side simulation over windows).
 19. **Track API** — done: domain Track CRUD + `rebase_interventions/1` are wired through `Session.Server` named editing APIs (`add_track` / `remove_track` / `update_track_mix` / `update_track_ui_state` / `replace_window_notes` / `update_synth_graph`); synth graphs live in `Session.Context.graphs` until item 20 moves them into `RenderRequest`.
-20. **RenderRequest + AdoptRequest** (done in domain): `RenderRequest.from_window/3` filters survived interventions by scope ∩ window; `AdoptRequest.adopt/3` mounts engine output as an intervention. Kernel side: resolve interventions at check time (`Declaration.resolve_within/2`) and emit curve `data_interventions`.
+20. **RenderRequest + AdoptRequest** — main wiring done: `prepare_dispatch/1` builds one `RenderRequest` per window via `from_window/3` (slice passes `tempo_map` + `interventions` so scopes widen windows); `Runner.run/3` is two-phase (check-all → render-all), resolving interventions per channel via `Declaration.resolve_within/2` and binding resolved artifacts to `data_interventions` through the Configurator `channels` contract (`projection` + `target`, PortRef-keyed); check failures aggregate as `{:error, {:check_failed, entries}}`; `Server.adopt_intervention/4` wraps `AdoptRequest.adopt/3`. Channel developer guide: `docs/channel-development.md`. Deferred to the second cut: curve channel Declaration, frame-grid `timing_spec`, rasterization.
 21. **Editor / Session adaptation**: Editor ops → Track API. Session manages selection, clipboard, viewport, and per-track Caller state. Note the naming clash: `Equinox.Kernel.Engine` (Orchid runner) vs `Zongzi.Engine` (check/render contract) — **resolved**: the runner was deleted in the oi migration (absorbed by `Oi.execute/2` via `Equinox.Kernel.Runner`); only `Zongzi.Engine` remains.
 
 ### Phase 3 — UI Shell (ui_shell/)
@@ -378,9 +379,9 @@ After Domain is stable:
 
 - [x] `EquinoxDomain.Command.RenderRequest` rewritten (interventions + declarations; `from_window/3` done).
 - [x] `EquinoxDomain.Command.AdoptRequest` rewritten (mount intervention; `adopt/3` done).
-- [ ] Remove `curves`, `synth_override`, `graph`, `cluster` from legacy `%Segment{}` (its `Jason.Encoder` impl was already removed in the oi migration).
+- [x] Remove `curves`, `synth_override`, `graph`, `cluster` from legacy `%Segment{}` — done in the mid-stage migration: the legacy Segment module was deleted outright; `EquinoxDomain.Segment` is the rendering-context VO.
 - [x] ~~Add legacy-tolerant loader in `Project.from_json/1` for old payloads.~~ — obsolete: the kernel legacy JSON chain was removed in the oi migration; project hydration will be rebuilt on domain Pickle + `Zongzi.Timeline.build/1`.
-- [ ] Update `Session.Context.prepare_dispatch/1` (formerly `dispatch_to_plans/1`) to build `RenderRequest` per window via `RenderRequest.from_window/3`.
+- [x] Update `Session.Context.prepare_dispatch/1` (formerly `dispatch_to_plans/1`) to build `RenderRequest` per window via `RenderRequest.from_window/3`.
 - [ ] Define curve channel Declaration(s) and emit curve `data_interventions` in the Compiler (resolve at check time).
 - [ ] Thread curve operations through Session-level undo/redo (Phase 3; the legacy `Equinox.Editor.History` module was removed in the oi migration).
 

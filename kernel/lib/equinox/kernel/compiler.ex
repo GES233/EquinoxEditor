@@ -5,6 +5,7 @@ defmodule Equinox.Kernel.Compiler do
   """
 
   alias Equinox.Kernel.Graph
+  alias EquinoxDomain.Command.RenderRequest
 
   @typedoc "执行单元 id：`{track_id, window_start_tick}`。"
   @type unit_id :: {term(), non_neg_integer()}
@@ -14,9 +15,9 @@ defmodule Equinox.Kernel.Compiler do
           Graph.PortRef.t() => OrchidIntervention.intervention_spec()
         }
 
-  @typedoc "单个窗口的执行单元：unit id、生效图、存活干预与 Oi 编译结果。"
+  @typedoc "单个窗口的执行单元：unit id、生效图、窗口渲染请求（含存活干预）与 Oi 编译结果。"
   @type compiled_unit ::
-          {unit_id(), Graph.t(), interventions_map(), Oi.Compiled.t()}
+          {unit_id(), Graph.t(), RenderRequest.t(), Oi.Compiled.t()}
 
   @typedoc "轨级编译缓存：`track_id => {graph, compiled}`。"
   @type compile_cache :: %{optional(term()) => {Graph.t(), Oi.Compiled.t()}}
@@ -27,8 +28,7 @@ defmodule Equinox.Kernel.Compiler do
   cache 命中条件：`cache[track_id]` 中的 graph 与传入 graph 结构相等，
   命中则复用编译产物；否则重新 `Oi.compile/2` 并把结果写回缓存。
 
-  cluster 支持已取消，恒用默认 `%Oi.Topology.Cluster{}`；
-  存活干预恒 `%{}`（RenderRequest 接线后再填充）。
+  cluster 支持已取消，恒用默认 `%Oi.Topology.Cluster{}`。
   """
   @spec compile_track(term(), Graph.t(), compile_cache()) ::
           {:ok, {Graph.t(), Oi.Compiled.t()}, compile_cache()} | {:error, term()}
