@@ -12,7 +12,7 @@ defmodule EquinoxDomain.Port.Declarations.PhonemeTiming do
   ## Payload 形状
 
       %{
-        range: {start_tick, end_tick},   # 挂载音符的 tick 区间（on_rebase 维护）
+        range: [start_tick, end_tick],   # 挂载音符的 tick 区间（on_rebase 维护）
         deltas: [
           %{identity: term(), onset_delta_ms: integer(), duration_delta_ms: integer()}
         ]
@@ -20,7 +20,14 @@ defmodule EquinoxDomain.Port.Declarations.PhonemeTiming do
 
   ## 投影形状
 
-      %{identity => {onset_sec :: float(), duration_sec :: float()}}
+      %{identity => [onset_sec :: float(), duration_sec :: float()]}
+
+  ## dump-safe 契约
+
+  payload / snapshot 只含 plain 数据（list / map / number / binary），
+  满足 `EquinoxDomain.Pickle` 的原生对象序列化约定——干预随 Track 落盘时不丢信息。
+  因此 `scope/2` 出口处把 list 形态的 range 归一为 `{tick, tick}` 二元组，
+  以喂 zongzi `Windowing.Context.normalize_scope/2`。
   """
 
   @behaviour Zongzi.Intervention.Declaration
@@ -35,7 +42,8 @@ defmodule EquinoxDomain.Port.Declarations.PhonemeTiming do
   def channel, do: @channel
 
   @impl true
-  def scope(%Intervention{payload: %{range: range}}, _scope_ctx), do: range
+  def scope(%Intervention{payload: %{range: [start_tick, end_tick]}}, _scope_ctx),
+    do: {start_tick, end_tick}
 
   @impl true
   def snapshot(projection, %Intervention{} = int) do
@@ -67,7 +75,7 @@ defmodule EquinoxDomain.Port.Declarations.PhonemeTiming do
 
     case Map.fetch(notes_by_seq, current) do
       {:ok, %Note{start_tick: start_tick, duration_tick: duration_tick}} ->
-        range = {start_tick, start_tick + duration_tick}
+        range = [start_tick, start_tick + duration_tick]
         {:ok, %{int | payload: Map.put(payload, :range, range)}}
 
       :error ->
@@ -86,7 +94,7 @@ defmodule EquinoxDomain.Port.Declarations.PhonemeTiming do
   # 移植自旧 Rebase.Phoneme.Timing.apply_deltas/2：
   # onset/duration 以秒为基准加 delta（毫秒换算），duration 下限 1ms，
   # 统一 round 到小数点后 4 位（snapshot 序列化的 round-trip 归一化），
-  # 最后 merge 回全量投影。
+  # 最后 merge 回全量投影。投影值是 [onset_sec, duration_sec] 二元 list（plain）。
   defp apply_deltas(projection, deltas) do
     resolved =
       Map.new(deltas, fn %{
@@ -94,12 +102,12 @@ defmodule EquinoxDomain.Port.Declarations.PhonemeTiming do
                            onset_delta_ms: onset_delta,
                            duration_delta_ms: dur_delta
                          } ->
-        {base_onset, base_dur} = Map.get(projection, id, {0.0, 0.100})
+        [base_onset, base_dur] = Map.get(projection, id, [0.0, 0.100])
 
         resolved_onset = base_onset + onset_delta / 1000.0
         resolved_dur = max(base_dur + dur_delta / 1000.0, 0.001)
 
-        {id, {Float.round(resolved_onset, 4), Float.round(resolved_dur, 4)}}
+        {id, [Float.round(resolved_onset, 4), Float.round(resolved_dur, 4)]}
       end)
 
     Map.merge(projection, resolved)

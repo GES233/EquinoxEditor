@@ -7,7 +7,7 @@ defmodule EquinoxDomain.Command.AdoptRequestTest do
   alias Zongzi.Score.Key.TwelveET
   alias Zongzi.Util.ID
 
-  @projection %{"C" => {0.0, 0.05}, "V" => {0.05, 0.10}}
+  @projection %{"C" => [0.0, 0.05], "V" => [0.05, 0.10]}
 
   setup do
     {:ok, track} =
@@ -27,7 +27,7 @@ defmodule EquinoxDomain.Command.AdoptRequestTest do
 
   defp payload do
     %{
-      range: {0, 480},
+      range: [0, 480],
       deltas: [%{identity: "V", onset_delta_ms: 20, duration_delta_ms: 0}]
     }
   end
@@ -48,7 +48,7 @@ defmodule EquinoxDomain.Command.AdoptRequestTest do
       assert String.starts_with?(intervention.id, "iv_")
       assert intervention.channel == :phoneme_timing
       assert intervention.declaration == PhonemeTiming
-      assert intervention.snapshot == %{"V" => {0.05, 0.10}}
+      assert intervention.snapshot == %{"V" => [0.05, 0.10]}
       assert intervention.anchor == {nil, note.seq_id, nil}
       assert intervention.payload == payload()
     end

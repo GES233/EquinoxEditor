@@ -95,8 +95,8 @@ defmodule EquinoxDomain.Command.RenderRequestTest do
     } do
       {track, a} = insert(track, key, 0)
       {track, b} = insert(track, key, 960)
-      {track, int_a} = mount(track, a.seq_id, {0, 480})
-      {track, int_b} = mount(track, b.seq_id, {960, 1440})
+      {track, int_a} = mount(track, a.seq_id, [0, 480])
+      {track, int_b} = mount(track, b.seq_id, [960, 1440])
 
       # 窗口 A [0, 960)：int_a 相交，int_b 起点贴右边界被排除
       segment_a = window(0, 960, [a.seq_id])

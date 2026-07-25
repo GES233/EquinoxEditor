@@ -236,10 +236,7 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 ### Phase 1d — Polish & Serialization (domain/)
 14. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo. Orchestrates Track ops + `rebase_interventions/1`. **Blocked on Track + Project CRUD** → Track done; Project CRUD pending.
 15. **Session / RenderRequest** — `Command.RenderRequest` rewritten (carries survived interventions + declarations). `Session` still a placeholder; the zongzi Caller state (per-track trio) now lives on `Track`, so Session mainly holds selection, clipboard, viewport.
-16. **Pickle + comprehensive tests** — **暂缓。** The three-layer Pickle protocols (`Pickle` / `Pickle.Pure` / `Pickle.Plugable`) are over-designed. Suggested direction:
-    - Phase 1d only needs the simplest Jason JSON serialization — `Zongzi.Util.Model` already auto-generates `new/1`; derive `Jason.Encoder` for Project/Track/Note. `Zongzi.Timeline.build/1` supports timeline deserialization from a persisted note order.
-    - `Pickle.Plugable`'s scope/signature dispatch (envelope + registry) stays shelved until the engine interface contracts stabilize.
-    - Curve-type serialization likewise **deferred** pending curve model stabilization.
+16. **Pickle (native-object codec)** — Done: per-type `dump/1` / `load/1` producing plain maps/lists/numbers/binaries/atoms/nil (tuples→lists, structs flattened). `EquinoxDomain.Pickle.*` covers zongzi-owned structs (Note/Key/Timeline/Intervention/tempo & time-sig events); Track/Project/Preset carry their own. The old three-layer `Util.Pickle` is deleted. Channel Declarations must keep payload/snapshot dump-safe. Jason remains a trivial future transform, not implemented.
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
 17. **Domain dependency**: Kernel already declares `:equinox_domain`; delete legacy `Equinox.Domain.*`, replace all references. Add `:zongzi` to kernel when it calls zongzi APIs directly.

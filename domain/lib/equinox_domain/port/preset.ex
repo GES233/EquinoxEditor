@@ -46,4 +46,27 @@ defmodule EquinoxDomain.Port.Preset do
         {:ok, preset}
     end
   end
+
+  # ---- 序列化（EquinoxDomain.Pickle 原生对象 codec） ----
+
+  @doc """
+  摊平为 plain map（遵循 `EquinoxDomain.Pickle` 约定）。
+
+  字段直出——`declarations` 的 channel atom 与 declaration 模块 atom 原生保留。
+  """
+  @spec dump(t()) :: {:ok, map()}
+  def dump(%__MODULE__{} = preset) do
+    {:ok,
+     %{
+       name: preset.name,
+       declarations: preset.declarations,
+       artifact: preset.artifact,
+       allow_adopt: preset.allow_adopt,
+       metadata: preset.metadata
+     }}
+  end
+
+  @doc "从 plain map 重建 Preset（经 `new/1` 校验生效）。"
+  @spec load(map()) :: {:ok, t()} | {:error, term()}
+  def load(%{} = data), do: new(data)
 end

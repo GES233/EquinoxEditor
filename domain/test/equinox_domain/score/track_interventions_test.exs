@@ -8,7 +8,7 @@ defmodule EquinoxDomain.Score.TrackInterventionsTest do
   alias Zongzi.Util.ID
 
   @tpqn 480
-  @projection %{"C" => {0.0, 0.05}, "V" => {0.05, 0.10}}
+  @projection %{"C" => [0.0, 0.05], "V" => [0.05, 0.10]}
 
   setup do
     {:ok, track} =
@@ -58,18 +58,18 @@ defmodule EquinoxDomain.Score.TrackInterventionsTest do
       {track, b} = insert(track, key, 960)
       {track, c} = insert(track, key, 1920)
 
-      assert {:ok, track, mounted} = mount(track, b.seq_id, {960, 1440})
+      assert {:ok, track, mounted} = mount(track, b.seq_id, [960, 1440])
 
       assert mounted.anchor == {a.seq_id, b.seq_id, c.seq_id}
-      assert mounted.snapshot == %{"V" => {0.05, 0.10}}
-      assert mounted.payload.range == {960, 1440}
+      assert mounted.snapshot == %{"V" => [0.05, 0.10]}
+      assert mounted.payload.range == [960, 1440]
       assert track.interventions == [mounted]
     end
 
     test "首尾音符的锚 nil 侧正确", %{track: track, key: key} do
       {track, a} = insert(track, key, 0)
 
-      assert {:ok, _track, mounted} = mount(track, a.seq_id, {0, 480})
+      assert {:ok, _track, mounted} = mount(track, a.seq_id, [0, 480])
       assert mounted.anchor == {nil, a.seq_id, nil}
     end
 
@@ -77,8 +77,8 @@ defmodule EquinoxDomain.Score.TrackInterventionsTest do
       {track, a} = insert(track, key, 0)
       {:ok, track} = Track.delete_note(track, a.seq_id)
 
-      assert {:error, :not_active} = mount(track, a.seq_id, {0, 480})
-      assert {:error, :not_active} = mount(track, 999_999, {0, 480})
+      assert {:error, :not_active} = mount(track, a.seq_id, [0, 480])
+      assert {:error, :not_active} = mount(track, 999_999, [0, 480])
     end
   end
 
@@ -87,7 +87,7 @@ defmodule EquinoxDomain.Score.TrackInterventionsTest do
          %{track: track, key: key} do
       {track, _a} = insert(track, key, 0)
       {track, b} = insert(track, key, 960)
-      {:ok, track, mounted} = mount(track, b.seq_id, {960, 1440})
+      {:ok, track, mounted} = mount(track, b.seq_id, [960, 1440])
 
       {:ok, track} = Track.delete_note(track, b.seq_id)
       assert {:ok, track, report} = Track.rebase_interventions(track)
@@ -103,7 +103,7 @@ defmodule EquinoxDomain.Score.TrackInterventionsTest do
       {track, _a} = insert(track, key, 0)
       {track, b} = insert(track, key, 960)
       {track, _c} = insert(track, key, 1920)
-      {:ok, track, mounted} = mount(track, b.seq_id, {960, 1440})
+      {:ok, track, mounted} = mount(track, b.seq_id, [960, 1440])
 
       # 拖到 1200（仍在两邻之间，三元组 3/3 匹配 → preserve）
       {:ok, track} = Track.update_note(track, b.seq_id, start_tick: 1200)
@@ -114,7 +114,7 @@ defmodule EquinoxDomain.Score.TrackInterventionsTest do
 
       assert [survived] = track.interventions
       assert survived.id == mounted.id
-      assert survived.payload.range == {1200, 1680}
+      assert survived.payload.range == [1200, 1680]
       # snapshot 由 declaration 管，结构 rebase 不动它
       assert survived.snapshot == mounted.snapshot
     end

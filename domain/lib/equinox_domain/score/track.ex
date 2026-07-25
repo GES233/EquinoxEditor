@@ -24,8 +24,16 @@ defmodule EquinoxDomain.Score.Track do
   组装 `Windowing.Context` 后跑 `EquinoxDomain.Score.SlicePolicy`
   （zongzi 默认 `RestSplit3Beats` + slice_flag 两遍修正）。
   Segment 永不持久化，重切片时从音符全量重建。
+
+  ## 序列化
+
+  `dump/1` / `load/1` 遵循 `EquinoxDomain.Pickle` 原生对象 codec 约定：
+  标量字段直出；`timeline` 经 `Pickle.Timeline`（track_id 由本模块注入）、
+  `notes_by_seq` 经 `Pickle.Note`、`interventions` 经 `Pickle.Intervention`、
+  `presets` 经 `Preset.dump/1` 组合，load 时用 `with` 串联各子 codec。
   """
 
+  alias EquinoxDomain.Pickle
   alias EquinoxDomain.Score.{Project, Track, SliceFlag, SlicePolicy}
   alias EquinoxDomain.Port.Preset
   alias Zongzi.{Anchor, Intervention, Timeline, Windowing}
@@ -294,6 +302,121 @@ defmodule EquinoxDomain.Score.Track do
       Anchor.rebase_all(track.interventions, track.timeline, ctx)
 
     {:ok, %{track | interventions: survived}, %{conflicts: conflicts, decisions: decisions}}
+  end
+
+  # ---- 序列化（EquinoxDomain.Pickle 原生对象 codec） ----
+
+  @doc """
+  摊平为 plain map（遵循 `EquinoxDomain.Pickle` 约定）。
+
+  标量字段直出；`timeline` / `notes_by_seq` / `interventions` / `presets`
+  分别经对应子 codec 组合（`notes_by_seq` 的整数 seq 键原生保留）。
+  """
+  @spec dump(t()) :: {:ok, map()} | {:error, term()}
+  def dump(%__MODULE__{} = track) do
+    with {:ok, timeline} <- Pickle.Timeline.dump(track.timeline),
+         {:ok, notes_by_seq} <- dump_notes(track.notes_by_seq),
+         {:ok, interventions} <- dump_interventions(track.interventions),
+         {:ok, presets} <- dump_presets(track.presets) do
+      {:ok,
+       %{
+         id: track.id,
+         project_id: track.project_id,
+         name: track.name,
+         type: track.type,
+         timeline: timeline,
+         notes_by_seq: notes_by_seq,
+         interventions: interventions,
+         mix_automation: track.mix_automation,
+         gain: track.gain,
+         pan: track.pan,
+         mute: track.mute,
+         solo: track.solo,
+         presets: presets,
+         active_preset: track.active_preset,
+         metadata: track.metadata
+       }}
+    end
+  end
+
+  @doc """
+  从 plain map 重建 Track。
+
+  先 `new/1`（自动建空 Timeline），再把 `Pickle.Timeline.load/2`
+  （注入 track.id）、notes_by_seq、interventions、presets 及其余字段
+  经 `update/2` 写入。
+  """
+  @spec load(map()) :: {:ok, t()} | {:error, term()}
+  def load(%{} = data) do
+    with {:ok, track} <- data |> Map.take([:id, :project_id, :name, :type]) |> new(),
+         {:ok, timeline} <- load_timeline(Map.get(data, :timeline), track.id),
+         {:ok, notes_by_seq} <- load_notes(Map.get(data, :notes_by_seq, %{})),
+         {:ok, interventions} <- load_interventions(Map.get(data, :interventions, [])),
+         {:ok, presets} <- load_presets(Map.get(data, :presets, %{})) do
+      attrs =
+        data
+        |> Map.take([:mix_automation, :gain, :pan, :mute, :solo, :active_preset, :metadata])
+        |> Map.merge(%{
+          timeline: timeline,
+          notes_by_seq: notes_by_seq,
+          interventions: interventions,
+          presets: presets
+        })
+
+      update(track, attrs)
+    end
+  end
+
+  defp dump_notes(notes_by_seq) do
+    map_values_ok(notes_by_seq, &Pickle.Note.dump/1)
+  end
+
+  defp dump_interventions(interventions) do
+    list_values_ok(interventions, &Pickle.Intervention.dump/1)
+  end
+
+  defp dump_presets(presets) do
+    map_values_ok(presets, &Preset.dump/1)
+  end
+
+  defp load_timeline(nil, track_id), do: Timeline.new(track_id)
+  defp load_timeline(dump, track_id), do: Pickle.Timeline.load(dump, track_id)
+
+  defp load_notes(notes_by_seq) do
+    map_values_ok(notes_by_seq, &Pickle.Note.load/1)
+  end
+
+  defp load_interventions(interventions) do
+    list_values_ok(interventions, &Pickle.Intervention.load/1)
+  end
+
+  defp load_presets(presets) do
+    map_values_ok(presets, &Preset.load/1)
+  end
+
+  # 对 map 的值逐个跑 {:ok, _} / {:error, _} 子 codec，任一失败即整体失败
+  defp map_values_ok(map, fun) do
+    Enum.reduce_while(map, {:ok, %{}}, fn {key, value}, {:ok, acc} ->
+      case fun.(value) do
+        {:ok, converted} -> {:cont, {:ok, Map.put(acc, key, converted)}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+  end
+
+  # 对 list 逐个跑子 codec（保持顺序），任一失败即整体失败
+  defp list_values_ok(list, fun) do
+    list
+    |> Enum.reduce_while({:ok, []}, fn value, {:ok, acc} ->
+      case fun.(value) do
+        {:ok, converted} -> {:cont, {:ok, [converted | acc]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, acc} -> {:ok, Enum.reverse(acc)}
+      {:error, _} = err -> err
+    end
   end
 
   # ---- 内部：定位与重定位 ----
