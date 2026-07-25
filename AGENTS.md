@@ -239,11 +239,14 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 16. **Pickle (native-object codec)** — Done: per-type `dump/1` / `load/1` producing plain maps/lists/numbers/binaries/atoms/nil (tuples→lists, structs flattened). `EquinoxDomain.Pickle.*` covers zongzi-owned structs (Note/Key/Timeline/Intervention/tempo & time-sig events); Track/Project/Preset carry their own. The old three-layer `Util.Pickle` is deleted. Channel Declarations must keep payload/snapshot dump-safe. Jason remains a trivial future transform, not implemented.
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
+
+> Handoff from the 2026-07-25 session (approved kernel cleanup plan + verified ui_shell↔kernel coupling findings): `docs/phase2-kernel-handoff.md`.
+
 17. **Domain dependency**: Kernel already declares `:equinox_domain`; delete legacy `Equinox.Domain.*`, replace all references. Add `:zongzi` to kernel when it calls zongzi APIs directly.
 18. **Slicer → Windowing**: Delete the legacy `materialize_segments` path; use `Track.slice/2` → `[Zongzi.Windowing.Segment]`.
 19. **Track API** (done in domain): Editor ops → `Track.insert_note/delete_note/split_note/merge_notes/update_note/apply_slice_flag`, plus `rebase_interventions/1` after each edit batch.
 20. **RenderRequest + AdoptRequest** (done in domain): `RenderRequest.from_window/3` filters survived interventions by scope ∩ window; `AdoptRequest.adopt/3` mounts engine output as an intervention. Kernel side: resolve interventions at check time (`Declaration.resolve_within/2`) and emit curve `data_interventions`.
-21. **Editor / Session adaptation**: Editor ops → Track API. Session manages selection, clipboard, viewport, and per-track Caller state. Note the naming clash: `Equinox.Kernel.Engine` (Orchid runner) vs `Zongzi.Engine` (check/render contract) — rename the runner or implement the zongzi behaviour deliberately.
+21. **Editor / Session adaptation**: Editor ops → Track API. Session manages selection, clipboard, viewport, and per-track Caller state. Note the naming clash: `Equinox.Kernel.Engine` (Orchid runner) vs `Zongzi.Engine` (check/render contract) — **resolved**: the runner was deleted in the oi migration (absorbed by `Oi.execute/2` via `Equinox.Kernel.Runner`); only `Zongzi.Engine` remains.
 
 ### Phase 3 — UI Shell (ui_shell/)
 22. **Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances.
@@ -374,11 +377,11 @@ After Domain is stable:
 
 - [x] `EquinoxDomain.Command.RenderRequest` rewritten (interventions + declarations; `from_window/3` done).
 - [x] `EquinoxDomain.Command.AdoptRequest` rewritten (mount intervention; `adopt/3` done).
-- [ ] Remove `curves`, `synth_override`, `graph`, `cluster` from legacy `%Segment{}` and its `Jason.Encoder` impl.
-- [ ] Add legacy-tolerant loader in `Project.from_json/1` for old payloads.
-- [ ] Update `Session.Context.dispatch_to_plans/1` to build `RenderRequest` per window via `RenderRequest.from_window/3`.
+- [ ] Remove `curves`, `synth_override`, `graph`, `cluster` from legacy `%Segment{}` (its `Jason.Encoder` impl was already removed in the oi migration).
+- [x] ~~Add legacy-tolerant loader in `Project.from_json/1` for old payloads.~~ — obsolete: the kernel legacy JSON chain was removed in the oi migration; project hydration will be rebuilt on domain Pickle + `Zongzi.Timeline.build/1`.
+- [ ] Update `Session.Context.prepare_dispatch/1` (formerly `dispatch_to_plans/1`) to build `RenderRequest` per window via `RenderRequest.from_window/3`.
 - [ ] Define curve channel Declaration(s) and emit curve `data_interventions` in the Compiler (resolve at check time).
-- [ ] Thread curve operations through `Editor.History.Operation`.
+- [ ] Thread curve operations through Session-level undo/redo (Phase 3; the legacy `Equinox.Editor.History` module was removed in the oi migration).
 
 Each step ends on a green `cd kernel && mix precommit`.
 
@@ -408,6 +411,11 @@ Ordered roughly by priority; do not fix opportunistically without a matching com
 1. `Track.remove_segment/2` and `Project.remove_track/2` fail silently — contract mismatch.
 2. `Editor.add_note/4` hard-matches `{:ok, _} = Track.update_segment(...)` — violates error handling convention.
 3. The comments in the `Equinox.Editor.*` module are all in English (likely a legacy of early AI generation), while the comments in other modules are in Chinese. In Phase 2, they will all be in Chinese.
-4. `Session.Server.handle_info/2` only handles task success; failures get swallowed by `Logger.warning("unknown message")`.
-5. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
-6. `Compiler.compile_cache` typespec disagrees with actual shape.
+4. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
+
+Resolved during the oi migration (2026-07): former #4 (`Session.Server.handle_info/2` swallowing render-task failures — now logged distinctly) and #6 (`Compiler.compile_cache` typespec mismatch — cache shape rewritten on `Oi.Compiled`).
+
+Facts after the oi migration:
+
+- The kernel legacy JSON chain (`@derive Jason.Encoder` / `from_json` / `from_attrs` on `Project` / `Track` / `Domain.Segment`) has been removed — the domain Pickle codecs replace it. `Kernel.Graph.*` keeps its `@derive` (SvelteFlow graph persistence is used by ui_shell), and the `:jason` dependency stays.
+- `Equinox.PubSub` naming belongs to ui_shell; kernel has no PubSub code path (`Kernel.Engine`'s never-implemented PubSub moduledoc claim died with that module).

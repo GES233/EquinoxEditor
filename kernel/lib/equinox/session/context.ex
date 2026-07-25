@@ -5,51 +5,48 @@ defmodule Equinox.Session.Context do
   """
 
   alias Equinox.Project
-  alias Equinox.Session.Storage
-  alias Equinox.Kernel.{Blackboard, Compiler, Graph, Planner, RecipeBundle}
+  alias Equinox.Session
+  alias Equinox.Kernel.{Blackboard, Compiler, Runner}
   alias Equinox.Track
-  alias Equinox.Domain.Segment
-
-  @type static_bundles_cache :: %{
-          Segment.id() => {Graph.t(), RecipeBundle.interventions_map(), [RecipeBundle.t()]}
-        }
 
   @type t :: %__MODULE__{
           session_id: atom() | String.t(),
           project: Project.t(),
-          static_bundles_cache: static_bundles_cache(),
+          compile_cache: Compiler.compile_cache(),
           blackboard: Blackboard.t(),
-          storage: Storage.t() | nil,
-          task_supervisor: pid() | atom(),
+          task_supervisor: GenServer.name(),
           render_tasks: Task.t() | nil
         }
   defstruct [
     :session_id,
     :project,
-    :storage,
     :task_supervisor,
-    static_bundles_cache: %{},
+    compile_cache: %{},
     blackboard: nil,
     render_tasks: nil
   ]
 
-  @spec new(atom() | String.t(), Project.t(), Storage.t() | nil, pid() | atom()) :: t()
-  def new(session_id, project, storage, task_supervisor) do
+  @spec new(atom() | String.t(), Project.t()) :: t()
+  def new(session_id, project) do
     %__MODULE__{
       session_id: session_id,
       project: project,
-      storage: storage,
-      task_supervisor: task_supervisor,
+      task_supervisor: Session.task_sup(session_id),
       blackboard: Blackboard.new()
     }
   end
 
-  @spec dispatch_to_plans(t()) :: {t(), Planner.Plan.t() | {:error, term()}}
-  def dispatch_to_plans(%__MODULE__{} = ctx) do
+  @doc """
+  编译全部 Segment 并组装一次渲染 dispatch（`Runner.dispatch()`）。
+
+  编译结果按 Segment 缓存进 Context，供后续编辑-渲染循环增量复用。
+  """
+  @spec prepare_dispatch(t()) :: {t(), Runner.dispatch() | {:error, term()}}
+  def prepare_dispatch(%__MODULE__{} = ctx) do
     all_segments = Enum.flat_map(Project.list_tracks(ctx.project), &Track.list_segments/1)
 
     compiled_results =
-      Enum.map(all_segments, fn seg -> compile_segment(seg, ctx.static_bundles_cache) end)
+      Enum.map(all_segments, fn seg -> Compiler.compile_segment(seg, ctx.compile_cache) end)
 
     case Enum.find(compiled_results, &match?({:error, _}, &1)) do
       {:error, _} = error ->
@@ -59,24 +56,17 @@ defmodule Equinox.Session.Context do
         successful_results =
           Enum.map(compiled_results, fn {:ok, compiled_result} -> compiled_result end)
 
-        {:ok, plan} =
-          successful_results
-          |> Enum.map(fn {id, _, _, bundle} -> {id, bundle} end)
-          |> Planner.build()
+        dispatch = %{session_id: ctx.session_id, units: successful_results}
 
         new_ctx = %{
           ctx
-          | static_bundles_cache:
-              Map.new(successful_results, fn {id, graph, intervention, bundle} ->
-                {id, {graph, intervention, bundle}}
+          | compile_cache:
+              Map.new(successful_results, fn {id, graph, interventions, compiled} ->
+                {id, {graph, interventions, compiled}}
               end)
         }
 
-        {new_ctx, plan}
+        {new_ctx, dispatch}
     end
-  end
-
-  defp compile_segment(%Segment{} = seg, cache) do
-    Compiler.compile_segment(seg, cache)
   end
 end

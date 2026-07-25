@@ -24,48 +24,17 @@ defmodule Equinox.Application do
     alias Equinox.Kernel.StepRegistry
 
     # Synth nodes
-    StepRegistry.register(:phonemizer, %{
-      module: Equinox.Steps.Phonemizer,
-      inputs: [:notes],
-      outputs: [:linguistic],
-      options: []
-    })
-
-    StepRegistry.register(:acoustic_model, %{
-      module: Equinox.Steps.AcousticModel,
-      inputs: [:notes, :linguistic],
-      outputs: [:mel],
-      options: []
-    })
-
-    StepRegistry.register(:vocoder, %{
-      module: Equinox.Steps.Vocoder,
-      inputs: [:mel],
-      outputs: [:audio],
-      options: []
-    })
+    StepRegistry.register(:phonemizer, Equinox.Steps.Phonemizer)
+    StepRegistry.register(:acoustic_model, Equinox.Steps.AcousticModel)
+    StepRegistry.register(:vocoder, Equinox.Steps.Vocoder)
 
     # Arranger nodes
-    StepRegistry.register(:track_input, %{
-      module: Equinox.Steps.TrackInput,
-      inputs: [:audio],
-      outputs: [:track_out],
-      options: [offset_tick: 0, volume: 1.0]
-    })
+    StepRegistry.register(:track_input, Equinox.Steps.TrackInput)
+    StepRegistry.register(:mixer, Equinox.Steps.Mixer)
+    StepRegistry.register(:master_output, Equinox.Steps.Output)
 
-    StepRegistry.register(:mixer, %{
-      module: Equinox.Steps.Mixer,
-      # 可以接受多个输入，Orchid 支持 List
-      inputs: [:tracks],
-      outputs: [:mixed],
-      options: []
-    })
-
-    StepRegistry.register(:master_output, %{
-      module: Equinox.Steps.Output,
-      inputs: [:mixed],
-      outputs: [:master_out],
-      options: []
-    })
+    # Oi.Step 的 manifest 不携带默认选项，运行时默认值由 routine 内的
+    # Keyword.get 兜底；此处补回注册元数据，保持 palette 契约不变。
+    StepRegistry.register_options(:track_input, offset_tick: 0, volume: 1.0)
   end
 end

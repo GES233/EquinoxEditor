@@ -16,21 +16,5 @@ defmodule Equinox.TrackTest do
       assert track.parameters == %{}
       assert track.segments == %{}
     end
-
-    test "JSON encoding" do
-      track =
-        Track.new(%{
-          name: "Vocal",
-          topology_ref: "diffsinger:v1",
-          gain: 0.75,
-          ui_state: %{arranger_position: %{x: 64, y: 96}}
-        })
-
-      json = Jason.encode!(track)
-      assert json =~ "Vocal"
-      assert json =~ "diffsinger:v1"
-      assert json =~ "\"gain\":0.75"
-      assert json =~ "arranger_position"
-    end
   end
 end

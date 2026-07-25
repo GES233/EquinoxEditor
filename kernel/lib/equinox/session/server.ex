@@ -1,13 +1,16 @@
 defmodule Equinox.Session.Server do
   @moduledoc """
   管理会话及项目后台状态。
+
+  init 时通过 `Oi.Runtime.Session.ensure_started/2` 建立会话基础设施
+  （symbiont scope / Task.Supervisor / stratum storage），terminate 时对应销毁。
   """
   use GenServer
   require Logger
 
   alias Equinox.Session.Context
   alias Equinox.Project
-  alias Equinox.Kernel.Dispatcher
+  alias Equinox.Kernel.Runner
 
   def start_link(opts) do
     with {:ok, session_id} <- Keyword.fetch(opts, :session_id) do
@@ -28,10 +31,25 @@ defmodule Equinox.Session.Server do
   @impl true
   def init(opts) do
     session_id = Keyword.fetch!(opts, :session_id)
-    project = Keyword.get(opts, :project, Project.new(id: session_id))
-    storage = Keyword.get(opts, :storage)
-    task_supervisor = Keyword.fetch!(opts, :task_supervisor)
-    {:ok, Context.new(session_id, project, storage, task_supervisor)}
+
+    oi_opts = [orchid_symbiont_strict: Keyword.get(opts, :orchid_symbiont_strict, false)]
+
+    case Oi.Runtime.Session.ensure_started(session_id, oi_opts) do
+      {:ok, _pid} ->
+        # trap_exit 使监督者 shutdown 也会触发 terminate/2，保证 Oi 会话被销毁
+        Process.flag(:trap_exit, true)
+        project = Keyword.get(opts, :project, Project.new(id: session_id))
+        {:ok, Context.new(session_id, project)}
+
+      other ->
+        {:stop, {:oi_session_start_failed, other}}
+    end
+  end
+
+  @impl true
+  def terminate(_reason, %Context{session_id: session_id}) do
+    _ = Oi.Runtime.Session.stop(session_id)
+    :ok
   end
 
   @impl true
@@ -46,21 +64,30 @@ defmodule Equinox.Session.Server do
 
   @impl true
   def handle_cast({:dispatch, dispatch_opts}, %Context{} = state) do
-    case Context.dispatch_to_plans(state) do
-      {_legacy_state, {:error, _}} = _err ->
+    case Context.prepare_dispatch(state) do
+      {_state, {:error, reason}} ->
+        Logger.error("Dispatch preparation failed!\n\nReason: #{inspect(reason)}")
         {:noreply, state}
 
-      {%Context{} = new_state, plan} ->
+      {%Context{} = new_state, dispatch} ->
         cancel_pending_task(state)
-        task = start_render_task(new_state, plan, dispatch_opts)
+        task = start_render_task(new_state, dispatch, dispatch_opts)
         {:noreply, %{new_state | render_tasks: task}}
     end
   end
 
   @impl true
-  def handle_info({ref, {:ok, new_board}}, %Context{render_tasks: %{ref: ref}} = state) do
+  def handle_info({ref, result}, %Context{render_tasks: %{ref: ref}} = state) do
     Process.demonitor(ref, [:flush])
-    {:noreply, %{state | blackboard: new_board, render_tasks: nil}}
+
+    case result do
+      {:ok, new_board} ->
+        {:noreply, %{state | blackboard: new_board, render_tasks: nil}}
+
+      {:error, reason} ->
+        Logger.error("Render task failed!\n\nReason: #{inspect(reason)}")
+        {:noreply, %{state | render_tasks: nil}}
+    end
   end
 
   @impl true
@@ -87,10 +114,10 @@ defmodule Equinox.Session.Server do
     Task.Supervisor.terminate_child(task_supervisor, pid)
   end
 
-  defp start_render_task(%Context{task_supervisor: task_supervisor} = state, plan, opts) do
+  defp start_render_task(%Context{task_supervisor: task_supervisor} = state, dispatch, opts) do
     Task.Supervisor.async_nolink(
       task_supervisor,
-      fn -> Dispatcher.dispatch(plan, state.blackboard, opts) end
+      fn -> Runner.run(dispatch, state.blackboard, opts) end
     )
   end
 end

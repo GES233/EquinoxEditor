@@ -27,25 +27,6 @@ defmodule Equinox.Track do
           extra: map()
         }
 
-  @derive {Jason.Encoder,
-           only: [
-             :id,
-             :project_id,
-             :type,
-             :name,
-             :topology_ref,
-             :synth_graph,
-             :color,
-             :gain,
-             :pan,
-             :mute,
-             :solo,
-             :insert_fx_chain,
-             :ui_state,
-             :parameters,
-             :segments,
-             :extra
-           ]}
   defstruct [
     :id,
     :project_id,
@@ -87,22 +68,6 @@ defmodule Equinox.Track do
       segments: Map.get(attrs, :segments, %{}),
       extra: Map.get(attrs, :extra, %{})
     }
-  end
-
-  @doc "从 JSON Map 反序列化并构造嵌套结构体"
-  def from_attrs(attrs) do
-    attrs = Equinox.Util.Attrs.normalize(attrs)
-
-    segments =
-      Map.get(attrs, :segments, %{})
-      |> Map.new(fn {k, v} -> {k, Segment.from_attrs(v)} end)
-
-    synth_graph = Map.get(attrs, :synth_graph)
-
-    attrs
-    |> Map.put(:segments, segments)
-    |> Map.put(:synth_graph, synth_graph)
-    |> new()
   end
 
   @spec add_segment(t(), Segment.t()) :: {:ok, t()} | {:error, :already_exists}

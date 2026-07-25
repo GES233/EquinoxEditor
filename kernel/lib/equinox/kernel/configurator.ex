@@ -42,4 +42,18 @@ defmodule Equinox.Kernel.Configurator do
       end
     end)
   end
+
+  @doc "将模块式插件链翻译为 Oi 的 `orchid_adapters`（1-arity 函数列表，顺序保持）。"
+  @spec as_orchid_adapters(t()) :: [
+          ({Orchid.Recipe.t(), keyword()} -> {Orchid.Recipe.t(), keyword()})
+        ]
+  def as_orchid_adapters(%__MODULE__{plugins: plugins}) do
+    Enum.map(plugins, fn
+      {plugin_module, context} when is_atom(plugin_module) ->
+        fn orchid_tuple -> plugin_module.apply_plugin(orchid_tuple, context) end
+
+      plugin_module when is_atom(plugin_module) ->
+        fn orchid_tuple -> plugin_module.apply_plugin(orchid_tuple, nil) end
+    end)
+  end
 end

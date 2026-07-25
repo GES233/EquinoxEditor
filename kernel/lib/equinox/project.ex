@@ -1,7 +1,7 @@
 defmodule Equinox.Project do
   @moduledoc """
   顶层会话容器 (Pure Data)。
-  拥有节拍图、轨道列表。完全可以通过 JSON 序列化和反序列化。
+  拥有节拍图、轨道列表。
   """
 
   alias Equinox.Track
@@ -20,17 +20,6 @@ defmodule Equinox.Project do
           extra: map()
         }
 
-  @derive {Jason.Encoder,
-           only: [
-             :id,
-             :name,
-             :version,
-             :tempo_map,
-             :ticks_per_beat,
-             :tracks,
-             :arranger_graph,
-             :extra
-           ]}
   defstruct [
     :id,
     name: "Untitled Project",
@@ -57,35 +46,6 @@ defmodule Equinox.Project do
       arranger_graph: Map.get(attrs, :arranger_graph),
       extra: Map.get(attrs, :extra, %{})
     }
-  end
-
-  @doc "序列化为格式化的 JSON"
-  @spec to_json(t()) :: String.t()
-  def to_json(%__MODULE__{} = project) do
-    Jason.encode!(project, pretty: true)
-  end
-
-  @doc "从 JSON 字符串反序列化为完整的 Project 结构体（Hydration）"
-  @spec from_json(String.t()) :: t()
-  def from_json(json_string) when is_binary(json_string) do
-    attrs = Jason.decode!(json_string, keys: :atoms)
-
-    # 递归反序列化嵌套结构
-    tracks =
-      Map.get(attrs, :tracks, %{})
-      |> Map.new(fn {track_id, track_attrs} ->
-        # JSON parse 出来的 track_id 可能是 string 也可能是 atom，保持原样作为 key
-        {track_id, Track.from_attrs(track_attrs)}
-      end)
-
-    arranger_graph = Map.get(attrs, :arranger_graph)
-
-    # TODO: 当我们实现完整的反序列化时，这里可能需要调用 Graph.from_json() 等，目前暂存原始 Map
-
-    attrs
-    |> Map.put(:tracks, tracks)
-    |> Map.put(:arranger_graph, arranger_graph)
-    |> new()
   end
 
   # --- 轨道操作 ---

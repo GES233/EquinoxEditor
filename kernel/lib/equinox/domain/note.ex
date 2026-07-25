@@ -1,5 +1,6 @@
 defmodule Equinox.Domain.Note do
   @moduledoc """
+  【冻结】遗留类型，Phase 2 将由 EquinoxDomain/zongzi 类型取代，禁止新增依赖。
   离散音符事件 (Pure Data)。
   采用 Tick 作为绝对时间单位。
   """

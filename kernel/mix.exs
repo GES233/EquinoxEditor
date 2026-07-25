@@ -12,8 +12,7 @@ defmodule EquinoxKernel.MixProject do
       deps: deps(),
       test_coverage: [
         ignore_modules: [
-          ~r/.*Step.*/,
-          ~r/Jason.Encoder.*/
+          ~r/.*Step.*/
         ]
       ]
     ]

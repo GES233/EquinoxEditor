@@ -115,6 +115,15 @@ defmodule Equinox.Kernel.Graph do
         multiple -> multiple
       end
     end
+
+    @doc "转换为 `Oi.Topology.Cluster`（编译期一次性投影，字段直传）。"
+    @spec to_oi(t()) :: Oi.Topology.Cluster.t()
+    def to_oi(%__MODULE__{} = cluster) do
+      %Oi.Topology.Cluster{
+        node_colors: cluster.node_colors,
+        merge_groups: cluster.merge_groups
+      }
+    end
   end
 
   @type t(container_type) :: %__MODULE__{
@@ -280,5 +289,36 @@ defmodule Equinox.Kernel.Graph do
       end)
 
     do_topo_sort(new_zero_nodes, new_in_degrees, out_edges, total, [node_id | sorted_acc])
+  end
+
+  @doc """
+  转换为 `Oi.Topology.Graph`（编译期一次性投影）。
+
+  Node/Edge 字段级同构；in_edges/out_edges 索引由 Oi 侧的 add_node/add_edge 重建。
+  源图含自环时抛出 MatchError（Equinox Graph 的正常构造路径不可能产生自环）。
+  """
+  @spec to_oi_graph(t()) :: Oi.Topology.Graph.t()
+  def to_oi_graph(%__MODULE__{} = graph) do
+    alias Oi.Topology.Graph, as: OiGraph
+
+    oi_graph =
+      Enum.reduce(graph.nodes, OiGraph.new(), fn {_id, node}, acc ->
+        OiGraph.add_node(acc, %OiGraph.Node{
+          id: node.id,
+          container: node.container,
+          inputs: node.inputs,
+          outputs: node.outputs,
+          options: node.options,
+          extra: node.extra
+        })
+      end)
+
+    Enum.reduce(graph.edges, oi_graph, fn edge, acc ->
+      %OiGraph{} =
+        OiGraph.add_edge(
+          acc,
+          OiGraph.Edge.new(edge.from_node, edge.from_port, edge.to_node, edge.to_port)
+        )
+    end)
   end
 end

@@ -70,16 +70,12 @@ defmodule Equinox.OverallTest do
     session_id = "overall-session"
     assert {:error, :session_not_found} = Session.resolve(session_id)
 
-    task_supervisor = start_supervised!({Task.Supervisor, name: Session.task_sup(session_id)})
-
     server_pid =
       start_supervised!(
         Server.child_spec(
           session_id: session_id,
           name: Session.server(session_id),
-          project: project,
-          storage: nil,
-          task_supervisor: task_supervisor
+          project: project
         )
       )
 
@@ -91,6 +87,7 @@ defmodule Equinox.OverallTest do
 
     assert {:ok, server_pid_from_registry} = Session.resolve(session_id)
     assert is_pid(server_pid_from_registry)
+    assert {:ok, _oi_pid} = Oi.Runtime.Session.resolve(session_id)
     project_in_session = GenServer.call(Session.server(session_id), {:get_project})
     assert project_in_session.name == "Overall Flow"
 
@@ -103,12 +100,12 @@ defmodule Equinox.OverallTest do
     assert {:error, {:already_started, _pid}} =
              Server.start_link(
                session_id: session_id,
-               name: Session.server(session_id),
-               task_supervisor: task_supervisor
+               name: Session.server(session_id)
              )
 
     assert :ok = GenServer.stop(server_pid)
     # 这个断言偶尔会因为编译缓存的关系报错
     assert {:error, :session_not_found} = Session.resolve(session_id)
+    assert {:error, :session_not_found} = Oi.Runtime.Session.resolve(session_id)
   end
 end

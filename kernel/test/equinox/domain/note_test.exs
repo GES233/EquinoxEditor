@@ -4,7 +4,7 @@ defmodule Equinox.Domain.NoteTest do
   alias Equinox.Domain.Note
 
   describe "slice flag helpers" do
-    test "recognizes slice start flags without Slicer dependency" do
+    test "recognizes slice start flags" do
       assert Note.slice_start?({:on_start, "slice-a"})
       refute Note.slice_start?(:on_end)
       refute Note.slice_start?(nil)

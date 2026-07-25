@@ -10,23 +10,5 @@ defmodule Equinox.Domain.SegmentTest do
       assert segment.notes == []
       assert segment.curves == %{}
     end
-
-    test "JSON encoding ignores graph and cluster" do
-      segment =
-        Segment.new(%{
-          name: "Chorus",
-          offset_tick: 1920,
-          synth_override: %{provider: "diffsinger"},
-          graph: %Equinox.Kernel.Graph{}
-        })
-
-      json = Jason.encode!(segment)
-
-      assert json =~ "Chorus"
-      assert json =~ "offset_tick"
-      assert json =~ "synth_override"
-      # Should not contain graph key since it's excluded in only: [...] list
-      refute json =~ "graph"
-    end
   end
 end

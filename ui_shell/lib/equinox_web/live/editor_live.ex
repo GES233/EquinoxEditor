@@ -201,7 +201,6 @@ defmodule EquinoxWeb.EditorLive do
             id="slicer-island"
             phx-update="ignore"
           >
-            <!-- 插入 Slicer -->
           </div>
 
           <.live_component
