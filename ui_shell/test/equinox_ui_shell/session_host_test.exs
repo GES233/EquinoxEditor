@@ -1,13 +1,15 @@
 defmodule EquinoxUIShell.SessionHostTest do
   use ExUnit.Case, async: false
 
-  alias Equinox.Project
   alias Equinox.Session
+  alias Equinox.Session.Server
+  alias EquinoxDomain.Score.Project
   alias EquinoxUIShell.SessionHost
+  alias Zongzi.Util.ID
 
   test "session host starts and stops session trees" do
     session_id = "ui-shell-session"
-    project = Project.new(name: "UI Shell Session")
+    {:ok, project} = Project.new(id: ID.generate_id("Project_"), name: "UI Shell Session")
 
     assert {:error, :session_not_found} = Session.resolve(session_id)
     assert {:ok, _pid} = SessionHost.start_session(session_id, project: project)
@@ -19,13 +21,28 @@ defmodule EquinoxUIShell.SessionHostTest do
     assert {:ok, server_pid} = Session.resolve(session_id)
     assert is_pid(server_pid)
 
-    assert %Project{name: "UI Shell Session"} =
-             GenServer.call(Session.server(session_id), {:get_project})
+    assert %{project: %Project{name: "UI Shell Session"}} =
+             Server.get_view(Session.server(session_id))
 
     assert {:error, {:already_started, _}} =
              SessionHost.start_session(session_id, project: project)
 
     assert :ok = SessionHost.stop_session(session_id)
-    assert {:error, :session_not_found} = Session.resolve(session_id)
+    assert_session_gone(session_id)
+  end
+
+  # Registry 注销走 monitor 异步清理，terminate_child 返回后需短暂等待
+  defp assert_session_gone(session_id, attempts \\ 20)
+  defp assert_session_gone(_session_id, 0), do: flunk("session still registered after stop")
+
+  defp assert_session_gone(session_id, attempts) do
+    case Session.resolve(session_id) do
+      {:error, :session_not_found} ->
+        :ok
+
+      {:ok, _pid} ->
+        Process.sleep(10)
+        assert_session_gone(session_id, attempts - 1)
+    end
   end
 end

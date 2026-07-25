@@ -33,7 +33,7 @@ Development follows a strict bottom-up dependency order:
 
 ### EquinoxDomain — Independent Domain Project
 
-The `EquinoxDomain` module lives in `domain/` as a **separate Elixir project** (`:equinox_domain`) whose only dependency is `{:zongzi, path: "../../zongzi"}`. It is the canonical home for all domain types and pure business logic. The `kernel/lib/equinox/domain/` directory is frozen — all new development targets `domain/`.
+The `EquinoxDomain` module lives in `domain/` as a **separate Elixir project** (`:equinox_domain`) whose only dependency is `{:zongzi, path: "../../zongzi"}`. It is the canonical home for all domain types and pure business logic. The legacy kernel domain types (`kernel/lib/equinox/domain/`, `Equinox.Track`, `Equinox.Project`) were deleted in the Phase 2 mid-stage migration — kernel and ui_shell consume `EquinoxDomain.*` + zongzi types directly.
 
 **Project location**: `domain/` (root-level, sibling to `kernel/` and `ui_shell/`)
 
@@ -72,7 +72,7 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 - **Domain-First Development**: `EquinoxDomain.*` (in `domain/`) is the cornerstone of the project. All domain models (data structures + pure functional logic) must be completed and thoroughly tested at this layer before development of the Kernel or UI Shell can begin. The Domain project's only allowed dependency is zongzi; it is prohibited from depending on Kernel or UI modules.💡
 - **Pure Data**: `Project`, `Track`, `Zongzi.Score.Note`, `Phoneme` are pure data structures (JSON/Pickle serializable). `Segment` is also of type Domain, but its `phonemes` and `curves` fields are cached at runtime and do not participate in serialization. No Ecto schemas, no executable closures inside them.
 - **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte.
-- **Stateless Kernel**: The Kernel (`Equinox.Kernel.*`) is pure-functional wherever possible. Domain types come from `EquinoxDomain.*`. Persistent state lives in downstream consumers (`Equinox.Session.Server`, `ui_shell`). The only tolerated stateful Kernel component is `Equinox.Kernel.StepRegistry` (build-time catalog, not session state). `Equinox.Editor.*` is partially obsolete and is no longer considered an independent concept. 💡
+- **Headless-capable Kernel**: Kernel business logic (`Equinox.Kernel.*`) stays pure-functional; Domain types come from `EquinoxDomain.*`. Per the 2026-07-25 decision, the Kernel MAY hold session state as a headless editor — `Equinox.Session.Server`/`Context` own the per-session project, synth graphs, compile cache, and render tasks behind named editing APIs. `Equinox.Kernel.StepRegistry` remains a build-time catalog (not session state). `Equinox.Editor.*` was deleted in the Phase 2 mid-stage migration; its operations were absorbed into `Session.Server` + domain Track/Project APIs. 💡
 - **Windowing Model**: Windowing is a pure one-way projection `Notes → [Zongzi.Windowing.Segment]` executed by `Zongzi.Windowing` strategies (`Track.slice/2`, pipeline `[EquinoxDomain.Score.SlicePolicy]`). Segments are transient and recomputed from scratch after edits — there is no slice-repair step. `slice_flag` in `Note.metadata` is an *input signal* for the strategy, not a post-hoc synchronization channel. 💡
 - **Interventions belong to Track, anchored structurally**: Continuous parameter data (pitch, energy, breathiness, …), phoneme-timing edits, and adopted engine output are stored as `Zongzi.Intervention`s in `Track.interventions` — anchored on SeqID triplets (default `Anchor.NoteTriplet`) with snapshot / `Declaration.resolve` semantics. They are never keyed by tick ranges or window ids. At request time, `RenderRequest.from_window/3` filters survived interventions by `Declaration.scope` ∩ window; semantic resolution happens later at engine check time. 💡
 - **UI Layout Hierarchy**:
@@ -127,6 +127,7 @@ These remain product / shell / Orchid concerns; they are **not** duplicated into
 
 - **slice_flag semantics** — Caller-side windowing override (`Note.metadata` + `Score.SliceFlag` + `Score.SlicePolicy`); deliberately not upstreamed, since zongzi removed the field.
 - **Track as zongzi Caller** — timeline/notes_by_seq/interventions trio, sync contract, `rebase_interventions/1` orchestration.
+- **synth_graph Session-side storage** — graph/cluster are Kernel compile-time concepts; during the Phase 2 interim they live in `Session.Context.graphs` (`%{track_id => Graph.t()}`) and move into `RenderRequest` with item 20.
 - **Domain–Kernel–Session–UI layering** (`EquinoxDomain` vs Kernel import bans)
 - **RenderRequest / Compiler / Orchid Hook** wiring (`param_name → port`)
 - **Raster NIF placement** in Kernel (Domain keeps pure reference)
@@ -242,9 +243,9 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 
 > Handoff from the 2026-07-25 session (approved kernel cleanup plan + verified ui_shell↔kernel coupling findings): `docs/phase2-kernel-handoff.md`.
 
-17. **Domain dependency**: Kernel already declares `:equinox_domain`; delete legacy `Equinox.Domain.*`, replace all references. Add `:zongzi` to kernel when it calls zongzi APIs directly.
-18. **Slicer → Windowing**: Delete the legacy `materialize_segments` path; use `Track.slice/2` → `[Zongzi.Windowing.Segment]`.
-19. **Track API** (done in domain): Editor ops → `Track.insert_note/delete_note/split_note/merge_notes/update_note/apply_slice_flag`, plus `rebase_interventions/1` after each edit batch.
+17. **Domain dependency** — done (Phase 2 mid-stage): legacy `Equinox.{Track, Project, Editor, Domain.*, Util.{Id, Attrs}}` deleted; kernel and ui_shell consume `EquinoxDomain.*` + zongzi directly (`:zongzi` path dep added to both).
+18. **Slicer → Windowing** — done: the legacy `materialize_segments` path is gone; `Track.slice/2` → `[Zongzi.Windowing.Segment]` drives dispatch (unit id `{track_id, window.start_tick}`; the UI's "segment" is a presenter-side simulation over windows).
+19. **Track API** — done: domain Track CRUD + `rebase_interventions/1` are wired through `Session.Server` named editing APIs (`add_track` / `remove_track` / `update_track_mix` / `update_track_ui_state` / `replace_window_notes` / `update_synth_graph`); synth graphs live in `Session.Context.graphs` until item 20 moves them into `RenderRequest`.
 20. **RenderRequest + AdoptRequest** (done in domain): `RenderRequest.from_window/3` filters survived interventions by scope ∩ window; `AdoptRequest.adopt/3` mounts engine output as an intervention. Kernel side: resolve interventions at check time (`Declaration.resolve_within/2`) and emit curve `data_interventions`.
 21. **Editor / Session adaptation**: Editor ops → Track API. Session manages selection, clipboard, viewport, and per-track Caller state. Note the naming clash: `Equinox.Kernel.Engine` (Orchid runner) vs `Zongzi.Engine` (check/render contract) — **resolved**: the runner was deleted in the oi migration (absorbed by `Oi.execute/2` via `Equinox.Kernel.Runner`); only `Zongzi.Engine` remains.
 
@@ -408,10 +409,9 @@ Kernel does not ship a reference Hook. Curves integration delivers the contract 
 
 Ordered roughly by priority; do not fix opportunistically without a matching commit plan.
 
-1. `Track.remove_segment/2` and `Project.remove_track/2` fail silently — contract mismatch.
-2. `Editor.add_note/4` hard-matches `{:ok, _} = Track.update_segment(...)` — violates error handling convention.
-3. The comments in the `Equinox.Editor.*` module are all in English (likely a legacy of early AI generation), while the comments in other modules are in Chinese. In Phase 2, they will all be in Chinese.
-4. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
+Former #1–#3 (`Track.remove_segment/2` + `Project.remove_track/2` silent failures, `Editor.add_note/4` hard-match, English-only `Equinox.Editor.*` comments) disappeared with the legacy modules in the Phase 2 mid-stage migration. Remaining:
+
+1. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
 
 Resolved during the oi migration (2026-07): former #4 (`Session.Server.handle_info/2` swallowing render-task failures — now logged distinctly) and #6 (`Compiler.compile_cache` typespec mismatch — cache shape rewritten on `Oi.Compiled`).
 

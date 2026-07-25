@@ -1,8 +1,14 @@
 defmodule EquinoxWeb.EditorLive do
   use EquinoxWeb, :live_view
 
-  alias Equinox.Project
-  alias EquinoxUIShell.SessionHost
+  require Logger
+
+  alias Equinox.Session.Server
+  alias EquinoxDomain.Score.{Project, Track}
+  alias EquinoxUIShell.{ProjectPresenter, SessionHost}
+  alias Zongzi.Score.Key.TwelveET
+  alias Zongzi.Score.Tempo
+  alias Zongzi.Util.ID
 
   @graph_translator Application.compile_env(
                       :equinox_ui_shell,
@@ -12,9 +18,10 @@ defmodule EquinoxWeb.EditorLive do
 
   def mount(_params, _session, socket) do
     if connected?(socket) do
-      # 握手时初始化一个 Session
+      # 握手时初始化一个 Session；demo 工程经 child_spec 的 project opt 注入
+      # （重复连接时 Session 已存在，start_session 返回 already_started，幂等）
       session_id = "default_session"
-      SessionHost.start_session(session_id)
+      SessionHost.start_session(session_id, project: build_default_proj())
       # 这里可以按需 subscribe 等待 engine 的事件
 
       send(self(), :push_initial_state)
@@ -31,16 +38,14 @@ defmodule EquinoxWeb.EditorLive do
   end
 
   def handle_info(:push_initial_state, socket) do
-    # 1. Provide project initial state
-    project = build_default_proj()
-    context = build_editor_context(project)
-
-    GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:update_project, project})
+    # 1. 推工程初始状态（Session 视图 → presenter → 前端 TS 形状）
+    view = Server.get_view(server(socket))
+    context = build_editor_context(view.project)
 
     socket =
       socket
       |> assign_editor_context(context)
-      |> push_project_state(project)
+      |> push_project_state(view)
       |> push_editor_context(context)
 
     # 2. Fetch nodes from registry
@@ -83,8 +88,8 @@ defmodule EquinoxWeb.EditorLive do
   end
 
   def handle_info({:select_track, track_id}, socket) do
-    project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
-    context = build_editor_context(project, track_id, nil, "track")
+    view = Server.get_view(server(socket))
+    context = build_editor_context(view.project, track_id, nil, "track")
 
     socket =
       socket
@@ -95,8 +100,8 @@ defmodule EquinoxWeb.EditorLive do
   end
 
   def handle_info({:focus_segment, track_id, segment_id}, socket) do
-    project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
-    context = build_editor_context(project, track_id, segment_id, "segment")
+    view = Server.get_view(server(socket))
+    context = build_editor_context(view.project, track_id, segment_id, "segment")
 
     socket =
       socket
@@ -106,10 +111,13 @@ defmodule EquinoxWeb.EditorLive do
     {:noreply, socket}
   end
 
-  def handle_info({:project_updated, project}, socket) do
+  def handle_info(:project_updated, socket) do
+    # 统一从 Session 重取视图再重推（不带 payload；窗口边界可能已变，context 重新解析）
+    view = Server.get_view(server(socket))
+
     context =
       build_editor_context(
-        project,
+        view.project,
         socket.assigns.current_track_id,
         socket.assigns.current_segment_id,
         socket.assigns.current_scope
@@ -118,40 +126,26 @@ defmodule EquinoxWeb.EditorLive do
     socket =
       socket
       |> assign_editor_context(context)
-      |> push_project_state(project)
+      |> push_project_state(view)
       |> push_editor_context(context)
 
     {:noreply, socket}
   end
 
   def handle_event("synth_graph_update", payload, socket) do
-    IO.puts("Received topology update from NodeEditor:")
-
     track_id = Map.get(payload, "track_id", socket.assigns.current_track_id)
     nodes = Map.get(payload, "nodes", [])
     edges = Map.get(payload, "edges", [])
 
     {:ok, synth_graph} = @graph_translator.to_graph(nodes, edges)
 
-    # 更新 Session/Project (这里临时只推入 default_session)
-    project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
+    case Server.update_synth_graph(server(socket), track_id, synth_graph) do
+      :ok ->
+        :ok
 
-    updated_project =
-      case Project.get_track(project, track_id) do
-        {:ok, track} ->
-          updated_track = %{track | synth_graph: synth_graph}
-          {:ok, new_proj} = Project.update_track(project, track_id, updated_track)
-          new_proj
-
-        {:error, _} ->
-          project
-      end
-
-    # 理论上应该通过 Command 机制更新，这里简化处理
-    GenServer.call(
-      Equinox.Session.server(socket.assigns.session_id),
-      {:update_project, updated_project}
-    )
+      {:error, reason} ->
+        Logger.warning("update_synth_graph failed: #{inspect(reason)}")
+    end
 
     socket =
       socket
@@ -162,7 +156,7 @@ defmodule EquinoxWeb.EditorLive do
         scope: "track_synth"
       })
 
-    send(self(), {:project_updated, updated_project})
+    send(self(), :project_updated)
 
     {:noreply, socket}
   end
@@ -171,10 +165,7 @@ defmodule EquinoxWeb.EditorLive do
     IO.puts("Triggering render pipeline via Session.Server dispatcher...")
 
     # 触发 Orchid 渲染流程
-    GenServer.cast(
-      Equinox.Session.server(socket.assigns.session_id),
-      {:dispatch, [concurrency: 4, timeout: 5000]}
-    )
+    Server.dispatch(server(socket), concurrency: 4, timeout: 5000)
 
     {:noreply, socket}
   end
@@ -195,14 +186,6 @@ defmodule EquinoxWeb.EditorLive do
       <div class="flex-1 flex p-4 gap-4">
         <!-- Left panel: Piano Roll & Arranger -->
         <div class="flex-1 flex flex-col gap-4">
-          <!-- phx-update="ignore" is required so LiveView doesn't destroy Svelte's DOM -->
-          <div
-            class="flex-1 border border-zinc-700 rounded overflow-hidden"
-            id="slicer-island"
-            phx-update="ignore"
-          >
-          </div>
-
           <.live_component
             module={EquinoxWeb.EditorLive.PianoRollComponent}
             id="piano-roll-island"
@@ -233,8 +216,10 @@ defmodule EquinoxWeb.EditorLive do
 
   ## 一些 Private functions
 
-  defp push_project_state(socket, %Project{} = project) do
-    push_event(socket, "project_load", project)
+  defp server(socket), do: Equinox.Session.server(socket.assigns.session_id)
+
+  defp push_project_state(socket, view) do
+    push_event(socket, "project_load", ProjectPresenter.to_frontend(view))
   end
 
   defp push_editor_context(socket, context) do
@@ -276,58 +261,57 @@ defmodule EquinoxWeb.EditorLive do
 
   defp resolve_segment_id(_project, nil, _preferred_segment_id), do: nil
 
+  # segment 即窗口投影：preferred 失配（窗口边界已变 / 不存在）时回落首个 window id
   defp resolve_segment_id(%Project{} = project, track_id, preferred_segment_id) do
-    with {:ok, track} <- Project.get_track(project, track_id) do
-      case preferred_segment_id && Map.fetch(track.segments, preferred_segment_id) do
-        {:ok, _segment} ->
-          preferred_segment_id
+    with {:ok, track} <- Project.get_track(project, track_id),
+         {:ok, windows} <- Track.slice(track) do
+      window_ids =
+        windows
+        |> Enum.map(&ProjectPresenter.window_id(&1.start_tick))
+        |> Enum.sort()
 
-        _ ->
-          track.segments
-          |> Map.keys()
-          |> Enum.sort_by(&to_string/1)
-          |> List.first()
+      if preferred_segment_id && preferred_segment_id in window_ids do
+        preferred_segment_id
+      else
+        List.first(window_ids)
       end
     else
       {:error, _} -> nil
     end
   end
 
+  # demo 工程：一轨两音符（绝对 tick 0 / 240，同窗口），tempo Step 120
   defp build_default_proj do
-    Equinox.Project.new(%{
-      name: "Equinox Default Session",
-      tracks: %{
-        "track_1" =>
-          Equinox.Track.new(
-            id: "track_1",
-            type: "synth",
-            name: "Main Vocal",
-            gain: 0.8,
-            ui_state: %{arranger_position: %{x: 50, y: 30}},
-            segments: %{
-              "seg_1" =>
-                Equinox.Domain.Segment.new(%{
-                  id: "seg_1",
-                  track_id: "track_1",
-                  offset_tick: 480,
-                  notes: [
-                    Equinox.Domain.Note.new(%{
-                      start_tick: 0,
-                      duration_tick: 240,
-                      key: 60,
-                      lyric: "a"
-                    }),
-                    Equinox.Domain.Note.new(%{
-                      start_tick: 240,
-                      duration_tick: 480,
-                      key: 62,
-                      lyric: "ha"
-                    })
-                  ]
-                })
-            }
-          )
-      }
-    })
+    {:ok, key1} = TwelveET.new(60)
+    {:ok, key2} = TwelveET.new(62)
+
+    {:ok, project} =
+      Project.new(
+        id: ID.generate_id("Project_"),
+        name: "Equinox Default Session",
+        tempo_map: [step_tempo_event(120)]
+      )
+
+    {:ok, track} =
+      Track.new(
+        id: "track_1",
+        name: "Main Vocal",
+        gain: 0.8,
+        metadata: %{"ui_state" => %{arranger_position: %{x: 50, y: 30}}}
+      )
+
+    {:ok, track, _note1} =
+      Track.insert_note(track, %{start_tick: 0, duration_tick: 240, key: key1, lyric: "a"})
+
+    {:ok, track, _note2} =
+      Track.insert_note(track, %{start_tick: 240, duration_tick: 480, key: key2, lyric: "ha"})
+
+    {:ok, project} = Project.add_track(project, track)
+    project
+  end
+
+  # zongzi tempo 源事件：`{tick, %Tempo.Event{module, context}}`
+  defp step_tempo_event(bpm) do
+    {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: bpm}}}
   end
 end

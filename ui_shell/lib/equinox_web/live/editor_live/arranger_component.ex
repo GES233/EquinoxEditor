@@ -1,7 +1,9 @@
 defmodule EquinoxWeb.EditorLive.ArrangerComponent do
   use EquinoxWeb, :live_component
 
-  alias Equinox.{Editor, Project, Track}
+  require Logger
+
+  alias Equinox.Session.Server
 
   def render(assigns) do
     ~H"""
@@ -33,29 +35,28 @@ defmodule EquinoxWeb.EditorLive.ArrangerComponent do
   end
 
   def handle_event("add_external_node", %{"label" => label}, socket) do
-    project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
+    # TS 侧只发 label；type 在此边界显式固定为 :external_audio
+    case Server.add_track(server(socket), %{type: :external_audio, name: label, gain: 1.0}) do
+      {:ok, _track} ->
+        send(self(), :project_updated)
+        {:noreply, socket}
 
-    track =
-      Track.new(%{
-        id: "track_#{System.unique_integer([:positive])}",
-        type: "external_audio",
-        name: label,
-        gain: 1.0
-      })
-
-    case Project.add_track(project, track) do
-      {:ok, updated_project} ->
-        persist_project(socket, updated_project)
-
-      {:error, _reason} ->
+      {:error, reason} ->
+        Logger.warning("add_external_node failed: #{inspect(reason)}")
         {:noreply, socket}
     end
   end
 
   def handle_event("remove_external_node", %{"id" => track_id}, socket) do
-    project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
-    updated_project = Project.remove_track(project, track_id)
-    persist_project(socket, updated_project)
+    case Server.remove_track(server(socket), track_id) do
+      :ok ->
+        send(self(), :project_updated)
+        {:noreply, socket}
+
+      {:error, reason} ->
+        Logger.warning("remove_external_node failed: #{inspect(reason)}")
+        {:noreply, socket}
+    end
   end
 
   def handle_event("update_node_properties", %{"node_id" => "output"}, socket) do
@@ -63,12 +64,25 @@ defmodule EquinoxWeb.EditorLive.ArrangerComponent do
   end
 
   def handle_event("update_node_properties", %{"node_id" => track_id, "props" => props}, socket) do
-    project = GenServer.call(Equinox.Session.server(socket.assigns.session_id), {:get_project})
+    server = server(socket)
 
-    with {:ok, updated_project} <- apply_track_props(project, track_id, props) do
-      persist_project(socket, updated_project)
+    mix_updates =
+      %{}
+      |> maybe_put(:gain, Map.get(props, "volume"))
+      |> maybe_put(:mute, Map.get(props, "muted"))
+      |> maybe_put(:solo, Map.get(props, "solo"))
+
+    with :ok <- maybe_update_track_mix(server, track_id, mix_updates),
+         :ok <- maybe_update_track_position(server, track_id, Map.get(props, "position")) do
+      send(self(), :project_updated)
+      {:noreply, socket}
     else
-      {:error, _reason} -> {:noreply, socket}
+      {:error, reason} ->
+        Logger.warning(
+          "update_node_properties failed (track #{inspect(track_id)}): #{inspect(reason)}"
+        )
+
+        {:noreply, socket}
     end
   end
 
@@ -91,43 +105,26 @@ defmodule EquinoxWeb.EditorLive.ArrangerComponent do
     {:noreply, push_event(socket, "export_result", %{status: "started"})}
   end
 
-  defp apply_track_props(%Project{} = project, track_id, props) do
-    mix_updates =
-      %{}
-      |> maybe_put(:gain, Map.get(props, "volume"))
-      |> maybe_put(:mute, Map.get(props, "muted"))
-      |> maybe_put(:solo, Map.get(props, "solo"))
+  defp server(socket), do: Equinox.Session.server(socket.assigns.session_id)
 
-    with {:ok, project} <- maybe_update_track_mix(project, track_id, mix_updates),
-         {:ok, project} <-
-           maybe_update_track_position(project, track_id, Map.get(props, "position")) do
-      {:ok, project}
+  defp maybe_update_track_mix(_server, _track_id, updates) when map_size(updates) == 0, do: :ok
+
+  defp maybe_update_track_mix(server, track_id, updates) do
+    case Server.update_track_mix(server, track_id, updates) do
+      {:ok, _track} -> :ok
+      {:error, _} = err -> err
     end
   end
 
-  defp maybe_update_track_mix(project, _track_id, updates) when map_size(updates) == 0,
-    do: {:ok, project}
+  defp maybe_update_track_position(_server, _track_id, nil), do: :ok
 
-  defp maybe_update_track_mix(project, track_id, updates) do
-    Editor.update_track_mix(project, track_id, updates)
-  end
-
-  defp maybe_update_track_position(project, _track_id, nil), do: {:ok, project}
-
-  defp maybe_update_track_position(project, track_id, position) do
-    Editor.update_track_ui_state(project, track_id, :arranger_position, position)
+  defp maybe_update_track_position(server, track_id, position) do
+    case Server.update_track_ui_state(server, track_id, :arranger_position, position) do
+      {:ok, _track} -> :ok
+      {:error, _} = err -> err
+    end
   end
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
-
-  defp persist_project(socket, updated_project) do
-    GenServer.call(
-      Equinox.Session.server(socket.assigns.session_id),
-      {:update_project, updated_project}
-    )
-
-    send(self(), {:project_updated, updated_project})
-    {:noreply, socket}
-  end
 end
