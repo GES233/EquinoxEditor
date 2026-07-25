@@ -13,7 +13,7 @@ Equinox 现在按类似 Nx 的结构拆为 `domain/` 、 `kernel/` 与 `ui_shell
 其是以下几个项目精神上的继承者：
 
 - **QyEditor**： 本项目最早的原型，计划整合贝塞尔曲线与 DAG 自组织与调度。
-- **Quincunx**： 验证了前端友好的 Node-Edge-based 工作流的可行性以及整合了 Orchid 生态一系列的插件。 
+- ~~**Quincunx**~~ → **Oi**： 验证了前端友好的 Node-Edge-based 工作流的可行性以及整合了 Orchid 生态一系列的插件。 
 - **KinoBayanroll**： 花费了开发者数十美元（中转站按量计费 SOTA 模型的开销）已验证 Svelte5 + SvelteFlow 的可行性的一个基于 Livebook 的 Kino 插件。
 
 ## 目录/架构
@@ -26,10 +26,12 @@ kernel/    # 可独立运行的编辑器内核、调用领域、整合 Orchid
 ui_shell/  # Phoenix LiveView shell + Svelte 5 前端岛
 ```
 
-- **Domain**：无外部依赖的纯领域模型（音符、轨道、工程、时间线、音素、曲线等），是所有业务逻辑的基础。
+- **Domain**：无外部依赖[^dep]的纯领域模型（音符、轨道、工程、时间线、音素、曲线等），是所有业务逻辑的基础。
 - **Kernel**：增量生成、DAG、数据介入、缓存、重服务。
 - **UI Shell**：托管浏览器界面，通过本地 path dep 依赖 `kernel/`。
 - 根目录仅保留仓库级文档与约定，不承载运行时代码。
+
+[^dep]: zongzi 由开发者本人维护，所以符合「无外部依赖」的定义。
 
 ## 前置条件
 
@@ -78,5 +80,6 @@ cd ui_shell/assets && npm run check
 
 - [Phoenix 框架官网](https://www.phoenixframework.org/)
 - [Svelte 文档](https://svelte.dev/docs)
-- [Orchid](https://hex.pm/packages/orchid)
+- [Orchid](https://hex.pm/packages/orchid) / [Oi](https://hex.pm/packages/oi)
+- [Zongzi](https://github.com/SynapticStrings/Zongzi)
 - [**If You are Agent or AI Assistant**] 请查看 `./AGENTS.md`
