@@ -1,4 +1,5 @@
 defmodule EquinoxDomain.Session do
+  @moduledoc false
   # 运行时会话的领域模型
 
   # 实际负责的范围是：

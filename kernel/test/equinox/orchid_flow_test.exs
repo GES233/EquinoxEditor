@@ -1,10 +1,6 @@
 defmodule Equinox.Kernel.OrchidFlowTest do
   use ExUnit.Case, async: false
 
-  alias Equinox.Domain.Note
-  alias Equinox.Track
-  alias Equinox.Domain.Segment
-
   alias Equinox.Kernel.{
     Blackboard,
     Compiler,
@@ -14,8 +10,9 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     Runner
   }
 
-  alias Equinox.Project
   alias Equinox.Session.Context
+  alias EquinoxDomain.Score.{Project, Track}
+  alias Zongzi.Score.Key.TwelveET
 
   defmodule MockSymbiontWorker do
     use GenServer
@@ -68,18 +65,22 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     end
   end
 
-  test "compile_segments/2 reuses cached compiled segments" do
+  test "compile_track/3 reuses cached compiled graphs" do
     graph = build_flow_graph()
-    segment = build_flow_segment("segment_cached", graph, "note_cached")
 
-    assert {:ok,
-            {"segment_cached", cached_graph, cached_interventions, %Oi.Compiled{} = compiled}} =
-             Compiler.compile_segment(segment)
+    assert {:ok, {^graph, %Oi.Compiled{} = compiled}, cache} =
+             Compiler.compile_track("track_cached", graph)
 
-    cache = %{"segment_cached" => {cached_graph, cached_interventions, compiled}}
+    assert {:ok, {^graph, ^compiled}, ^cache} =
+             Compiler.compile_track("track_cached", graph, cache)
 
-    assert {:ok, [{"segment_cached", ^cached_graph, ^cached_interventions, ^compiled}]} =
-             Compiler.compile_segments([segment], cache)
+    # graph 结构变化 → 缓存失效，重新编译并写回
+    other_graph = Graph.new()
+
+    assert {:ok, {^other_graph, %Oi.Compiled{} = other_compiled}, new_cache} =
+             Compiler.compile_track("track_cached", other_graph, cache)
+
+    assert new_cache["track_cached"] == {other_graph, other_compiled}
   end
 
   test "graph compiles into Oi.Compiled and dispatches into blackboard with symbiont-backed step" do
@@ -93,32 +94,54 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     OrchidSymbiont.register(session_id, :mock_service, {MockSymbiontWorker, [prefix: "rendered"]})
 
     graph = build_flow_graph()
-    segment = build_flow_segment("segment_flow", graph, "note_1")
+    track_id = "track_flow"
 
-    track = Track.new(%{id: "track_flow", segments: %{"segment_flow" => segment}})
-    project = Project.new(%{id: "project_flow", tracks: %{"track_flow" => track}})
+    # domain 夹具：两个相连音符（0..240 / 240..720，无休止间隙）→ 单窗口 start 0
+    {:ok, track} = Track.new(id: track_id, name: "Flow")
 
-    assert {:ok, {"segment_flow", _graph, _interventions, %Oi.Compiled{} = compiled}} =
-             Compiler.compile_segment(segment)
+    {:ok, track, _note1} =
+      Track.insert_note(track, %{
+        start_tick: 0,
+        duration_tick: 240,
+        key: twelve_et(60),
+        lyric: "la"
+      })
+
+    {:ok, track, _note2} =
+      Track.insert_note(track, %{
+        start_tick: 240,
+        duration_tick: 480,
+        key: twelve_et(60),
+        lyric: "la"
+      })
+
+    {:ok, project} = Project.new(id: "project_flow", name: "Flow")
+    {:ok, project} = Project.add_track(project, track)
+
+    assert {:ok, {^graph, %Oi.Compiled{} = compiled}, _cache} =
+             Compiler.compile_track(track_id, graph)
 
     assert [bundle] = compiled.bundles
     assert bundle.requires == ["source|note"]
     assert bundle.exports == ["decorate|audio"]
 
-    {context, dispatch} =
+    ctx =
       session_id
       |> Context.new(project)
-      |> Context.prepare_dispatch()
+      |> then(fn ctx -> %{ctx | graphs: %{track_id => graph}} end)
 
-    assert %{session_id: ^session_id, units: [{"segment_flow", _, _, %Oi.Compiled{}}]} = dispatch
+    {context, dispatch} = Context.prepare_dispatch(ctx)
 
-    note_input = hd(segment.notes)
+    unit_id = {track_id, 0}
+    assert %{session_id: ^session_id, units: [{^unit_id, _, _, %Oi.Compiled{}}]} = dispatch
+
+    # 喂 source 的悬空输入（模拟上游产物已在黑板上）
+    note_input_key = {unit_id, "source|note"}
+    audio_output_key = {unit_id, "decorate|audio"}
 
     blackboard =
       Blackboard.new()
-      |> Blackboard.put(%{
-        {"segment_flow", "source|note"} => %{lyric: note_input.lyric, key: note_input.key}
-      })
+      |> Blackboard.put(%{note_input_key => %{lyric: "la", key: 60}})
 
     storage = Oi.Runtime.Session.storage(session_id)
     assert %{meta_store: {_, meta_ref}, blob_store: {_, blob_ref}} = storage
@@ -126,18 +149,16 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     assert {:ok, executed_blackboard} =
              Runner.run(dispatch, blackboard, plugins: [{StratumPlugin, storage}])
 
-    segment_outputs = Blackboard.fetch_via_segment(executed_blackboard, "segment_flow")
+    unit_outputs = Blackboard.fetch_via_segment(executed_blackboard, unit_id)
 
-    assert context.compile_cache["segment_flow"]
-    assert %{{"segment_flow", "decorate|audio"} => {:ref, {_, ^blob_ref}, _}} = segment_outputs
+    assert context.compile_cache[track_id]
+    assert %{^audio_output_key => {:ref, {_, ^blob_ref}, _}} = unit_outputs
     assert length(:ets.tab2list(meta_ref)) == 2
 
     assert Enum.sort(:ets.tab2list(blob_ref)) ==
              Enum.sort([
-               {elem(segment_outputs[{"segment_flow", "source|note"}], 2),
-                %{key: 60, lyric: "la"}},
-               {elem(segment_outputs[{"segment_flow", "decorate|audio"}], 2),
-                %{audio: "rendered:la", key: 60}}
+               {elem(unit_outputs[note_input_key], 2), %{key: 60, lyric: "la"}},
+               {elem(unit_outputs[audio_output_key], 2), %{audio: "rendered:la", key: 60}}
              ])
   end
 
@@ -152,10 +173,11 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     OrchidSymbiont.register(session_id, :mock_service, {MockSymbiontWorker, [prefix: "intv"]})
 
     graph = build_flow_graph()
-    segment = build_flow_segment("segment_intv", graph, "note_intv")
+    track_id = "track_intv"
+    unit_id = {track_id, 0}
 
-    assert {:ok, {"segment_intv", unit_graph, _interventions, %Oi.Compiled{} = compiled}} =
-             Compiler.compile_segment(segment)
+    assert {:ok, {unit_graph, %Oi.Compiled{} = compiled}, _cache} =
+             Compiler.compile_track(track_id, graph)
 
     # {:port, :source, :note} 既是 source 的悬空输入端口，又是通往 decorate 的
     # producer 输出端口：同一干预同时覆盖两条装配路径。
@@ -163,19 +185,19 @@ defmodule Equinox.Kernel.OrchidFlowTest do
 
     dispatch = %{
       session_id: session_id,
-      units: [{"segment_intv", unit_graph, interventions, compiled}]
+      units: [{unit_id, unit_graph, interventions, compiled}]
     }
 
     assert {:ok, executed_blackboard} = Runner.run(dispatch, Blackboard.new())
 
-    segment_outputs = Blackboard.fetch_via_segment(executed_blackboard, "segment_intv")
+    unit_outputs = Blackboard.fetch_via_segment(executed_blackboard, unit_id)
+
+    note_input_key = {unit_id, "source|note"}
+    audio_output_key = {unit_id, "decorate|audio"}
 
     # 无 Stratum 插件时输出为裸 payload
-    assert %{{"segment_intv", "source|note"} => %{lyric: "forced", key: 61}} =
-             segment_outputs
-
-    assert %{{"segment_intv", "decorate|audio"} => %{audio: "intv:forced", key: 61}} =
-             segment_outputs
+    assert %{^note_input_key => %{lyric: "forced", key: 61}} = unit_outputs
+    assert %{^audio_output_key => %{audio: "intv:forced", key: 61}} = unit_outputs
   end
 
   defp build_flow_graph do
@@ -197,14 +219,8 @@ defmodule Equinox.Kernel.OrchidFlowTest do
     |> Graph.add_edge(Edge.new(:source, :note, :decorate, :note))
   end
 
-  defp build_flow_segment(segment_id, graph, note_id) do
-    Segment.new(%{
-      id: segment_id,
-      track_id: "track_flow",
-      notes: [
-        Note.new(%{id: note_id, start_tick: 0, duration_tick: 480, key: 60, lyric: "la"})
-      ],
-      graph: graph
-    })
+  defp twelve_et(midi) do
+    {:ok, key} = TwelveET.new(midi)
+    key
   end
 end

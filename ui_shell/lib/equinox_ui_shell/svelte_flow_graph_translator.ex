@@ -1,4 +1,4 @@
-defmodule EquinoxUiShell.SvelteFlowGraphTranslator do
+defmodule EquinoxUIShell.SvelteFlowGraphTranslator do
   @moduledoc """
   将 SvelteFlow payload 转换为 `Equinox.Kernel.Graph`。
   """

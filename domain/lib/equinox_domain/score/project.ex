@@ -52,6 +52,68 @@ defmodule EquinoxDomain.Score.Project do
   def compiled_time_sig_map(%__MODULE__{time_sig_map: events}, opts \\ []),
     do: TimeSigMap.compile(events, opts)
 
+  # ---- Track CRUD ----
+
+  @doc """
+  把 Track 挂进工程。
+
+  `track.project_id` 会对齐为 `project.id`；track id 冲突报 `{:already_exists, id}`。
+  """
+  @spec add_track(t(), Track.t()) ::
+          {:ok, t()} | {:error, {:already_exists, Zongzi.Util.ID.t(Track)}}
+  def add_track(%__MODULE__{} = project, %Track{} = track) do
+    if Map.has_key?(project.tracks, track.id) do
+      {:error, {:already_exists, track.id}}
+    else
+      with {:ok, track} <- Track.update(track, %{project_id: project.id}) do
+        {:ok, %{project | tracks: Map.put(project.tracks, track.id, track)}}
+      end
+    end
+  end
+
+  @doc "按 id 移除 Track；不存在报 `{:track_not_found, id}`（不静默）。"
+  @spec remove_track(t(), Zongzi.Util.ID.t(Track)) ::
+          {:ok, t()} | {:error, {:track_not_found, Zongzi.Util.ID.t(Track)}}
+  def remove_track(%__MODULE__{} = project, track_id) do
+    if Map.has_key?(project.tracks, track_id) do
+      {:ok, %{project | tracks: Map.delete(project.tracks, track_id)}}
+    else
+      {:error, {:track_not_found, track_id}}
+    end
+  end
+
+  @doc "按 id 取 Track。"
+  @spec get_track(t(), Zongzi.Util.ID.t(Track)) ::
+          {:ok, Track.t()} | {:error, {:track_not_found, Zongzi.Util.ID.t(Track)}}
+  def get_track(%__MODULE__{} = project, track_id) do
+    case Map.fetch(project.tracks, track_id) do
+      {:ok, track} -> {:ok, track}
+      :error -> {:error, {:track_not_found, track_id}}
+    end
+  end
+
+  @doc "整体替换或用 updater 函数（`Track.t() -> Track.t()`）更新指定 Track。"
+  @spec update_track(t(), Zongzi.Util.ID.t(Track), Track.t() | (Track.t() -> Track.t())) ::
+          {:ok, t()} | {:error, {:track_not_found, Zongzi.Util.ID.t(Track)}}
+  def update_track(%__MODULE__{} = project, track_id, %Track{} = track) do
+    put_track(project, track_id, fn _old -> track end)
+  end
+
+  def update_track(%__MODULE__{} = project, track_id, updater) when is_function(updater, 1) do
+    put_track(project, track_id, updater)
+  end
+
+  @doc "列出全部 Track（顺序不保证）。"
+  @spec list_tracks(t()) :: [Track.t()]
+  def list_tracks(%__MODULE__{} = project), do: Map.values(project.tracks)
+
+  defp put_track(project, track_id, fun) do
+    case Map.fetch(project.tracks, track_id) do
+      {:ok, old} -> {:ok, %{project | tracks: Map.put(project.tracks, track_id, fun.(old))}}
+      :error -> {:error, {:track_not_found, track_id}}
+    end
+  end
+
   # ---- 序列化（EquinoxDomain.Pickle 原生对象 codec） ----
 
   @doc "摊平为 plain map（`version: 1`；tracks 的 track_id 键原生保留）。"

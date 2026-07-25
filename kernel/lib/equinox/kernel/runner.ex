@@ -12,18 +12,19 @@ defmodule Equinox.Kernel.Runner do
   alias Equinox.Kernel.{Blackboard, Compiler, Configurator, Graph}
   alias Equinox.Kernel.Graph.PortRef
 
-  @typedoc "单个 Segment 的执行单元（即 Compiler 的编译产物）。"
-  @type unit :: Compiler.compiled_segment()
+  @typedoc "单个窗口的执行单元（即 Compiler 的编译产物）。"
+  @type unit :: Compiler.compiled_unit()
 
-  @typedoc "一次渲染 dispatch：会话标识 + 全部 Segment 的执行单元。"
+  @typedoc "一次渲染 dispatch：会话标识 + 全部窗口的执行单元。"
   @type dispatch :: %{session_id: atom() | String.t(), units: [unit()]}
 
   @doc """
-  执行全部 Segment 的 dispatch units，把结果合并进 Blackboard。
+  执行全部窗口的 dispatch units，把结果合并进 Blackboard。
 
-  跨 Segment 以 `Task.async_stream` 扇出（首个错误中断）；单个 Segment 内部的
-  stage 编排与并发由 `Oi.execute/2` 负责。Segment 之间无参数共享
-  （Blackboard 按 `{segment_id, io_key}` 寻址且仅同段读取），合并顺序无关语义。
+  跨窗口以 `Task.async_stream` 扇出（首个错误中断）；单个窗口内部的
+  stage 编排与并发由 `Oi.execute/2` 负责。窗口之间无参数共享
+  （Blackboard 按 `{unit_id, io_key}` 寻址且仅同单元读取，unit id 为
+  `{track_id, window_start_tick}`），合并顺序无关语义。
   """
   @spec run(dispatch(), Blackboard.t(), keyword() | Configurator.t()) ::
           {:ok, Blackboard.t()} | {:error, term()}
@@ -52,8 +53,8 @@ defmodule Equinox.Kernel.Runner do
     end)
   end
 
-  defp run_unit(session_id, {segment_id, graph, interventions, compiled}, board, conf) do
-    data = assemble_data(segment_id, graph, interventions, board)
+  defp run_unit(session_id, {unit_id, graph, interventions, compiled}, board, conf) do
+    data = assemble_data(unit_id, graph, interventions, board)
 
     execute_opts = [
       data: data,
@@ -70,7 +71,7 @@ defmodule Equinox.Kernel.Runner do
     ]
 
     case Oi.execute(compiled, execute_opts) do
-      {:ok, %Oi.Result{memory: memory}} -> {:ok, to_board_entries(segment_id, memory)}
+      {:ok, %Oi.Result{memory: memory}} -> {:ok, to_board_entries(unit_id, memory)}
       {:error, reason} -> {:error, reason}
     end
   end
@@ -80,13 +81,13 @@ defmodule Equinox.Kernel.Runner do
   #   都没有 → `:void` Param 兜底（避免 Oi 的 missing_input fail-fast 改变行为）；
   # - 有入边的消费端口：producer PortRef 键的干预 → `{:override, value}` data 干预；
   # - 规格形状无法识别的干预一律忽略（当前编译路径干预恒 %{}，该路径暂不可达）。
-  defp assemble_data(segment_id, graph, interventions, board) do
-    segment_id
+  defp assemble_data(unit_id, graph, interventions, board) do
+    unit_id
     |> dangling_data(graph, interventions, board)
     |> Map.merge(producer_intervention_data(graph, interventions))
   end
 
-  defp dangling_data(segment_id, graph, interventions, %Blackboard{memory: mem}) do
+  defp dangling_data(unit_id, graph, interventions, %Blackboard{memory: mem}) do
     for %Graph.Node{} = node <- Map.values(graph.nodes),
         port <- node.inputs,
         not has_in_edge?(graph, node.id, port),
@@ -94,7 +95,7 @@ defmodule Equinox.Kernel.Runner do
       key = PortRef.to_orchid_key({:port, node.id, port})
 
       value =
-        case Map.fetch(mem, {segment_id, key}) do
+        case Map.fetch(mem, {unit_id, key}) do
           {:ok, val} ->
             val
 
@@ -141,10 +142,10 @@ defmodule Equinox.Kernel.Runner do
 
   # Oi.Result.memory 包含本次喂入的 memory 输入；一并合并回黑板是无害的
   # （同键同值幂等），nil 载荷（如 :void 兜底）按旧 merge_results 语义剔除。
-  defp to_board_entries(segment_id, memory) do
+  defp to_board_entries(unit_id, memory) do
     memory
     |> Map.new(fn {io_key, param} ->
-      {{segment_id, io_key}, Orchid.Param.get_payload(param)}
+      {{unit_id, io_key}, Orchid.Param.get_payload(param)}
     end)
     |> Map.reject(fn {_addr, payload} -> is_nil(payload) end)
   end

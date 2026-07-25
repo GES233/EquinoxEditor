@@ -17,6 +17,9 @@ defmodule EquinoxDomain.MixProject do
   defp deps do
     [
       {:zongzi, path: "../../zongzi"}
+      # 保持相对路径的原因是一旦发现 zongzi 问题后便于修改
+      # 待经过验证后用 hex version
+      # {:zongzi, "~> 0.3"}
     ]
   end
 

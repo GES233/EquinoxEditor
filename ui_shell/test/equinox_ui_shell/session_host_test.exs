@@ -1,9 +1,9 @@
-defmodule EquinoxUiShell.SessionHostTest do
+defmodule EquinoxUIShell.SessionHostTest do
   use ExUnit.Case, async: false
 
   alias Equinox.Project
   alias Equinox.Session
-  alias EquinoxUiShell.SessionHost
+  alias EquinoxUIShell.SessionHost
 
   test "session host starts and stops session trees" do
     session_id = "ui-shell-session"

@@ -1,4 +1,4 @@
-defmodule EquinoxUiShell.SessionHost do
+defmodule EquinoxUIShell.SessionHost do
   @moduledoc false
 
   use DynamicSupervisor
@@ -22,7 +22,7 @@ defmodule EquinoxUiShell.SessionHost do
       [] ->
         session_supervisor_spec = %{
           id: session_id,
-          start: {EquinoxUiShell.SessionSupervisor, :start_link, [{session_id, opts}]}
+          start: {EquinoxUIShell.SessionSupervisor, :start_link, [{session_id, opts}]}
         }
 
         DynamicSupervisor.start_child(__MODULE__, session_supervisor_spec)

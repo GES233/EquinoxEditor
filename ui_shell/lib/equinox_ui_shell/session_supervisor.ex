@@ -1,4 +1,4 @@
-defmodule EquinoxUiShell.SessionSupervisor do
+defmodule EquinoxUIShell.SessionSupervisor do
   @moduledoc false
 
   use Supervisor

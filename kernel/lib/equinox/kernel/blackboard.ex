@@ -4,9 +4,8 @@ defmodule Equinox.Kernel.Blackboard do
   作为 Worker 和底层存储之间的读写接口。
   """
 
-  alias Equinox.Domain.Segment
-
-  @type addr :: {Segment.id(), Orchid.Step.io_key()}
+  # addr 的第一分量是执行单元 id（`{track_id, window_start_tick}`）
+  @type addr :: {term(), Orchid.Step.io_key()}
 
   @type t :: %__MODULE__{
           memory: %{addr() => Orchid.Param.t() | any()}
@@ -29,11 +28,11 @@ defmodule Equinox.Kernel.Blackboard do
     |> Enum.into(%{})
   end
 
-  @spec fetch_via_segment(t(), Segment.id()) :: %{addr() => term()}
-  def fetch_via_segment(%__MODULE__{memory: mem} = blackboard, segment_id) do
+  @spec fetch_via_segment(t(), term()) :: %{addr() => term()}
+  def fetch_via_segment(%__MODULE__{memory: mem} = blackboard, unit_id) do
     mem
     |> Map.keys()
-    |> Enum.filter(fn {sid, _} -> sid == segment_id end)
+    |> Enum.filter(fn {sid, _} -> sid == unit_id end)
     |> then(&fetch_contents(blackboard, &1))
   end
 end

@@ -1,4 +1,4 @@
-defmodule EquinoxUiShell.Application do
+defmodule EquinoxUIShell.Application do
   use Application
 
   @impl true
@@ -7,11 +7,11 @@ defmodule EquinoxUiShell.Application do
       EquinoxWeb.Telemetry,
       {DNSCluster, query: Application.get_env(:equinox_ui_shell, :dns_cluster_query) || :ignore},
       {Phoenix.PubSub, name: Equinox.PubSub},
-      EquinoxUiShell.SessionHost,
+      EquinoxUIShell.SessionHost,
       EquinoxWeb.Endpoint
     ]
 
-    opts = [strategy: :one_for_one, name: EquinoxUiShell.Supervisor]
+    opts = [strategy: :one_for_one, name: EquinoxUIShell.Supervisor]
     Supervisor.start_link(children, opts)
   end
 

@@ -2,12 +2,12 @@ defmodule EquinoxWeb.EditorLive do
   use EquinoxWeb, :live_view
 
   alias Equinox.Project
-  alias EquinoxUiShell.SessionHost
+  alias EquinoxUIShell.SessionHost
 
   @graph_translator Application.compile_env(
                       :equinox_ui_shell,
                       :graph_translator,
-                      EquinoxUiShell.SvelteFlowGraphTranslator
+                      EquinoxUIShell.SvelteFlowGraphTranslator
                     )
 
   def mount(_params, _session, socket) do

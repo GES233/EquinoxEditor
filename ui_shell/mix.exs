@@ -1,4 +1,4 @@
-defmodule EquinoxUiShell.MixProject do
+defmodule EquinoxUIShell.MixProject do
   use Mix.Project
 
   def project do
@@ -17,7 +17,7 @@ defmodule EquinoxUiShell.MixProject do
 
   def application do
     [
-      mod: {EquinoxUiShell.Application, []},
+      mod: {EquinoxUIShell.Application, []},
       extra_applications: [:logger, :runtime_tools]
     ]
   end
