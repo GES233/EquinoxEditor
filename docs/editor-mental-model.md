@@ -2,6 +2,12 @@
 
 ## Status
 
+> **Outdated (post-zongzi migration)**: This document describes the pre-zongzi M3 model
+> (`Track` + legacy `Segment` + tick-anchored data). The domain now runs on zongzi:
+> the `Timeline` + `notes_by_seq` + `interventions` Caller trio, transient `Zongzi.Windowing.Segment`
+> projections, and zongzi Interventions for user/engine edits. Read `AGENTS.md` §7 and the zongzi
+> `docs/zh/spec/decisions/` as the current source of truth; a full rewrite is scheduled for Phase 2.
+
 This document defines the default object model and interaction model for Equinox during the M3 stage.
 It is intended to constrain future implementation, not to describe every possible advanced workflow.
 

@@ -1,27 +1,27 @@
 defmodule EquinoxDomain.Segment do
   # 渲染的最小上下文单位
 
-  alias EquinoxDomain.{Timeline, Timeline.Tick}
+  alias Zongzi.Score.{Tempo, Tick}
 
   # 是典型的 VO （因为是运行时生成的对象）
   @type t :: %__MODULE__{
           # ---- 业务标识 ----
-          track_id: EquinoxDomain.Util.ID.t(),
+          track_id: Zongzi.Util.ID.t(),
           start_tick: Tick.numeric_tick(),
           end_tick: Tick.numeric_tick(),
 
           # ---- 声学区间界点 (以秒 Sec 为单位) ----
           # 实际发声的有效区间
-          core_start_sec: Timeline.physical_time(),
-          core_end_sec: Timeline.physical_time(),
-          context_start_sec: Timeline.physical_time(),
-          context_end_sec: Timeline.physical_time(),
+          core_start_sec: Tempo.physical_time(),
+          core_end_sec: Tempo.physical_time(),
+          context_start_sec: Tempo.physical_time(),
+          context_end_sec: Tempo.physical_time(),
 
           # ---- 下游所需的栅格化数据 ----
           phonemes: [term()],
           curves: term()
         }
-  use EquinoxDomain.Util.Object,
+  use Zongzi.Util.Object,
     keys: [
       :track_id,
       :start_tick,

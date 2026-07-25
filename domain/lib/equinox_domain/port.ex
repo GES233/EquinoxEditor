@@ -43,7 +43,7 @@ defmodule EquinoxDomain.Port do
   使其转化为新的领域数据。
 
   采纳行为一般是部分的、可冲突解决的，类似版本控制系统中的 merge workflow。
-  
+
   ### 用户编辑
 
   ## 应用自己的引擎

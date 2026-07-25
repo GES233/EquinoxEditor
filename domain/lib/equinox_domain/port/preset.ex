@@ -1,20 +1,20 @@
 defmodule EquinoxDomain.Port.Preset do
   @moduledoc "功能清单。"
 
-  alias EquinoxDomain.Port.{Declaration, Channel}
+  alias EquinoxDomain.Port.Channel
 
-  # declarations：数据以及允许被 intervention 的所有数据
+  # declarations：channel → declaration 模块（Zongzi.Intervention.Declaration 实现）注册表
   # artifact：可能产出 artifact 的通道名字
   # allow_adopt：用户准许固化/修改 artifact 的通道，必须在 declarations 与 artifact 中
   @type t :: %__MODULE__{
           name: binary(),
-          declarations: %{Channel.channel() => Declaration.t()},
+          declarations: %{Channel.channel() => module()},
           artifact: [Channel.channel()],
           allow_adopt: [Channel.channel()],
           metadata: %{optional(atom()) => term()}
         }
 
-  use EquinoxDomain.Util.Object,
+  use Zongzi.Util.Object,
     keys: [
       :name,
       declarations: %{},

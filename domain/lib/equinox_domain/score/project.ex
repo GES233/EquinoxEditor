@@ -1,6 +1,6 @@
 defmodule EquinoxDomain.Score.Project do
   # 可被序列化的工程
-  use EquinoxDomain.Util.Model,
+  use Zongzi.Util.Model,
     keys: [
       :id,
       :name,

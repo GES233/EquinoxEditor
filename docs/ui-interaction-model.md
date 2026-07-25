@@ -2,6 +2,12 @@
 
 ## Status
 
+> **Outdated (post-zongzi migration)**: The interaction loops here still describe the intent,
+> but all object-model references (`Segment` as render unit, tick-anchored edits) predate the
+> zongzi migration. The domain now runs on zongzi (`Timeline` + `notes_by_seq` + `interventions`,
+> transient windowing segments, `Anchor`/`Declaration` conflict surfacing). Read `AGENTS.md` §7
+> as the current source of truth; a full rewrite is scheduled for Phase 2.
+
 This document defines the intended interaction model for Equinox as a track-centered editor.
 It complements `docs/editor-mental-model.md` and focuses on user-facing behavior rather than data ownership.
 

@@ -21,26 +21,30 @@ Development follows a strict bottom-up dependency order:
 │  Equinox.Kernel.*               │  ← Compiler/Orchid Integration(Scheduling/Graph Engine/etc.)
 ├─────────────────────────────────┤
 │  EquinoxDomain.*                │  ← Pure data + domain logic, highest priority
+├─────────────────────────────────┤
+│  Zongzi.* (path dependency)     │  ← SVS kernel: Timeline / Anchor / Windowing / Intervention
 └─────────────────────────────────┘
 ```
 
-- **Domain** is the foundation: pure data structures (`Note`, `Segment`, `CurveChunk`, etc.) and stateless domain logic (`Slicer`). Zero dependencies on Kernel, Session, or UI.
+- **Zongzi** is the bottom-layer SVS kernel library (separate repo, consumed as a path dependency): note-sequence truth (`Timeline`), structural anchors (`Anchor`), transient windowing (`Windowing`), user-edit intent (`Intervention` + `Declaration`), engine contract (`Engine`), and the base score/curve/util types. It has zero dependencies itself.
+- **Domain** sits directly on zongzi: pure data structures and stateless domain logic. Its only allowed dependency is zongzi — never Kernel, Session, or UI.
 - **Kernel** consumes Domain types for compilation, planning, and graph construction. Never imports UI or Session.
 - **Session / UI Shell** sit at the outermost layer, consuming both Domain and Kernel.
 
 ### EquinoxDomain — Independent Domain Project
 
-The `EquinoxDomain` module lives in `domain/` as a **separate, zero-dependency Elixir project** (`:equinox_domain`). It is the canonical home for all domain types and pure business logic. The `kernel/lib/equinox/domain/` directory is frozen — all new development targets `domain/`.
+The `EquinoxDomain` module lives in `domain/` as a **separate Elixir project** (`:equinox_domain`) whose only dependency is `{:zongzi, path: "../../zongzi"}`. It is the canonical home for all domain types and pure business logic. The `kernel/lib/equinox/domain/` directory is frozen — all new development targets `domain/`.
 
 **Project location**: `domain/` (root-level, sibling to `kernel/` and `ui_shell/`)
 
 **Key design decisions**:
-- `use EquinoxDomain.Util.Model, keys: [...], id_prefix: "Xxx_"` auto-generates `new/1` and `update/2` for all domain structs. `update/2` returns `{:ok, model} | {:error, reason}`.
-- `Note.slice_flag` uses `:auto | :force_slice | :force_merge` (simpler than kernel's tuple-based version).
-- `Track` holds `notes: %{}` (map by id) and `data_channels: %{Channel.channel() => [LayerChunk.t()]}` (unified curve + adoption data).
-- `Phoneme` is a standalone value object with identity fields (`symbol`, `type`). Timing (tick_offset, duration_tick, preutterance) lives in `TimedEvent` at the Kernel projection layer (see ADR-009). User timing edits are stored as `PhonemeTimingDelta` with adapter-owned opaque identity paths (see ADR-012).
-- `Window` replaces the kernel's `Segment` concept — it groups contiguous notes by time window and determines rasterization boundaries for the render pipeline. Phonemes are a runtime projection (see ADR-009); the engine does not need to understand the Note domain model.
-- `Segment` is a pure rendering-context VO (acoustic boundaries, `phonemes`/`curves`) — not a note container. The Domain defines the struct; `phonemes` and `curves` are populated by the Kernel at compile time and do not participate in serialization.
+- Base types come from zongzi: `Zongzi.Score.{Note, Tick, Tempo, TempoMap, TimeSig, TimeSigMap, Record, RecordMap, Grid}`, `Zongzi.Score.Key.*`, `Zongzi.Curve.*`, `Zongzi.Util.*`. EquinoxDomain does not redefine them.
+- `use Zongzi.Util.Model, keys: [...], id_prefix: "Xxx_"` auto-generates `new/1`, `update/2`, `validate/1`. `new/1` requires an explicit `:id` (no auto-generation) — callers generate IDs via `Zongzi.Util.ID.generate_id/1`. `update/2` returns `{:ok, model} | {:error, reason}`.
+- `Track` holds the zongzi Caller trio — `timeline` (`Zongzi.Timeline.t()`), `notes_by_seq` (`%{SeqID.t() => Zongzi.Score.Note.t()}`), `interventions` (`[Zongzi.Intervention.t()]`) — plus mix/preset/metadata fields. Note CRUD follows the zongzi Caller sync contract (see zongzi `docs/zh/guide/CallerDesigning-zh.md`).
+- `slice_flag` (`:auto | :force_slice | :force_merge`) lives in `Note.metadata` (via `EquinoxDomain.Score.SliceFlag`), not in the zongzi Note struct. Windowing runs as a `Zongzi.Windowing.Strategy` pipeline: `EquinoxDomain.Score.SlicePolicy` applies flag overrides on top of `Zongzi.Windowing.RestSplit3Beats`.
+- User curve/timing edits are `Zongzi.Intervention`s (structural anchor + snapshot + per-channel `Declaration` lifecycle), stored in `Track.interventions`. The tick-anchored `LayerChunk`/`data_channels` model is abolished. First concrete channel: `EquinoxDomain.Port.Declarations.PhonemeTiming`.
+- `Phoneme` is a standalone value object with identity fields (`symbol`, `type`). Timing lives in the engine projection layer; user timing edits are `:phoneme_timing` interventions (see zongzi `intervention-semantics.md`).
+- Two different `Segment` concepts coexist: `Zongzi.Windowing.Segment` (transient windowing projection `{start_tick, end_tick, seq_ids}` — the zongzi engine contract consumes this one) and `EquinoxDomain.Segment` (Caller-side rendering-context VO with acoustic boundaries and `phonemes`/`curves`, populated by the Kernel at compile time, not serialized). Keep them distinct.
 
 **Build/Test**: `cd domain && mix test` | **Pre-commit**: `cd domain && mix precommit`
 
@@ -65,12 +69,12 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 > In this document, "Editor" refers to the entire Equinox application.
 
-- **Domain-First Development**: `EquinoxDomain.*` (in `domain/`) is the cornerstone of the project. All domain models (data structures + pure functional logic) must be completed and thoroughly tested at this layer before development of the Kernel or UI Shell can begin. The Domain project is prohibited from depending on Kernel or UI modules.💡
-- **Pure Data**: `Project`, `Track`, `Note`, `Phoneme` are pure data structures (JSON/Pickle serializable). `Segment` is also of type Domain, but its `phonemes` and `curves` fields are cached at runtime and do not participate in serialization. No Ecto schemas, no executable closures inside them.
+- **Domain-First Development**: `EquinoxDomain.*` (in `domain/`) is the cornerstone of the project. All domain models (data structures + pure functional logic) must be completed and thoroughly tested at this layer before development of the Kernel or UI Shell can begin. The Domain project's only allowed dependency is zongzi; it is prohibited from depending on Kernel or UI modules.💡
+- **Pure Data**: `Project`, `Track`, `Zongzi.Score.Note`, `Phoneme` are pure data structures (JSON/Pickle serializable). `Segment` is also of type Domain, but its `phonemes` and `curves` fields are cached at runtime and do not participate in serialization. No Ecto schemas, no executable closures inside them.
 - **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte.
 - **Stateless Kernel**: The Kernel (`Equinox.Kernel.*`) is pure-functional wherever possible. Domain types come from `EquinoxDomain.*`. Persistent state lives in downstream consumers (`Equinox.Session.Server`, `ui_shell`). The only tolerated stateful Kernel component is `Equinox.Kernel.StepRegistry` (build-time catalog, not session state). `Equinox.Editor.*` is partially obsolete and is no longer considered an independent concept. 💡
-- **Slicer Model**: Slicing is a pure one-way projection `Notes → [Window]`. `Slicer` produces transient `Window` structs; later edits happen on `Track.notes` with automatic slice repair. `slice_flag` (`:auto | :force_slice | :force_merge`) on `Note` is an *input signal* for `Slicer`, not a post-hoc synchronization channel. 💡
-- **Curves belong to Track, not Window/Segment**: Continuous parameter data (pitch, energy, breathiness, …) are stored as `[LayerChunk]` in `Track.data_channels`. Windows hold only `note_ids`; phonemes are runtime projection. Segments are pure rendering-context VOs. At compile time, the Compiler slices `data_channels` into the `RenderRequest` that feeds the Compiler. 💡
+- **Windowing Model**: Windowing is a pure one-way projection `Notes → [Zongzi.Windowing.Segment]` executed by `Zongzi.Windowing` strategies (`Track.slice/2`, pipeline `[EquinoxDomain.Score.SlicePolicy]`). Segments are transient and recomputed from scratch after edits — there is no slice-repair step. `slice_flag` in `Note.metadata` is an *input signal* for the strategy, not a post-hoc synchronization channel. 💡
+- **Interventions belong to Track, anchored structurally**: Continuous parameter data (pitch, energy, breathiness, …), phoneme-timing edits, and adopted engine output are stored as `Zongzi.Intervention`s in `Track.interventions` — anchored on SeqID triplets (default `Anchor.NoteTriplet`) with snapshot / `Declaration.resolve` semantics. They are never keyed by tick ranges or window ids. At request time, `RenderRequest.from_window/3` filters survived interventions by `Declaration.scope` ∩ window; semantic resolution happens later at engine check time. 💡
 - **UI Layout Hierarchy**:
   - `EditorLive` (Main Shell) -> Top-level dispatcher.
   - `TrackList` -> Vertical stack for mute/solo.
@@ -105,7 +109,6 @@ Index: `decisions/README.md`.
 
 | zongzi decision file | Equinox concern |
 |---|---|
-| `slicer-is-projection.md` | Notes → transient windows; no phrase entity |
 | `transient-render-closure.md` | Interventions not keyed by window id |
 | `windowing-post-rebase.md` | post-rebase `Strategy.window/1`; Engine check/render (`[Segment]`) |
 | `control-points-authoritative.md` | Curve points vs raster cache |
@@ -113,13 +116,17 @@ Index: `decisions/README.md`.
 | `declaration-projection-resolution.md` | Declaration lifecycle |
 | `intervention-semantics.md` | What is / is not an intervention |
 | `anchor-operate-orthogonality.md` | Structural rebase ⊥ semantic resolve |
+| `payload-boundary.md` | `Declaration.on_rebase/4` payload boundary maintenance |
 | `boundary-ownership-open.md` | Pad pierce / phrase hash — **Host/Kernel choice** |
+
+> `slicer-is-projection.md` was **deleted upstream** (zongzi removed `Slicer`/`slice_flag` in favor of Windowing strategies). Equinox keeps its `slice_flag` semantics as Caller-side strategy input stored in `Note.metadata` — do not reference the deleted file.
 
 ### Equinox-only (not in zongzi)
 
 These remain product / shell / Orchid concerns; they are **not** duplicated into zongzi:
 
-- **Track.data_channels / LayerChunk persistence** — editor storage for curves & adoptions
+- **slice_flag semantics** — Caller-side windowing override (`Note.metadata` + `Score.SliceFlag` + `Score.SlicePolicy`); deliberately not upstreamed, since zongzi removed the field.
+- **Track as zongzi Caller** — timeline/notes_by_seq/interventions trio, sync contract, `rebase_interventions/1` orchestration.
 - **Domain–Kernel–Session–UI layering** (`EquinoxDomain` vs Kernel import bans)
 - **RenderRequest / Compiler / Orchid Hook** wiring (`param_name → port`)
 - **Raster NIF placement** in Kernel (Domain keeps pure reference)
@@ -133,7 +140,8 @@ Former numbered ADR-001…014 text that described pure domain rules was **migrat
 When implementing Equinox Host glue:
 
 ```text
-edit → zongzi Timeline → Anchor.rebase_all → Windowing.Strategy.window → [Segment]
+edit → Track (Timeline + notes_by_seq sync) → Track.rebase_interventions (Anchor.rebase_all)
+  → Track.slice (Windowing.Strategy) → [Zongzi.Windowing.Segment]
   → Engine.check(%{segments: ...}) → (user resolution) → Engine.render(%{segments: ...})
 ```
 
@@ -143,9 +151,10 @@ Do not re-introduce persistent Utterance/Segment-as-identity in Domain.
 
 ### Domain Red Lines (permanent)
 
-- Do not let `EquinoxDomain.*` modules import, alias, or use anything from `Equinox.Kernel.*`, `Equinox.Session.*`, or `Equinox.Editor.*`. Domain is a zero-dependency project.
+- Do not let `EquinoxDomain.*` modules import, alias, or use anything from `Equinox.Kernel.*`, `Equinox.Session.*`, or `Equinox.Editor.*`. Domain's only allowed dependency is `:zongzi`.
 - Do not add `graph`, `cluster`, or `synth_override` fields to Domain structs. These are Kernel compile-time concepts; they belong in `RenderRequest` (ADR-006).
-- Do not re-run `Slicer` implicitly during Editor note operations. Slicing is an explicit one-way projection: `Notes → [Window]` (ADR-001, ADR-010).
+- Do not persist `Zongzi.Windowing.Segment`, and do not re-introduce a `Slicer` module or slice-repair passes. Windowing is an explicit one-way projection via `Track.slice/2`; segments are recomputed from scratch after edits.
+- Do not store user/engine interventions as tick-anchored chunks — the `LayerChunk`/`data_channels` model is abolished, and `EquinoxDomain.Rebase.*` must not be revived. Use `Zongzi.Intervention` + `Declaration` with `Anchor` rebase.
 - Do not feed raw per-frame drawing samples into Editor or History. Simplify to control points first via Douglas-Peucker (ADR-003).
 
 ### Kernel Guidelines
@@ -157,7 +166,7 @@ The Kernel layer exists as a thin wrapper over Domain + runtime state management
 
 ## 9. Testing Guidelines
 
-- **Domain (Elixir)**: Focus on pure unit tests (`ExUnit`). Avoid mocking in the `domain/` project since everything is pure data/functions. Use table-driven tests (or `Enum.each`) for matrix logic like `Slicer` edge cases.
+- **Domain (Elixir)**: Focus on pure unit tests (`ExUnit`). Avoid mocking in the `domain/` project since everything is pure data/functions. Use table-driven tests (or `Enum.each`) for matrix logic like `SlicePolicy` windowing edge cases.
 - **Kernel (Elixir)**: Test stateful boundaries (e.g., GenServers) and integration with Domain types.
 - **Frontend (Svelte)**: UI testing is deferred to Phase 3. For pure TS logic (e.g., math, formatting), use standard unit tests.
 
@@ -167,25 +176,23 @@ Current priority: **Phase 1a → 1b → 1c → 1d (Domain MVP) → Phase 2 (Doma
 
 ```
 Phase 1a ─── Standalone Domain Models (domain/)
-  Key.TwelveET, Note (pitch/duration/timing).
-  Deferred: Curves rasterization/simplification (pending ADR-010 apply_intervention design),
-  Tempo.Curve (reserved for Kernel NIF integration verification).
+  Key.TwelveET, Note (pitch/duration/timing) — now provided by zongzi.
+  Deferred: Curves rasterization/simplification, Tempo.Curve (Kernel NIF verification).
 
 Phase 1b ─── Aggregate Roots (domain/)
-  Track, Project, Phoneme linkage.
-  Note CRUD at Track level.
+  Track (zongzi Caller trio + CRUD), Project, Phoneme linkage.
 
-Phase 1c ─── Slicer (domain/)
-  Note.slice_flag, Slicer: Notes → [Window] projection,
-  Track note CRUD with slice repair.
+Phase 1c ─── Windowing & Interventions (domain/)
+  slice_flag in Note.metadata, SlicePolicy (Windowing strategy),
+  Track interventions (mount/rebase), PhonemeTiming declaration.
 
 Phase 1d ─── Polish & Serialization (domain/)
-  Editing commands, Session/RenderRequest, Pickle + comprehensive tests.
+  Editing commands, Session, Pickle + comprehensive tests.
 
 Phase 2 ──── Domain-Kernel Integration (kernel/)
   Replace legacy Domain types with the new domain project.
-  Adapt Editor / Session / Compiler to Window + RenderRequest.
-  Curve compilation pipeline.
+  Adapt Editor / Session / Compiler to Windowing + RenderRequest + Intervention.
+  Curve channel Declaration + resolve-at-check pipeline.
 
 Phase 3 ──── UI Shell Polish (ui_shell/)
   Arranger, History, Plugin System.
@@ -199,44 +206,47 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 2. ~~**M1 — Piano Roll parity**: Port notes/viewport/grid from KinoBayanroll.~~
 3. ~~**M2 — Node Editor parity**: SvelteFlow-based Synth editor, StepRegistry-driven palette, graph persistence via `Equinox.Project`.~~
 4. ~~**M3 — Kernel compile/runtime decoupling**: `Compiler`, `Planner`, `Session.Context`, and OrchidStratum-backed session storage are wired into the render path.~~
+5. ~~**Zongzi Migration (domain)**: `:zongzi` path dependency added; duplicated base types (`Timeline.*`, `Key.*`, `Curve.*`, `Util.*`, `Helpers`) deleted in favor of zongzi; `Track` rebuilt on `Zongzi.Timeline` + `notes_by_seq` + `interventions` with the Caller sync contract; `Slicer` replaced by `Score.SlicePolicy` (`slice_flag` in `Note.metadata`); `Rebase.*` / `LayerChunk` / `Port.Declaration` replaced by zongzi Intervention/Declaration (`Port.Declarations.PhonemeTiming` first channel); `RenderRequest` carries survived interventions; `AdoptRequest` mounts interventions.~~
 
 **Completed sector list:**
-- Core timeline: `Tick`, `TempoMap`, `Tempo.Step`, `Grid`
-- Utilities: `Util.Model`, `Util.Object`, `Util.ID`, `Util.Pickle`, `Helpers`
-- Score data structures: `Note` (partial), `Phoneme`, `Track` (skeletal, +`presets`/`active_preset`), `Project` (skeletal)
+- Base types (from zongzi): `Tick`, `TempoMap`, `Tempo.Step/Linear`, `TimeSigMap`, `RecordMap`, `Grid`, `Key.TwelveET`, `Curve.Chunk/ControlPoint/Adapters`
+- Utilities (from zongzi): `Util.Model`, `Util.Object`, `Util.ID`, `Helpers`
+- Score: `Track` (zongzi Caller trio + CRUD + `slice/2`), `Project` (skeletal), `Phoneme`
+- Windowing: `Score.SliceFlag`, `Score.SlicePolicy`
+- Interventions: `Track.interventions` + `mount_intervention/5` + `rebase_interventions/1`; `Port.Declarations.PhonemeTiming`
+- Commands: `Command.RenderRequest` (interventions projection), `Command.AdoptRequest` (mount flow)
 - VO: `Segment` (rendering context)
-- Curve: `Curve.Chunk` (struct + adapter/container pattern); `Curve.Cluster` (skeletal); rasterization & simplification deferred (ADR-010 pending)
-- Key: behaviour + Inner protocol + `Key.TwelveET` implementation — MIDI/frequency conversion complete; staff notation (`from_score`/`to_score`) deferred to post-MVP(signatures reserved, stubs return `{:error, :not_implemented}`)
+- Deferred: curves rasterization/simplification, Pickle serialization (see Phase 1d)
 
 ### Phase 1a — Standalone Domain Models (domain/)
-5. **Note (standalone)** — Note struct with duration, pitch, timing (`start_tick`, `duration_tick`). Pure value fields; no Track-level concerns.
-6. **Timeline** — `TimeSigMap.compile/1`, `Tempo.Linear`. Musical time ↔ physical time conversion. `Tempo.Curve` deferred — reserved as a Kernel NIF integration verification point.
-7. **Curves (pure data)** — `Curve.Chunk` (done). `Curve.Cluster` (skeletal — needs design clarification with `data_channel`). RasterCache, rasterizer, Douglas-Peucker simplification: **deferred** — these plug into ADR-010's `apply_intervention` / `apply_approve` flow, which needs further design before implementation.
+5. **Note (standalone)** — Done, via `Zongzi.Score.Note` (explicit-id `new/1`, pure `split/4` / `merge/4`).
+6. **Timeline** — Done, via `Zongzi.Score.{Tempo*, TimeSig*, Record*}` (`TimeSigMap.compile/1`, `Tempo.Linear`). `Tempo.Curve` deferred — reserved as a Kernel NIF integration verification point.
+7. **Curves (pure data)** — Done, via `Zongzi.Curve.*`. RasterCache, rasterizer, Douglas-Peucker simplification: **deferred** (see Curves section).
 
 ### Phase 1b — Aggregate Roots (domain/)
-8. **Track** — Notes map (`%{note_id => Note.t()}`) + `data_channels: %{channel => [LayerChunk]}`. Note CRUD at Track level (insert, delete, split, merge, update). **Partially resolved by ADR-012**: timing channel (`shape: :event_sequence`) uses identity-anchored delta. Non-timing channels (`shape: :continuous`, e.g., pitch/energy) still need anchor semantics (resolved in ADR-013).
-9. **Project** — Tracks map + project-level metadata. Track CRUD. **Blocked on Track completion**.
-10. **Phoneme** — Pure identity VO (`symbol`, `type`); timing lives in `TimedEvent` (ADR-009). User timing edits as `PhonemeTimingDelta` (ADR-012). Slicer-produced `Window` determines rasterization boundaries.
+8. **Track** — Done: zongzi Caller trio (`timeline`, `notes_by_seq`, `interventions`) + mix/preset fields. Note CRUD (`insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note`, `apply_slice_flag`) follows the zongzi Caller sync contract. The old ADR-012/013 anchor-semantics questions are superseded by zongzi Anchor/Declaration.
+9. **Project** — Tracks map + project-level metadata. Track CRUD. **Blocked on Track completion** → unblocked, still skeletal.
+10. **Phoneme** — Pure identity VO (`symbol`, `type`); timing lives in the engine projection. User timing edits are `:phoneme_timing` interventions (`Port.Declarations.PhonemeTiming`).
 
-### Phase 1c — Slicer (domain/)
-11. **Slicer** — `Note.slice_flag` (`:auto | :force_slice | :force_merge`). Rest-gap slicing. `Notes → [Window]` projection. No materialization step — Window is transient.
-12. **Track slice repair** — After insert/delete/split/merge/update, auto-repair `slice_flag` in affected interval. **Blocked on Track note CRUD**.
-13. **Segment** — Rendering context VO: acoustic boundaries, `phonemes`/`curves`. The Domain defines the struct; fields are populated by the Kernel at compile time and do not participate in serialization (see ADR-007).
+### Phase 1c — Windowing & Interventions (domain/)
+11. **Windowing** — Done: `slice_flag` in `Note.metadata`; `Score.SlicePolicy` (`:force_slice` / `:force_merge` overrides on `RestSplit3Beats`). `Notes → [Zongzi.Windowing.Segment]` projection; no materialization step. Slice repair rules abolished — flags are stable note metadata, windows recomputed from scratch.
+12. **Interventions** — Done: `Track.interventions` + `mount_intervention/5` + `rebase_interventions/1`; first channel `Port.Declarations.PhonemeTiming`. A curve (continuous-data) channel Declaration is still pending.
+13. **Segment** — Rendering context VO: acoustic boundaries, `phonemes`/`curves`. The Domain defines the struct; fields are populated by the Kernel at compile time and do not participate in serialization.
 
 ### Phase 1d — Polish & Serialization (domain/)
-14. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo. **Blocked on Track + Project CRUD**.
-15. **Session / RenderRequest** — `Session` (selection, clipboard, viewport) — **manual review in progress**; `Command.RenderRequest` done.
-16. **Pickle + comprehensive tests** — **暂缓。** 当前三层 Pickle 协议（`Pickle` / `Pickle.Pure` / `Pickle.Plugable`）过度设计了——只有 `Tick`、`Key`、`Tempo` 事件有实现，而核心聚合根（`Project`、`Track`、`Note`）反而没接。建议方向：
-    - Phase 1d 只需做一个最简单的 Jason JSON 序列化——`Util.Model` 已自动生成 `new/1`，直接用 `Jason.Encoder` derive 就能持久化 Project/Track/Note。
-    - `Pickle.Plugable` 的 scope/signature dispatch 机制（envelope 格式 + registry）暂时搁置，等引擎接口（`data_intervention` 契约、`AdoptRequest` 回写格式）明确后再决定是否需要这么复杂的 layer。
-    - Curve 类型的序列化同样 **deferred** pending curve model stabilization。
+14. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo. Orchestrates Track ops + `rebase_interventions/1`. **Blocked on Track + Project CRUD** → Track done; Project CRUD pending.
+15. **Session / RenderRequest** — `Command.RenderRequest` rewritten (carries survived interventions + declarations). `Session` still a placeholder; the zongzi Caller state (per-track trio) now lives on `Track`, so Session mainly holds selection, clipboard, viewport.
+16. **Pickle + comprehensive tests** — **暂缓。** The three-layer Pickle protocols (`Pickle` / `Pickle.Pure` / `Pickle.Plugable`) are over-designed. Suggested direction:
+    - Phase 1d only needs the simplest Jason JSON serialization — `Zongzi.Util.Model` already auto-generates `new/1`; derive `Jason.Encoder` for Project/Track/Note. `Zongzi.Timeline.build/1` supports timeline deserialization from a persisted note order.
+    - `Pickle.Plugable`'s scope/signature dispatch (envelope + registry) stays shelved until the engine interface contracts stabilize.
+    - Curve-type serialization likewise **deferred** pending curve model stabilization.
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
-17. **Domain dependency**: Add `:equinox_domain` to kernel, delete legacy `Equinox.Domain.*`, replace all references.
-18. **Slicer → Window**: Rewrite Slicer for new `slice_flag` model; Window-based slicing replaces `materialize_segments`.
-19. **Track API**: `insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note` with automatic slice repair.
-20. **RenderRequest + AdoptRequest**: Introduce `RenderRequest` as Compiler's sole input (replaces SegmentContext). `RenderRequest.from_window/3` slices `data_channels`, resolves adopted-over-user overlaps, and pulls tempo_segments + declarations. `AdoptRequest.adopt/2` writes engine output back to `Track.data_channels` as `:adopted` LayerChunks.
-21. **Editor / Session adaptation**: Editor ops → Track API. Session manages selection, clipboard, and viewport state.
+17. **Domain dependency**: Kernel already declares `:equinox_domain`; delete legacy `Equinox.Domain.*`, replace all references. Add `:zongzi` to kernel when it calls zongzi APIs directly.
+18. **Slicer → Windowing**: Delete the legacy `materialize_segments` path; use `Track.slice/2` → `[Zongzi.Windowing.Segment]`.
+19. **Track API** (done in domain): Editor ops → `Track.insert_note/delete_note/split_note/merge_notes/update_note/apply_slice_flag`, plus `rebase_interventions/1` after each edit batch.
+20. **RenderRequest + AdoptRequest** (done in domain): `RenderRequest.from_window/3` filters survived interventions by scope ∩ window; `AdoptRequest.adopt/3` mounts engine output as an intervention. Kernel side: resolve interventions at check time (`Declaration.resolve_within/2`) and emit curve `data_interventions`.
+21. **Editor / Session adaptation**: Editor ops → Track API. Session manages selection, clipboard, viewport, and per-track Caller state. Note the naming clash: `Equinox.Kernel.Engine` (Orchid runner) vs `Zongzi.Engine` (check/render contract) — rename the runner or implement the zongzi behaviour deliberately.
 
 ### Phase 3 — UI Shell (ui_shell/)
 22. **Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances.
@@ -245,67 +255,69 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
     - Frontend: WebComponent wrapping for SvelteFlow, third-party UI `.js` via dynamic `<script type="module">`.
     - Backend: Distributed Erlang — isolated BEAM `Engine Node` per Session for Orchid graph execution, hot-load `.beam` modules without risking the Phoenix `Web Node`.
 
-## Slicer Semantics
+## Windowing Semantics
 
-### Slicer Scenarios
+### Windowing Scenarios
 
-- **Continuous Notes Import**: MIDI/ustx import produces dense note sequences. Default behavior: derive initial slice boundaries from rest-gap detection (`min_rest_ticks` threshold). This covers the majority of initial modeling.
-- **Manual Override**: User can explicitly mark a note with `:force_slice` or `:force_merge`, overriding automatic derivation.
-- **Edit Repair**: After split/merge/drag/time-change operations, locally recalculate and repair `slice_flag` to ensure slices don't dangle or overlap.
-- **Window Semantics**: Slice semantics are note-level; `Window` is a transient projection — never a persisted entity. User interventions write to `Track.data_channels` as `LayerChunk`s, orthogonal to Slicer windows. 💡
+- **Continuous Notes Import**: MIDI/ustx import produces dense note sequences. Default behavior: `Zongzi.Windowing.RestSplit3Beats` cuts on rest gaps ≥ 3 beats (1 beat joins the previous segment, 2 beats join the next; longer gaps leave a dead zone).
+- **Manual Override**: `slice_flag` in `Note.metadata` (via `Score.SliceFlag`) overrides derivation at the boundary **before** the flagged note: `:force_slice` always cuts, `:force_merge` never cuts.
+- **Edits**: there is no repair step. Flags are stable note metadata; windows are recomputed from scratch by `Track.slice/2` after every edit. Intervention survival across edits is a separate concern handled by `Anchor.rebase_all` (via `Track.rebase_interventions/1`), not by windowing.
+- **Segment Semantics**: `Zongzi.Windowing.Segment` is a transient projection — never persisted, never an intervention anchor. User interventions live in `Track.interventions`, orthogonal to windows. 💡
 
 ### `slice_flag` Design
 
-Define `slice_flag` on `EquinoxDomain.Score.Note` as:
+`EquinoxDomain.Score.SliceFlag`:
 
 ```elixir
-@type slice_flag :: :auto | :force_slice | :force_merge
+@type t :: :auto | :force_slice | :force_merge
 ```
 
-- `:auto`: default; Slicer decides boundaries via rest-gap detection.
-- `:force_slice`: force a slice boundary at this note's start (equivalent to the next note being `{:on_start, new_id}`). A single `:force_slice` note forms a standalone utterance.
-- `:force_merge`: prevent a slice boundary even if a rest gap exceeds the threshold.
+Stored as `note.metadata["slice_flag"]` (`"force_slice"` / `"force_merge"`; `:auto` = key absent). The flag governs the boundary **immediately before** the note:
 
-The Slicer produces `Window` structs — transient time-window descriptors. `Window` is never persisted; it flows directly into the Compiler for preview/playback. The rendering engine works with `Window` + curve slices via `RenderRequest`; it does not need to understand the Note domain model.
+- `:auto`: default; `RestSplit3Beats` decides via rest-gap detection.
+- `:force_slice`: force a boundary before this note, even with no rest gap.
+- `:force_merge`: suppress the boundary before this note, even across a rest gap ≥ threshold.
 
-### Note Editing Functions (`EquinoxDomain.Score.Note`)
+Each boundary is governed by exactly one note's flag (the note after the boundary), so overrides never conflict with each other.
 
-Note-local transforms:
+`Score.SlicePolicy` implements `Zongzi.Windowing.Strategy`: it delegates to `RestSplit3Beats.window/1`, then applies force-merge joins and force-slice splits on `current_segments`. Degenerate cuts (zero-length halves, e.g. chord notes sharing a start tick) are skipped.
 
-- `new/1(attrs)` — create a new note
+### Note Editing Functions (`Zongzi.Score.Note`)
+
+Note-local transforms (pure; IDs injected by the caller):
+
+- `new/1(attrs)` — create a note (`:id` required)
 - `update/2(note, attrs)` — update note fields
-- `merge/2(note1, note2)` — merge two overlapping notes
-- `split/3(note, split_tick, attrs)` — split note at a tick position
+- `drag_note/2`, `drag_duration/2`, `update_lyric/2`, `update_annotation/2`, metadata helpers
+- `split/4(note, split_tick, new_id, attrs)` — split at a tick position
+- `merge/4(note1, note2, merged_id, opts)` — merge two overlapping notes
 
-### Track Editing Functions
+### Track Editing Functions (`EquinoxDomain.Score.Track`)
 
-Track directly owns `notes` as `%{note_id => Note.t()}` and orchestrates note operations with slice repair:
+Track owns the zongzi Caller trio (`timeline`, `notes_by_seq`, `interventions`) and follows the zongzi Caller sync contract:
 
-- `insert_note/3(track, note, opts)` — insert and repair affected slice
-- `delete_note/2(track, note_id)` — delete and repair affected slice
-- `split_note/3(track, note_id, split_tick)` — split and repair
-- `merge_notes/3(track, note_id1, note_id2)` — merge and repair
-- `update_note/3(track, note_id, attrs)` — update and repair if timing changed
-- `apply_slice_flag/3(track, note_id, slice_flag)` — manual override
+- `insert_note(track, attrs)` → `{:ok, track, note}` — positioned by `start_tick`; seq auto-assigned
+- `delete_note(track, seq_id)` → `{:ok, track}`
+- `split_note(track, seq_id, split_tick, attrs \\ [])` → `{:ok, track, before, after}` — before keeps its seq, after gets a new seq
+- `merge_notes(track, seq_a, seq_b)` → `{:ok, track, merged}` — merged at seq_a; seq_b becomes a merge tombstone
+- `update_note(track, seq_id, attrs)` → `{:ok, track}` — re-links via `move_note` when `start_tick` crosses neighbors (seq preserved)
+- `apply_slice_flag(track, seq_id, flag)` → `{:ok, track}` — manual override
+- `slice(track, opts \\ [])` → `{:ok, [Zongzi.Windowing.Segment.t()]}` — one-way windowing projection
+- `note(track, seq_id)`, `active_notes(track)` — queries
 
-### Slice Repair Rules
+Note operations do NOT auto-rebase interventions. After an edit batch, the Caller runs:
 
-After each track edit, repair algorithm:
-
-1. Identify affected interval (expanded to cover adjacent slice boundaries).
-2. Reset slice flags in affected interval to `:auto`.
-3. Re-run rest-gap detection to determine natural boundaries.
-4. Preserve user `:force_slice` / `:force_merge` overrides where possible.
-5. Ensure consistency: no orphaned boundaries.
+- `rebase_interventions(track)` → `{:ok, track, %{conflicts, decisions}}` — wraps `Anchor.rebase_all`; prunes dead interventions, surfaces conflicts for the UI
+- `mount_intervention(track, int, payload, seq_id, projection)` → `{:ok, track, mounted}` — derives a `NoteTriplet` anchor and stores the declaration snapshot
 
 ### Data Flow
 
-1. [auto] Track edits update `track.notes` with repaired `slice_flag`.
-2. [auto] Slicer produces `Window` structs: `Notes → [Window]`.
-3. [auto] `Window`s flow into `RenderRequest.from_window/3` → `Compiler.compile/1` for preview/playback.
-4. [explicit] User interventions (curve strokes, engine output adoption) write to `Track.data_channels` as `LayerChunk`s — orthogonal to Slicer windows.
-5. [auto] On re-slice, new `Window`s are generated from scratch; `data_channels` survive unaffected.
-6. [auto] Compiler renders from `RenderRequest` (which carries `Window` note_ids + `data_channels` slices) — `RenderRequest` determines rasterization boundaries for phonemes and curves.
+1. [auto] Track edits update `timeline` + `notes_by_seq` per the sync contract.
+2. [explicit] Caller runs `Track.rebase_interventions/1` after the edit batch; structural conflicts (dead anchors) surface to the user.
+3. [auto] `Track.slice/2` produces transient `Zongzi.Windowing.Segment`s via `SlicePolicy`.
+4. [auto] `RenderRequest.from_window/3` builds the compile request: notes by seq, tempo slice, survived interventions filtered by `Declaration.scope` ∩ window, and the channel → declaration-module map.
+5. [engine check] The Compiler/engine resolves each intervention against a fresh projection (`Declaration.resolve/2`): apply deltas or raise a semantic conflict.
+6. [explicit] Adopting engine output mounts a new intervention (`AdoptRequest.adopt/3`) — it never writes tick-anchored chunks.
 
 ## Curves
 
@@ -313,36 +325,34 @@ Split into Phase 1 (domain) and Phase 2 (kernel integration).
 
 ### Goals
 
-1. Continuous parameter curves become a first-class, **Track-scoped** data layer.
-2. Window is the Slicer's transient output (`note_ids`, `tick_start`, `tick_end`); Segment is a pure rendering context VO.
-3. Compiler becomes the sole translator from `Curve.Cluster` → `data_intervention`.
+1. Continuous parameter curves become first-class, **intervention-based** data anchored on notes (not tick ranges).
+2. `Zongzi.Windowing.Segment` is the transient windowing output (`start_tick`, `end_tick`, `seq_ids`); `EquinoxDomain.Segment` is a pure rendering-context VO.
+3. Compiler becomes the sole translator from resolved curve interventions → `data_intervention`.
 4. Kernel stays semantics-agnostic about individual curve parameters; consumption is Orchid Hook territory.
 
-### Data Structures (matching domain project)
+### Data Structures
 
-- `EquinoxDomain.Curve.Chunk`: `{id, start_tick, end_tick, control_points, rasterized | nil, source, extra}`. Control points carry `(tick, value, kind, tension)`.
-- `EquinoxDomain.LayerChunk`: `{start_tick, end_tick, payload, source :: :user | :adopted}`. Unified time-slice container for curves and adopted data. Lives in `Track.data_channels`. Within the same channel, `:adopted` chunks override `:user` chunks on overlapping intervals.
-- `EquinoxDomain.Curve.RasterCache`: `{stride, samples :: binary, fingerprint}`. Rebuildable from control points; never serialized.
-- `EquinoxDomain.Command.RenderRequest`: `{notes, time_range, tempo_segments, data_slices, declarations}`. The only struct passed into `Compiler.compile/1`. Constructed via `from_window/3` or `from_utterance/3`.
+- `Zongzi.Curve.Chunk`: `{id, adapter, container, start_tick, rasterized | nil, extra}` (adapter/container pattern; `end_tick` is computed via the adapter, not stored). Control points carry `(tick, value, handle_left, handle_right)`.
+- `Zongzi.Intervention` (curve channels): `{channel, anchor, payload, snapshot, declaration}` — curve payloads are control-point chunks plus a maintained boundary; snapshots hold the original projected values. Replaces the abolished `EquinoxDomain.LayerChunk`.
+- RasterCache (deferred): `{stride, samples :: binary, fingerprint}`. Rebuildable from control points; never serialized.
+- `EquinoxDomain.Command.RenderRequest`: `{track_id, note_ids, notes, time_range, tempo_segments, interventions, declarations}`. The only struct passed into `Compiler.compile/1`. Constructed via `from_window/3`.
 
 ### Segment Shrinkage
 
 After curves integration, `%EquinoxDomain.Segment{}` retains only rendering-context fields: `track_id, start_tick, end_tick, core_start_sec, core_end_sec, context_start_sec, context_end_sec, phonemes, curves` (the `phonemes` and `curves` fields are populated by the Kernel at compile time and are not serialized).
 
-Removed from Kernel's legacy Segment: `curves`, `synth_override`, `graph`, `cluster`. These move to `RenderRequest` (compile-time) or `Track.data_channels`.
+Removed from Kernel's legacy Segment: `curves`, `synth_override`, `graph`, `cluster`. These move to `RenderRequest` (compile-time) or `Track.interventions`.
 
-### Curve Facade API Additions
+### Curve Facade API (Phase 2 Editor concern)
 
-- `apply_curve_stroke(project, track_id, param, %Chunk{})`: atomic insertion of a completed stroke. Emits history entries.
-- `erase_curve_range(project, track_id, param, start_tick, end_tick)`: erase within a range.
-- `clear_curve_layer(project, track_id, param)`: wipe a whole layer.
-
-Strokes are assumed already-simplified control-point chunks (see ADR-003). The Editor does **not** accept raw sample arrays.
+- A completed stroke becomes a curve intervention, mounted via `Track.mount_intervention/5` with the channel's declaration. Facade helpers (`apply_curve_stroke`, `erase_curve_range`, `clear_curve_layer`) are Editor-level conveniences built on intervention mount/remove.
+- Strokes are assumed already-simplified control-point chunks (see ADR-003). The Editor does **not** accept raw sample arrays.
+- A curve `Declaration` channel (scope/snapshot/resolve for continuous data, per zongzi `declaration-projection-resolution`) is still to be defined — `Port.Declarations.PhonemeTiming` is the reference implementation.
 
 ### Compiler Integration
 
-1. Caller builds one `RenderRequest` per `Window` via `RenderRequest.from_window/3`, which slices `data_channels`, resolves adopted-over-user overlaps, and pulls tempo_segments + declarations.
-2. `Compiler.compile/1` dispatches data_slices to `data_interventions`, keyed by `PortRef`. The `PortRef → Orchid key` translation reuses existing `Graph.PortRef.to_orchid_key/1`.
+1. Caller builds one `RenderRequest` per window via `RenderRequest.from_window/3` (survived interventions filtered by `Declaration.scope` ∩ window).
+2. At check time, the Compiler resolves interventions per channel (`Zongzi.Intervention.Declaration.resolve_within/2`) and dispatches resolved data to `data_interventions`, keyed by `PortRef`. The `PortRef → Orchid key` translation reuses existing `Graph.PortRef.to_orchid_key/1`.
 3. Payload shape given to the Hook:
    ```text
    %{param: atom(), start_tick: non_neg_integer(), end_tick: non_neg_integer(),
@@ -352,14 +362,12 @@ Strokes are assumed already-simplified control-point chunks (see ADR-003). The E
 
 ### Phase 1 — Domain
 
-Pure data modules inside `domain/`, no impact on Kernel:
-
-- [x] Add `EquinoxDomain.Curve.Chunk` (struct + adapter/container pattern).
-- [x] Add `EquinoxDomain.LayerChunk` + unit tests.
-- [ ] Add `EquinoxDomain.Curve.RasterCache` + rasterizer — **deferred**: plugs into ADR-010 `apply_intervention` / `apply_approve` flow.
+- [x] Curve types come from zongzi (`Zongzi.Curve.Chunk`, `ControlPoint`, `Adapter.Bezier/CatmullRom`).
+- [ ] Curve channel `Declaration` (continuous data) — pending; reference implementation: `Port.Declarations.PhonemeTiming`.
+- [ ] Add `RasterCache` + rasterizer — **deferred**: plugs into the resolve-at-check flow.
 - [ ] Add stroke-simplification helper (Douglas-Peucker) — **deferred**: same as above.
-- [x] Add `data_channels` field to `EquinoxDomain.Score.Track`, default `%{}`.
-- [ ] Implement `Pickle` serialization for all curve types — **deferred**: pending curve model stabilization.
+- [x] ~~`Track.data_channels` / `LayerChunk`~~ — abolished; `Track.interventions` instead.
+- [ ] Implement serialization for curve types — **deferred**: pending curve model stabilization.
 
 Each step ends on a green `cd domain && mix precommit`.
 
@@ -367,12 +375,12 @@ Each step ends on a green `cd domain && mix precommit`.
 
 After Domain is stable:
 
-- [x] Introduce `EquinoxDomain.Command.RenderRequest` (wraps notes + time_range + tempo_segments + data_slices + declarations; `from_window/3` done).
-- [x] Add `EquinoxDomain.Command.AdoptRequest` + `adopt/2` — basic implementation done (silent overlap trim); conflict-aware two-phase flow pending (see ADR-010).
+- [x] `EquinoxDomain.Command.RenderRequest` rewritten (interventions + declarations; `from_window/3` done).
+- [x] `EquinoxDomain.Command.AdoptRequest` rewritten (mount intervention; `adopt/3` done).
 - [ ] Remove `curves`, `synth_override`, `graph`, `cluster` from legacy `%Segment{}` and its `Jason.Encoder` impl.
 - [ ] Add legacy-tolerant loader in `Project.from_json/1` for old payloads.
-- [ ] Update `Session.Context.dispatch_to_plans/1` to build `RenderRequest` per Window via `RenderRequest.from_window/3`.
-- [ ] Emit curve `data_interventions` in the Compiler.
+- [ ] Update `Session.Context.dispatch_to_plans/1` to build `RenderRequest` per window via `RenderRequest.from_window/3`.
+- [ ] Define curve channel Declaration(s) and emit curve `data_interventions` in the Compiler (resolve at check time).
 - [ ] Thread curve operations through `Editor.History.Operation`.
 
 Each step ends on a green `cd kernel && mix precommit`.

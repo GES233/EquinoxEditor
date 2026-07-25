@@ -1,98 +1,47 @@
 defmodule EquinoxDomain.Command.AdoptRequest do
   @moduledoc """
-  采纳请求——引擎产出的物理时间数据回写 Track 的入口。
+  采纳请求——把引擎产出挂载为用户所有的 intervention（锚在指定音符上）。
 
-  引擎产出的是物理时间采样，需先由调用方用 TempoMap 转换为 Tick 后，
-  再通过 AdoptRequest 写入 Track.data_channels。
+  取代旧的 tick 区间 LayerChunk 回写：采纳不再按时间区间切片存储，
+  而是生成一条 channel 干预，锚定 `seq_id` 对应的三元组锚；
+  结构死活由后续 rebase 判定，语义有效性由 declaration 的
+  snapshot/resolve 判定。
   """
 
-  alias EquinoxDomain.{
-    Util.ID,
-    Timeline.Tick,
-    Score.Track,
-    Port.Channel,
-    LayerChunk
-  }
+  alias EquinoxDomain.{Port.Channel, Score.Track}
+  alias Zongzi.{Intervention, Util.ID}
+  alias Zongzi.Timeline.SeqID
 
   @type t :: %__MODULE__{
-          track_id: ID.t(Track),
-          time_range: {Tick.numeric_tick(), Tick.numeric_tick()},
           channel: Channel.channel(),
-          tick_payload: term()
+          declaration: module(),
+          seq_id: SeqID.t(),
+          payload: term()
         }
 
-  use EquinoxDomain.Util.Object,
+  use Zongzi.Util.Object,
     keys: [
-      :track_id,
       :channel,
-      :tick_payload,
-      time_range: {0, 0}
+      :declaration,
+      :seq_id,
+      :payload
     ]
 
-  # 这个还是有点太粗糙了，后面会考虑的细一点
   @doc """
-  将采纳请求写入 Track，返回更新后的 Track。
+  将采纳请求挂载到 Track，返回 `{:ok, track, intervention}`。
 
-  在 `track.data_channels[channel]` 中插入一条 `source: :adopted` 的 LayerChunk。
-  若该 channel 下已有 adopted chunk 与新区间重叠，旧 chunk 被覆盖区间会被裁剪。
-
-  ## Examples
-
-      iex> AdoptRequest.adopt(%AdoptRequest{...}, track)
-      {:ok, %Track{data_channels: %{"phoneme" => [%LayerChunk{source: :adopted, ...}]}}}
+  新建的 intervention 以 `"iv_"` 前缀分配 id，经
+  `Track.mount_intervention/5` 派生锚点并写入 snapshot。
   """
-  @spec adopt(t(), Track.t()) :: {:ok, Track.t()} | {:error, term()}
-  def adopt(%__MODULE__{} = request, %Track{} = track) do
-    %__MODULE__{
-      time_range: {start_tick, end_tick},
-      channel: channel,
-      tick_payload: payload
-    } = request
-
-    with {:ok, new_chunk} <-
-           LayerChunk.new(
-             start_tick: start_tick,
-             end_tick: end_tick,
-             payload: payload,
-             source: :adopted
+  @spec adopt(t(), Track.t(), term()) :: {:ok, Track.t(), Intervention.t()} | {:error, term()}
+  def adopt(%__MODULE__{} = request, %Track{} = track, projection) do
+    with {:ok, int} <-
+           Intervention.new(
+             id: ID.generate_id("iv_"),
+             channel: request.channel,
+             declaration: request.declaration
            ) do
-      [data_channels: update_channels(track, channel, new_chunk, start_tick, end_tick)]
-      |> then(&Track.update(track, &1))
+      Track.mount_intervention(track, int, request.payload, request.seq_id, projection)
     end
-  end
-
-  defp update_channels(track, channel, new_chunk, start_tick, end_tick) do
-    Map.update(track.data_channels, channel, [new_chunk], fn existing ->
-      # 裁剪旧 adopted chunk 与新区间重叠的部分，保留非重叠部分
-      trimmed =
-        Enum.flat_map(existing, fn ch ->
-          cond do
-            # 无重叠，保留原样
-            ch.start_tick >= end_tick or ch.end_tick <= start_tick ->
-              [ch]
-
-            # 新区间完全覆盖旧 chunk，丢弃
-            ch.start_tick >= start_tick and ch.end_tick <= end_tick ->
-              []
-
-            # 新区间在旧 chunk 中间切开
-            ch.start_tick < start_tick and ch.end_tick > end_tick ->
-              [
-                %{ch | end_tick: start_tick},
-                %{ch | start_tick: end_tick}
-              ]
-
-            # 新区间覆盖旧 chunk 头部
-            ch.start_tick >= start_tick ->
-              [%{ch | start_tick: end_tick}]
-
-            # 新区间覆盖旧 chunk 尾部
-            true ->
-              [%{ch | end_tick: start_tick}]
-          end
-        end)
-
-      [new_chunk | trimmed]
-    end)
   end
 end
