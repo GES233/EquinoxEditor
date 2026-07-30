@@ -16,10 +16,10 @@ defmodule EquinoxDomain.MixProject do
   # 提供 Timeline / Anchor / Windowing / Intervention / Score 基础类型真源。
   defp deps do
     [
-      {:zongzi, path: "../../zongzi"}
+      # {:zongzi, path: "../../zongzi"}
       # 保持相对路径的原因是一旦发现 zongzi 问题后便于修改
       # 待经过验证后用 hex version
-      # {:zongzi, "~> 0.3"}
+      {:zongzi, "~> 0.3"}
     ]
   end
 
