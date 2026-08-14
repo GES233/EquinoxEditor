@@ -1,61 +1,78 @@
 defmodule EquinoxUIShell.ProjectPresenterTest do
   use ExUnit.Case, async: true
 
+  alias Coconut.Edit.{History, Operations.InsertNote}
+  alias Coconut.Score.Key.TwelveET
   alias Equinox.Kernel.Graph
-  alias EquinoxDomain.Score.{Project, Track}
+  alias EquinoxDomain.Score.{Project, TrackMeta}
   alias EquinoxUIShell.ProjectPresenter
-  alias Zongzi.Score.Key.TwelveET
-  alias Zongzi.Score.Tempo
 
-  # 窗口规则（zongzi RestSplit3Beats）：gap >= 3 拍切开，前 1 拍归前片、后 2 拍归后片。
-  # 夹具：音符 0..240 / 240..720 粘连成窗口 {0, 720}；音符 2400..2640 与前者
-  # gap 1680 >= 1440 切开，窗口 {2400 - 960, 2640} = {1440, 2640}。
+  # 窗口规则（EquinoxDomain.Windowing，移植 RestSplit3Beats）：
+  # gap >= 3 拍切开，前 1 拍归前片、后 2 拍归后片。
+  # 夹具：音符 0..240 / 240..720 粘连成窗口 {0, 1200}（含归属的 1 拍空拍）；
+  # 音符 2400..2640 与前者 gap 1680 >= 1440 切开，窗口 {2400 - 960, 2640} = {1440, 2640}。
 
   setup do
     {:ok, project} =
-      Project.new(
-        id: "Project_test",
-        name: "Presenter Fixture",
-        tempo_map: [{0, %Tempo.Event{module: Tempo.Step, context: %{bpm: 120}}}]
-      )
+      Project.new(id: "Project_test", metadata: %{name: "Presenter Fixture"})
 
-    {:ok, track} =
-      Track.new(
-        id: "Track_1",
-        name: "Lead",
+    {:ok, project, _track} = Project.add_track(project, id: "Track_1", name: "Lead")
+    {:ok, project, _empty} = Project.add_track(project, id: "Track_empty", name: "Empty")
+
+    {:ok, project} =
+      seed_elements(project, [
+        # tempo 全局轨：Step 120 事件（cast 时归一化为 milli-bpm）
+        {"global:tempo", "Tempo_1", :head, {0, 480}, %{bpm: 120}},
+        {"Track_1", "Note_1", :head, {0, 240}, %{pitch: twelve_et(60), lyric: "la"}},
+        {"Track_1", "Note_2", "Note_1", {240, 720},
+         %{pitch: twelve_et(62), lyric: "ha", phoneme: "h"}},
+        {"Track_1", "Note_3", "Note_2", {2400, 2640}, %{pitch: twelve_et(64), lyric: "far"}}
+      ])
+
+    # 混音 / color / ui_state 属 equinox 侧表（TrackMeta，不进 History）
+    {:ok, meta} =
+      TrackMeta.new(
         gain: 0.8,
         pan: -0.5,
-        metadata: %{
-          "color" => "#aabbcc",
-          "ui_state" => %{arranger_position: %{x: 50, y: 30}}
-        }
+        metadata: %{"color" => "#aabbcc"},
+        ui_state: %{arranger_position: %{x: 50, y: 30}}
       )
 
-    {:ok, track, _n1} = Track.insert_note(track, note_attrs(0, 240, 60, "la"))
-    {:ok, track, _n2} = Track.insert_note(track, note_attrs(240, 480, 62, "ha", "h"))
-
-    {:ok, track, _n3} =
-      Track.insert_note(track, note_attrs(2400, 240, 64, "far"))
-
-    {:ok, track_empty} = Track.new(id: "Track_empty", name: "Empty", type: :external_audio)
-
-    {:ok, project} = Project.add_track(project, track)
-    {:ok, project} = Project.add_track(project, track_empty)
+    {:ok, project} = Project.put_track_meta(project, "Track_1", meta)
 
     graph = Graph.new()
     %{project: project, graphs: %{"Track_1" => graph}, graph: graph}
   end
 
-  defp note_attrs(start_tick, duration_tick, midi, lyric, phoneme \\ nil) do
+  defp twelve_et(midi) do
     {:ok, key} = TwelveET.new(midi)
+    key
+  end
 
-    %{
-      start_tick: start_tick,
-      duration_tick: duration_tick,
-      key: key,
-      lyric: lyric,
-      metadata: if(phoneme, do: %{"phoneme" => phoneme}, else: %{})
-    }
+  # 经 coconut History 逐条 apply InsertNote 手势，返回 workspace 已推进的 project
+  # （与 kernel overall_test 夹具同款模式）
+  defp seed_elements(%Project{} = project, inserts) do
+    hist = History.new(project.workspace)
+
+    Enum.reduce_while(inserts, {:ok, hist}, fn {track_id, note_id, after_id, span, attrs},
+                                               {:ok, hist} ->
+      req = %InsertNote{
+        track_id: track_id,
+        note_id: note_id,
+        after_id: after_id,
+        span: span,
+        attrs: attrs
+      }
+
+      case History.apply(hist, req) do
+        {:ok, hist} -> {:cont, {:ok, hist}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, hist} -> {:ok, %{project | workspace: History.current(hist).workspace}}
+      {:error, _} = err -> err
+    end
   end
 
   describe "to_frontend/1" do
@@ -72,7 +89,7 @@ defmodule EquinoxUIShell.ProjectPresenterTest do
       assert Map.keys(data.tracks) |> Enum.sort() == ["Track_1", "Track_empty"]
     end
 
-    test "轨级字段：type 字符串化、color/ui_state 从 metadata 还原、synth_graph 取自 graphs",
+    test "轨级字段：type 由 module 推导、color/ui_state 从 TrackMeta 还原、synth_graph 取自 graphs",
          %{project: project, graphs: graphs, graph: graph} do
       data = ProjectPresenter.to_frontend(%{project: project, graphs: graphs})
       track = data.tracks["Track_1"]
@@ -95,7 +112,8 @@ defmodule EquinoxUIShell.ProjectPresenterTest do
       assert track.extra == %{}
 
       empty = data.tracks["Track_empty"]
-      assert empty.type == "external_audio"
+      # coconut 时代 kernel 只造 Vocal 轨，type 恒推导为 "synth"（无 external_audio）
+      assert empty.type == "synth"
       assert empty.synth_graph == nil
       assert empty.color == ""
       assert empty.ui_state == %{}
@@ -118,6 +136,7 @@ defmodule EquinoxUIShell.ProjectPresenterTest do
       assert length(w0.notes) == 2
 
       [n1, n2] = w0.notes
+      assert n1.id == "Note_1"
       assert n1.start_tick == 0
       assert n1.duration_tick == 240
       assert n1.key == 60
@@ -167,7 +186,7 @@ defmodule EquinoxUIShell.ProjectPresenterTest do
   end
 
   describe "ui_note_to_attrs/2" do
-    test "相对 tick 还原绝对 tick、midi 转 TwelveET、phoneme 进 metadata、id 透传" do
+    test "相对 tick 还原绝对 tick、midi 转 TwelveET、phoneme 平铺进 attrs" do
       ui_note = %{
         "id" => "Note_ui_1",
         "start_tick" => 240,
@@ -184,9 +203,10 @@ defmodule EquinoxUIShell.ProjectPresenterTest do
       assert attrs.duration_tick == 480
       assert attrs.key == %TwelveET{midi: 62}
       assert attrs.lyric == "ha"
-      assert attrs.metadata == %{"phoneme" => "h"}
-      assert attrs.id == "Note_ui_1"
-      # domain Note 无 extra 字段，直接忽略
+      # phoneme 平铺：kernel 经 coconut `Note.from_element/2` 落入 metadata["phoneme"]
+      assert attrs.phoneme == "h"
+      # id 不透传（整窗替换走 Diff，id 由 kernel 重铸）；extra 直接忽略
+      refute Map.has_key?(attrs, :id)
       refute Map.has_key?(attrs, :extra)
     end
 
@@ -197,9 +217,8 @@ defmodule EquinoxUIShell.ProjectPresenterTest do
       assert attrs.duration_tick == 480
       assert attrs.key == %TwelveET{midi: 60}
       assert attrs.lyric == "la"
-      assert attrs.metadata == %{}
-      # 无 id 时不透传（由 Track.insert_note 自动生成）
-      refute Map.has_key?(attrs, :id)
+      # 无 phoneme 时不产出该键（避免写入空 metadata）
+      refute Map.has_key?(attrs, :phoneme)
     end
 
     test "兼容前端 length_tick/pitch 别名" do

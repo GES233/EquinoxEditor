@@ -1,15 +1,17 @@
 defmodule EquinoxUIShell.SessionHostTest do
   use ExUnit.Case, async: false
 
+  alias Coconut.Util.ID
   alias Equinox.Session
   alias Equinox.Session.Server
   alias EquinoxDomain.Score.Project
   alias EquinoxUIShell.SessionHost
-  alias Zongzi.Util.ID
 
   test "session host starts and stops session trees" do
     session_id = "ui-shell-session"
-    {:ok, project} = Project.new(id: ID.generate_id("Project_"), name: "UI Shell Session")
+
+    {:ok, project} =
+      Project.new(id: ID.generate_id("Project_"), metadata: %{name: "UI Shell Session"})
 
     assert {:error, :session_not_found} = Session.resolve(session_id)
     assert {:ok, _pid} = SessionHost.start_session(session_id, project: project)
@@ -21,7 +23,7 @@ defmodule EquinoxUIShell.SessionHostTest do
     assert {:ok, server_pid} = Session.resolve(session_id)
     assert is_pid(server_pid)
 
-    assert %{project: %Project{name: "UI Shell Session"}} =
+    assert %{project: %Project{metadata: %{name: "UI Shell Session"}}} =
              Server.get_view(Session.server(session_id))
 
     assert {:error, {:already_started, _}} =

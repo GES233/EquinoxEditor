@@ -3,12 +3,12 @@ defmodule EquinoxWeb.EditorLive do
 
   require Logger
 
+  alias Coconut.Edit.{History, Operations.InsertNote}
+  alias Coconut.Score.Key.TwelveET
+  alias Coconut.Util.ID
   alias Equinox.Session.Server
-  alias EquinoxDomain.Score.{Project, Track}
+  alias EquinoxDomain.Score.{Project, Track, TrackMeta}
   alias EquinoxUIShell.{ProjectPresenter, SessionHost}
-  alias Zongzi.Score.Key.TwelveET
-  alias Zongzi.Score.Tempo
-  alias Zongzi.Util.ID
 
   @graph_translator Application.compile_env(
                       :equinox_ui_shell,
@@ -247,12 +247,12 @@ defmodule EquinoxWeb.EditorLive do
   end
 
   defp resolve_track_id(%Project{} = project, preferred_track_id) do
-    case preferred_track_id && Project.get_track(project, preferred_track_id) do
+    case preferred_track_id && Project.fetch_track(project, preferred_track_id) do
       {:ok, _track} ->
         preferred_track_id
 
       _ ->
-        project.tracks
+        project.workspace.tracks
         |> Map.keys()
         |> Enum.sort_by(&to_string/1)
         |> List.first()
@@ -263,8 +263,8 @@ defmodule EquinoxWeb.EditorLive do
 
   # segment 即窗口投影：preferred 失配（窗口边界已变 / 不存在）时回落首个 window id
   defp resolve_segment_id(%Project{} = project, track_id, preferred_segment_id) do
-    with {:ok, track} <- Project.get_track(project, track_id),
-         {:ok, windows} <- Track.slice(track) do
+    with {:ok, _track} <- Project.fetch_track(project, track_id),
+         {:ok, windows} <- Track.slice(project, track_id) do
       window_ids =
         windows
         |> Enum.map(&ProjectPresenter.window_id(&1.start_tick))
@@ -280,7 +280,9 @@ defmodule EquinoxWeb.EditorLive do
     end
   end
 
-  # demo 工程：一轨两音符（绝对 tick 0 / 240，同窗口），tempo Step 120
+  # demo 工程：一轨两音符（绝对 tick 0..240 / 240..720，同窗口），
+  # tempo 全局轨一个 Step 120 事件。结构写经 coconut History + InsertNote
+  # （与 kernel 写路径同源；kernel overall_test 夹具同款模式）。
   defp build_default_proj do
     {:ok, key1} = TwelveET.new(60)
     {:ok, key2} = TwelveET.new(62)
@@ -288,30 +290,53 @@ defmodule EquinoxWeb.EditorLive do
     {:ok, project} =
       Project.new(
         id: ID.generate_id("Project_"),
-        name: "Equinox Default Session",
-        tempo_map: [step_tempo_event(120)]
+        metadata: %{name: "Equinox Default Session"}
       )
 
-    {:ok, track} =
-      Track.new(
-        id: "track_1",
-        name: "Main Vocal",
-        gain: 0.8,
-        metadata: %{"ui_state" => %{arranger_position: %{x: 50, y: 30}}}
-      )
+    {:ok, project, _track} = Project.add_track(project, id: "track_1", name: "Main Vocal")
 
-    {:ok, track, _note1} =
-      Track.insert_note(track, %{start_tick: 0, duration_tick: 240, key: key1, lyric: "a"})
+    note1_id = ID.generate_id("Note_")
+    note2_id = ID.generate_id("Note_")
 
-    {:ok, track, _note2} =
-      Track.insert_note(track, %{start_tick: 240, duration_tick: 480, key: key2, lyric: "ha"})
+    {:ok, project} =
+      seed_elements(project, [
+        # coconut tempo 是一条全局轨：元素为 %{bpm: milli_bpm}
+        # （InsertNote cast 时经 `Coconut.Score.Tempo.cast_bpm/1` 归一化）
+        {"global:tempo", ID.generate_id("Tempo_"), :head, {0, 480}, %{bpm: 120}},
+        {"track_1", note1_id, :head, {0, 240}, %{pitch: key1, lyric: "a"}},
+        {"track_1", note2_id, note1_id, {240, 720}, %{pitch: key2, lyric: "ha"}}
+      ])
 
-    {:ok, project} = Project.add_track(project, track)
+    # 混音 / UI 状态属 equinox 侧表（TrackMeta，不进 History）
+    {:ok, meta} =
+      TrackMeta.new(gain: 0.8, ui_state: %{arranger_position: %{x: 50, y: 30}})
+
+    {:ok, project} = Project.put_track_meta(project, "track_1", meta)
     project
   end
 
-  # zongzi tempo 源事件：`{tick, %Tempo.Event{module, context}}`
-  defp step_tempo_event(bpm) do
-    {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: bpm}}}
+  # 经 coconut History 逐条 apply InsertNote 手势，返回 workspace 已推进的 project
+  defp seed_elements(%Project{} = project, inserts) do
+    hist = History.new(project.workspace)
+
+    Enum.reduce_while(inserts, {:ok, hist}, fn {track_id, note_id, after_id, span, attrs},
+                                               {:ok, hist} ->
+      req = %InsertNote{
+        track_id: track_id,
+        note_id: note_id,
+        after_id: after_id,
+        span: span,
+        attrs: attrs
+      }
+
+      case History.apply(hist, req) do
+        {:ok, hist} -> {:cont, {:ok, hist}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, hist} -> {:ok, %{project | workspace: History.current(hist).workspace}}
+      {:error, _} = err -> err
+    end
   end
 end
