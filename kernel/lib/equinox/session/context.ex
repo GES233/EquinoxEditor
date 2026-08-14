@@ -15,6 +15,7 @@ defmodule Equinox.Session.Context do
   """
 
   alias Coconut.Edit.History
+  alias Coconut.Edit.Track, as: CoconutTrack
   alias Equinox.Session
   alias Equinox.Kernel.{Blackboard, Compiler, Graph, Runner}
   alias EquinoxDomain.Command.RenderRequest
@@ -110,12 +111,17 @@ defmodule Equinox.Session.Context do
   # 分窗投影：tpqn 取自 workspace；`extra_spans` 由轨上 Metric 锚 patch 的
   # tick 区间推导（旧「干预 scope 撑窗」语义，Ordinal/Relative 锚挂在音符上
   # 不扩窗）。非整数有理数端点不进 Windowing（tick 网格只认整数）。
+  # 非 tick 域轨（Audio 帧域）不出渲染窗口——帧域渲染尚未接入，跳过。
   defp slice_track(%Project{} = project, track_id) do
     with {:ok, track} <- Project.fetch_track(project, track_id) do
-      Track.slice(project, track_id,
-        tpqn: project.workspace.tpqn,
-        extra_spans: metric_anchor_spans(track.patches)
-      )
+      if CoconutTrack.coord_domain(track) == :tick do
+        Track.slice(project, track_id,
+          tpqn: project.workspace.tpqn,
+          extra_spans: metric_anchor_spans(track.patches)
+        )
+      else
+        {:ok, []}
+      end
     end
   end
 

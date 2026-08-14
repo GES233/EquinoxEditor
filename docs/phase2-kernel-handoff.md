@@ -1,5 +1,14 @@
 # Phase 2 交接：Kernel 清理与 Domain–Kernel 集成
 
+> **【已废弃 · 仅供考古】** 本文档描述的是 coconut 迁移之前（zongzi 时代，2026-07-25
+> 基线）的 kernel 状态与清理计划，保留仅作历史记录。当前架构（coconut + tamale、
+> `Coconut.Edit.History` 唯一写入口、`Coconut.Edit.Patch` + `Coconut.Render.Channel`
+> 干预模型、equinox 自实现 `Windowing`）见 `docs/coconut-migration.md`。
+> 特别注意：正文中多处「当前状态」式断言已随迁移失效——例如 §3 的
+> `Zongzi.Timeline.build/1` 反序列化须知、NoteTriplet 干预锚、「把 `:zongzi` 加进
+> kernel/mix.exs」等，**请勿据此施工**；§1/§2 的实测基线与耦合结论同样只是
+> 当日快照，所涉 legacy 模块大多已在后续迁移中删除。
+
 > 2026-07-25 会话交接文档。基线：master `ca8ada5`（domain Pickle 序列化）+ `8a47c43`（zongzi 迁移）。
 > 本文档把两件此前只存在于会话中的内容落盘：**Kernel 死代码清理计划**（§1，已按当日实测修正）
 > 与 **ui_shell ↔ kernel 耦合结论**（§2，grep 实测）。

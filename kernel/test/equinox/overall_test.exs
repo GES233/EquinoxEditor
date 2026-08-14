@@ -56,6 +56,26 @@ defmodule Equinox.OverallTest do
 
     assert {:error, {:track_id_taken, _}} = Server.add_track(server, %{id: added.id})
 
+    # ---- add_track：`:type` 映射 coconut 轨型，缺省 Vocal；混音键进侧表 ----
+    assert added.module == Coconut.Edit.Track.Vocal
+
+    assert {:ok, audio} =
+             Server.add_track(server, %{type: :external_audio, name: "FX", gain: 0.5})
+
+    assert audio.module == Coconut.Edit.Track.Audio
+    assert audio.name == "FX"
+
+    assert {:ok, audio_meta} = Project.track_meta(Server.get_view(server).project, audio.id)
+    assert audio_meta.gain == 0.5
+
+    # 字符串形 type 同样映射
+    assert {:ok, audio2} = Server.add_track(server, %{"type" => "external_audio"})
+    assert audio2.module == Coconut.Edit.Track.Audio
+
+    # 清掉音频轨，保持后续断言的状态整洁
+    assert :ok = Server.remove_track(server, audio.id)
+    assert :ok = Server.remove_track(server, audio2.id)
+
     # ---- replace_window_notes：对既有 window（start 0）整体替换 ----
     assert {:ok, updated} =
              Server.replace_window_notes(server, track_id, 0, [

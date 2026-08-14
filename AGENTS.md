@@ -20,31 +20,49 @@ Development follows a strict bottom-up dependency order:
 ├─────────────────────────────────┤
 │  Equinox.Kernel.*               │  ← Compiler/Orchid Integration(Scheduling/Graph Engine/etc.)
 ├─────────────────────────────────┤
-│  EquinoxDomain.*                │  ← Pure data + domain logic, highest priority
+│  EquinoxDomain.*                │  ← Equinox-specific domain layer (thin, over coconut)
 ├─────────────────────────────────┤
-│  Zongzi.* (path dependency)     │  ← SVS kernel: Timeline / Anchor / Windowing / Intervention
+│  Coconut.* (path dependency)    │  ← Engine-agnostic editor core: Score types / Edit
+│    └─ Tamale.* (path dep)       │    (Workspace/Track/Operations/History) / Render / Pickle
+│                                 │    Tamale = rebase kernel: Space / Op / Anchor / Transport / Patch
 └─────────────────────────────────┘
 ```
 
-- **Zongzi** is the bottom-layer SVS kernel library (separate repo, consumed as a path dependency): note-sequence truth (`Timeline`), structural anchors (`Anchor`), transient windowing (`Windowing`), user-edit intent (`Intervention` + `Declaration`), engine contract (`Engine`), and the base score/curve/util types. It has zero dependencies itself.
-- **Domain** sits directly on zongzi: pure data structures and stateless domain logic. Its only allowed dependency is zongzi — never Kernel, Session, or UI.
+- **Coconut** is the bottom-layer editor core (separate repo, consumed as a path dependency, remote `github:GES233/Coconut`): base score/curve/util types (`Coconut.Score.*`, `Coconut.Curve.*`, `Coconut.Util.*`), the editing aggregate (`Coconut.Edit.Workspace` / `Track` / `Operations.*` / `History` / `Command` / `Diff` / `Patch`), the render contracts (`Coconut.Render.Channel` / `Resolve` / `Engine`), and serialization (`Coconut.Pickle.*`). Its only runtime dependency is tamale.
+- **Tamale** is the rebase kernel (zero dependencies): versioned identity spaces (`Tamale.Space`), the six edit ops (`Tamale.Op.*`), structural anchors (`Tamale.Anchor.{Ordinal, Metric, Relative}`), transport (`Tamale.Transport` + `Tamale.Warp` over exact rational `Tamale.Coord`), and semantic survival (`Tamale.Patch` + canonical `Tamale.Digest`). Both coconut and equinox consume it via a local path override.
+- **Domain** sits directly on coconut/tamale: equinox-specific pure data structures and stateless domain logic only. Its only allowed dependencies are coconut + tamale — never Kernel, Session, or UI.
 - **Kernel** consumes Domain types for compilation, planning, and graph construction. Never imports UI or Session.
 - **Session / UI Shell** sit at the outermost layer, consuming both Domain and Kernel.
 
+> Historical note: the bottom layer was **zongzi** (Timeline / Anchor / Windowing / Intervention) until 2026-08. The migration to coconut+tamale is recorded in `docs/coconut-migration.md`; the tamale caller guide (`tamale/docs/zh/guide/caller-guide-zh.md` §8) contains the authoritative zongzi→tamale mapping table.
+
 ### EquinoxDomain — Independent Domain Project
 
-The `EquinoxDomain` module lives in `domain/` as a **separate Elixir project** (`:equinox_domain`) whose only dependency is `{:zongzi, path: "../../zongzi"}`. It is the canonical home for all domain types and pure business logic. The legacy kernel domain types (`kernel/lib/equinox/domain/`, `Equinox.Track`, `Equinox.Project`) were deleted in the Phase 2 mid-stage migration — kernel and ui_shell consume `EquinoxDomain.*` + zongzi types directly.
+The `EquinoxDomain` module lives in `domain/` as a **separate Elixir project** (`:equinox_domain`) whose only dependencies are `{:coconut, path: "../../coconut"}` and `{:tamale, path: "../../tamale", override: true}`. After the coconut migration it is a **thin equinox-specific layer** — coconut already absorbed the generic domain model (tracks, notes, operations, history, pickle).
 
 **Project location**: `domain/` (root-level, sibling to `kernel/` and `ui_shell/`)
 
+**Module map**:
+- `Score.Project` — `{id, workspace :: Coconut.Edit.Workspace.t(), tracks_meta :: %{track_id => TrackMeta.t()}, metadata}`. Pure query/meta aggregate: `new/1` (explicit `:id`), `add_track/2` → `{:ok, project, track}`, `remove_track/2`, `fetch_track/2`, `track_meta/2`, `put_track_meta/3`, `tempo_map/1`, `time_sig_map/1`, `view/2`, `dump/1` / `load/1` (composes `Coconut.Pickle.Workspace` + `Coconut.Pickle.Track.default_registry()` + own TrackMeta codec). **No note/tempo/patch writes here** — writes belong to the kernel's History path.
+- `Score.TrackMeta` — equinox-only per-track side table: `{mix_automation, gain, pan, mute, solo, presets, active_preset, ui_state, metadata}`. Lives outside coconut History (not undoable). Own dump/load.
+- `Score.Track` — **stateless query facade** over Project/workspace: `notes(project, track_id)` → `{:ok, [{id, Coconut.Score.Note.t(), {start_tick, end_tick}}]}`, `note/3`, `slice/3`.
+- `Windowing` + `Windowing.Window` — equinox-owned phrase windowing (coconut deliberately defers segmentation). `Window{start_tick, end_tick, note_ids}` (half-open). Ports the zongzi `RestSplit3Beats` rules + `slice_flag` overrides; see "Windowing Semantics" below.
+- `Score.SliceFlag` — `:auto | :force_slice | :force_merge` over `Coconut.Score.Note.metadata`.
+- `Score.Phoneme` — pure identity VO (`symbol`, `type`). Timing lives in the engine projection layer; user timing edits are `:phoneme_timing` patches.
+- `Segment` — Caller-side rendering-context VO (acoustic boundaries + `phonemes`/`curves`, populated by the Kernel at compile time, not serialized). Distinct from `Windowing.Window`.
+- `Port.Preset` — registry `channels :: %{channel_atom => Coconut.Render.Channel module}` + artifact/allow_adopt lists with cross-validation; own dump/load.
+- `Port.Channels.PhonemeTiming` — the first concrete `Coconut.Render.Channel` (`:phoneme_timing`): `projection/2` (canonical, float-free note+span base), `target/0` → `{:port, :synth, :phoneme_timing}`.
+- `Command.RenderRequest` — per-window compile request `{track_id, note_ids, notes (with spans), time_range, tempo_segments, patches, channels}`; `from_window(project, window, tempo_map)` filters structurally-survived patches by anchor ∩ window (Ordinal/Relative by refs, Metric by tick-range intersection).
+- `Command.AdoptRequest` — `build_patch(workspace, channel_module, %{track_id, anchor, payload})` → `{:ok, Coconut.Edit.Patch.t()}` (pure; the kernel mounts it via History).
+
 **Key design decisions**:
-- Base types come from zongzi: `Zongzi.Score.{Note, Tick, Tempo, TempoMap, TimeSig, TimeSigMap, Record, RecordMap, Grid}`, `Zongzi.Score.Key.*`, `Zongzi.Curve.*`, `Zongzi.Util.*`. EquinoxDomain does not redefine them.
-- `use Zongzi.Util.Model, keys: [...], id_prefix: "Xxx_"` auto-generates `new/1`, `update/2`, `validate/1`. `new/1` requires an explicit `:id` (no auto-generation) — callers generate IDs via `Zongzi.Util.ID.generate_id/1`. `update/2` returns `{:ok, model} | {:error, reason}`.
-- `Track` holds the zongzi Caller trio — `timeline` (`Zongzi.Timeline.t()`), `notes_by_seq` (`%{SeqID.t() => Zongzi.Score.Note.t()}`), `interventions` (`[Zongzi.Intervention.t()]`) — plus mix/preset/metadata fields. Note CRUD follows the zongzi Caller sync contract (see zongzi `docs/zh/guide/CallerDesigning-zh.md`).
-- `slice_flag` (`:auto | :force_slice | :force_merge`) lives in `Note.metadata` (via `EquinoxDomain.Score.SliceFlag`), not in the zongzi Note struct. Windowing runs as a `Zongzi.Windowing.Strategy` pipeline: `EquinoxDomain.Score.SlicePolicy` applies flag overrides on top of `Zongzi.Windowing.RestSplit3Beats`.
-- User curve/timing edits are `Zongzi.Intervention`s (structural anchor + snapshot + per-channel `Declaration` lifecycle), stored in `Track.interventions`. The tick-anchored `LayerChunk`/`data_channels` model is abolished. First concrete channel: `EquinoxDomain.Port.Declarations.PhonemeTiming`.
-- `Phoneme` is a standalone value object with identity fields (`symbol`, `type`). Timing lives in the engine projection layer; user timing edits are `:phoneme_timing` interventions (see zongzi `intervention-semantics.md`).
-- Two different `Segment` concepts coexist: `Zongzi.Windowing.Segment` (transient windowing projection `{start_tick, end_tick, seq_ids}` — the zongzi engine contract consumes this one) and `EquinoxDomain.Segment` (Caller-side rendering-context VO with acoustic boundaries and `phonemes`/`curves`, populated by the Kernel at compile time, not serialized). Keep them distinct.
+- Base types come from coconut: `Coconut.Score.{Note, Tick, Tempo, TempoMap, TimeSig, TimeSigMap, Record, RecordMap, Grid}`, `Coconut.Score.Key.*`, `Coconut.Curve.*`, `Coconut.Util.*`. EquinoxDomain does not redefine them.
+- **`Coconut.Score.Note` has no timing fields** — `{id, key, lyric, annotation, metadata}`; timing lives in the track's spans table and surfaces through `Coconut.Edit.Track.view/1` as `[{id, note, {start_tick, end_tick}}]`. Anything that needs note timing must carry the span alongside.
+- **Tempo is a track**: `workspace.globals["global:tempo"]` holds a `Coconut.Edit.Track.Tempo` with `%{bpm: milli_bpm}` elements (`Coconut.Score.Tempo.cast_bpm/1` rationalizes floats to milli-bpm). Time signatures are **not** a track — `Workspace.time_sigs` (bar-anchored), set via `Command.set_time_sigs`. Compiled maps (`Workspace.tempo_map/1`, `time_sig_map/1`) carry their own tpqn.
+- Interventions are `Coconut.Edit.Patch` (tamale `Anchor` + `Tamale.Patch{base_digest, payload}` + channel), stored in `Coconut.Edit.Track.patches`. Anchors are constructed **explicitly** (Ordinal for element identity, Ordinal+`adjacent?` for boundaries, Metric for tick ranges, Relative for element+offset) — no triplet scrubbing.
+- Two-stage death verdict (tamale doctrine): structural survival is judged at edit time by workspace write-time transport (dead patches go to per-track graveyards, drained via `History.take_dead_patches/1` — surfaced, never silently pruned); semantic survival is judged at render check time by `Tamale.Patch.resolve/2` (digest zero tolerance).
+- There is no `Zongzi.Util.Model`/`Util.Object` macro in coconut — structs hand-roll `new/1` + `update/2` via `Coconut.Util.Helpers`. IDs via `Coconut.Util.ID.generate_id/1`.
+- **Tamale float discipline**: anything entering the tamale kernel (Metric endpoints, Relative offsets, Retime spans, warps, digest inputs) must be exact rationals/canonical terms — floats are rejected. Normalization (µs ints, frame numbers, decimal strings) happens in the adapter layer before digesting.
 
 **Build/Test**: `cd domain && mix test` | **Pre-commit**: `cd domain && mix precommit`
 
@@ -54,8 +72,8 @@ The `EquinoxDomain` module lives in `domain/` as a **separate Elixir project** (
 - **Paths**: ALWAYS use forward slashes (`/`).
 - **Commands**: Unix text utilities (`grep`, `awk`, `tail` via pipes) are missing. Rely on native Agent tools (`Glob`, `Grep`, `View`) instead of bash pipes for text search/manipulation.
 - **Search Before Act**: Do not rely on hardcoded directory trees. Use `ls`/`glob` to find components and files.
-- **Plan Before Code**: Before modifying or creating files, briefly output your plan or structural changes. Do not rush into writing large blocks of code without confirming the target file paths via `ls`/`glob`.  
-- **Strict Phase Compliance**: Do not attempt to refactor Kernel or UI Shell (Phase 2 & 3) while Phase 1 is still ongoing. Ignore legacy code smells in `kernel/` until Phase 1 (Domain MVP) is 100% complete.  
+- **Plan Before Code**: Before modifying or creating files, briefly output your plan or structural changes. Do not rush into writing large blocks of code without confirming the target file paths via `ls`/`glob`.
+- **Strict Phase Compliance**: Do not attempt to refactor Kernel or UI Shell (Phase 2 & 3) while Phase 1 is still ongoing. Ignore legacy code smells in `kernel/` until Phase 1 (Domain MVP) is 100% complete.
 
 ## 3. Frontend ↔ Backend Bridge
 
@@ -63,18 +81,19 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 
 - **Rule**: Svelte components receive `bridge` as a prop. NEVER import from `phoenix_live_view` or access `window.liveSocket` in Svelte.
 - **Event Routing**: LiveComponents use `phx-target={@myself}`. Svelte 5 uses local `$state` for optimistic UI and `$effect` + `setTimeout` for debouncing network requests, instead of backend debouncing.
-- **Svelte 5 State**: Extract complex client-side state models into `.svelte.ts` files using exported functions or classes wrapping `$state`. Keep `.svelte` UI components focused on rendering and Bridge message dispatching.  
+- **Svelte 5 State**: Extract complex client-side state models into `.svelte.ts` files using exported functions or classes wrapping `$state`. Keep `.svelte` UI components focused on rendering and Bridge message dispatching.
 
 ## 4. Core Domain & Architecture Rules
 
 > In this document, "Editor" refers to the entire Equinox application.
 
-- **Domain-First Development**: `EquinoxDomain.*` (in `domain/`) is the cornerstone of the project. All domain models (data structures + pure functional logic) must be completed and thoroughly tested at this layer before development of the Kernel or UI Shell can begin. The Domain project's only allowed dependency is zongzi; it is prohibited from depending on Kernel or UI modules.💡
-- **Pure Data**: `Project`, `Track`, `Zongzi.Score.Note`, `Phoneme` are pure data structures (JSON/Pickle serializable). `Segment` is also of type Domain, but its `phonemes` and `curves` fields are cached at runtime and do not participate in serialization. No Ecto schemas, no executable closures inside them.
-- **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte.
-- **Headless-capable Kernel**: Kernel business logic (`Equinox.Kernel.*`) stays pure-functional; Domain types come from `EquinoxDomain.*`. Per the 2026-07-25 decision, the Kernel MAY hold session state as a headless editor — `Equinox.Session.Server`/`Context` own the per-session project, synth graphs, compile cache, and render tasks behind named editing APIs. `Equinox.Kernel.StepRegistry` remains a build-time catalog (not session state). `Equinox.Editor.*` was deleted in the Phase 2 mid-stage migration; its operations were absorbed into `Session.Server` + domain Track/Project APIs. 💡
-- **Windowing Model**: Windowing is a pure one-way projection `Notes → [Zongzi.Windowing.Segment]` executed by `Zongzi.Windowing` strategies (`Track.slice/2`, pipeline `[EquinoxDomain.Score.SlicePolicy]`). Segments are transient and recomputed from scratch after edits — there is no slice-repair step. `slice_flag` in `Note.metadata` is an *input signal* for the strategy, not a post-hoc synchronization channel. 💡
-- **Interventions belong to Track, anchored structurally**: Continuous parameter data (pitch, energy, breathiness, …), phoneme-timing edits, and adopted engine output are stored as `Zongzi.Intervention`s in `Track.interventions` — anchored on SeqID triplets (default `Anchor.NoteTriplet`) with snapshot / `Declaration.resolve` semantics. They are never keyed by tick ranges or window ids. At request time, `RenderRequest.from_window/3` filters survived interventions by `Declaration.scope` ∩ window; semantic resolution happens later at engine check time. 💡
+- **Domain-First Development**: `EquinoxDomain.*` (in `domain/`) is the cornerstone of the project — now as a thin layer over coconut. Equinox-specific domain models must be completed and thoroughly tested at this layer before Kernel or UI Shell work. The Domain project's only allowed dependencies are coconut + tamale; it is prohibited from depending on Kernel or UI modules.💡
+- **Pure Data**: `Project`, `TrackMeta`, `Coconut.Score.Note`, `Phoneme` are pure data structures (Pickle-serializable). `Segment` is also of type Domain, but its `phonemes` and `curves` fields are cached at runtime and do not participate in serialization. No Ecto schemas, no executable closures inside them.
+- **Timing Model**: Use **Ticks / Beats** (musical time) for storage. Conversions to acoustic frames or audio samples happen in the Elixir Kernel, never in Svelte. Note timing lives in workspace spans, not on the Note struct — carry spans alongside notes.
+- **Headless-capable Kernel**: Kernel business logic (`Equinox.Kernel.*`) stays pure-functional; Domain types come from `EquinoxDomain.*`. The Kernel MAY hold session state as a headless editor — `Equinox.Session.Server`/`Context` own the per-session project, `Coconut.Edit.History` (the only write entry), synth graphs, compile cache, and render tasks behind named editing APIs. `Equinox.Kernel.StepRegistry` remains a build-time catalog (not session state).💡
+- **History is the only write entry**: all score/tempo/patch writes go through `Coconut.Edit.History` (`Operations.*` via `History.apply/4`, structural commands via `History.run/3` + `Coconut.Edit.Command`). After each write, `Session.Context.sync_workspace/1` re-attaches `History.current(hist).workspace` onto the query-side `Project`; the `tracks_meta` side table survives on the Project and is updated directly (not undoable). Drag edits are `[Move, Retime]` in one batch (enforced by `Coconut.Edit.Operations.DragNote`) — never hand-edit spans without a Retime op.💡
+- **Windowing Model**: Windowing is an equinox-owned, pure one-way projection `notes+spans → [Windowing.Window]` (`EquinoxDomain.Windowing`, invoked via `Score.Track.slice/3`). Windows are transient and recomputed from scratch after edits — there is no slice-repair step. `slice_flag` in `Note.metadata` is an *input signal* for windowing, not a post-hoc synchronization channel.💡
+- **Interventions belong to coconut tracks, anchored structurally**: continuous parameter data (pitch, energy, breathiness, …), phoneme-timing edits, and adopted engine output are `Coconut.Edit.Patch`es in `Coconut.Edit.Track.patches` — explicit tamale anchors + `base_digest`/`payload` + `Tamale.Patch.resolve` semantics. They are never keyed by tick-window ids. At dispatch time, `RenderRequest.from_window/3` filters structurally-survived patches by anchor ∩ window; semantic resolution happens at engine check time.💡
 - **UI Layout Hierarchy**:
   - `EditorLive` (Main Shell) -> Top-level dispatcher.
   - `TrackList` -> Vertical stack for mute/solo.
@@ -96,67 +115,68 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 - Kernel (`cd kernel`): `mix deps.get`, `mix test`, `mix precommit`
 - UI Shell (`cd ui_shell`): `mix deps.get`, `iex -S mix phx.server`, `mix precommit`
 - Frontend (`cd ui_shell/assets`): `npm run dev`, `npm run build`, `npm run check`
-- Commit Messages: Follow Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `chore:`).   
+- Commit Messages: Follow Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `chore:`).
   - Commit messages should be in English, but the internal code/documentation comments remain in Chinese until user's request.
 
 ## 7. Architecture Decision Records 💡
 
-Domain / sequence / intervention / windowing decisions that belong to the **zongzi** kernel live **in the zongzi repo** (no numeric ADR ids):
+The domain / intervention / rebase decisions that used to live in zongzi now live in the **coconut** and **tamale** repos:
 
-`../zongzi/docs/zh/spec/decisions/` (or your checkout of [SynapticStrings/Zongzi](https://github.com/SynapticStrings/Zongzi) → `docs/zh/spec/decisions/`).
+- coconut: `../coconut/docs/` — `design-2026-07-editor-core.md` (the constitution: Workspace/Track/Element model, six ops, warp provider, step-only structural tempo, undo/redo via op tree + checkpoints), `design-2026-08-orchid-intervention.md` (render backend hookup, payload taxonomy, exactness spec), `design-2026-08-tempo-curve.md` (step-for-bones / curve-for-skin / bake-for-boundary).
+- tamale: `../tamale/docs/` — `zh/guide/caller-guide-zh.md` (Caller orchestration contract + self-check list), `spec/canonical-digest.md` (portable digest spec), `decisions/0001..0007` (edit-intent ops, identity conventions, warp-based Metric transport, clip/relative semantics, digest-as-adjudicator, chunked digests, exact rational coords).
 
-Index: `decisions/README.md`.
-
-| zongzi decision file | Equinox concern |
+| coconut/tamale concern | Equinox concern |
 |---|---|
-| `transient-render-closure.md` | Interventions not keyed by window id |
-| `windowing-post-rebase.md` | post-rebase `Strategy.window/1`; Engine check/render (`[Segment]`) |
-| `control-points-authoritative.md` | Curve points vs raster cache |
-| `key-behaviour-and-protocol.md` | Key dual dispatch |
-| `declaration-projection-resolution.md` | Declaration lifecycle |
-| `intervention-semantics.md` | What is / is not an intervention |
-| `anchor-operate-orthogonality.md` | Structural rebase ⊥ semantic resolve |
-| `payload-boundary.md` | `Declaration.on_rebase/4` payload boundary maintenance |
-| `boundary-ownership-open.md` | Pad pierce / phrase hash — **Host/Kernel choice** |
+| tamale `Transport` + write-time transport | Dead patches → per-track graveyard; `History.take_dead_patches/1` surfaces them |
+| tamale `Patch.resolve/2` zero tolerance | Kernel check phase: one-vote veto `{:error, {:check_failed, entries}}` |
+| tamale exact rational `Coord` | No floats in anchors/spans/digests; normalize in adapters |
+| coconut `Operations.DragNote` | `[Move, Retime]` same-batch discipline |
+| coconut `Render.Channel` behaviour | Equinox channel impls (`Port.Channels.PhonemeTiming`) + `Preset` registry |
+| coconut `Edit.Diff` | UI whole-window note replacement (`replace_window_notes`) |
+| coconut workspace write-time transport | No equinox-side rebase orchestration anymore |
 
-> `slicer-is-projection.md` was **deleted upstream** (zongzi removed `Slicer`/`slice_flag` in favor of Windowing strategies). Equinox keeps its `slice_flag` semantics as Caller-side strategy input stored in `Note.metadata` — do not reference the deleted file.
+### Equinox-only (not in coconut/tamale)
 
-### Equinox-only (not in zongzi)
+These remain product / shell / Orchid concerns; they are **not** upstreamed:
 
-These remain product / shell / Orchid concerns; they are **not** duplicated into zongzi:
-
-- **slice_flag semantics** — Caller-side windowing override (`Note.metadata` + `Score.SliceFlag` + `Score.SlicePolicy`); deliberately not upstreamed, since zongzi removed the field.
-- **Track as zongzi Caller** — timeline/notes_by_seq/interventions trio, sync contract, `rebase_interventions/1` orchestration.
-- **synth_graph Session-side storage** — graph/cluster are Kernel compile-time concepts; during the Phase 2 interim they live in `Session.Context.graphs` (`%{track_id => Graph.t()}`) and move into `RenderRequest` with item 20.
-- **channel spec (projection/target) contract** — channel→port binding and projection supply are Host-side configuration (`Configurator.channels`), injected into the Runner check phase; they never enter zongzi.
+- **Windowing ownership** — `EquinoxDomain.Windowing` (RestSplit3Beats port + `slice_flag` overrides). Coconut explicitly defers phrase segmentation; if coconut lands it upstream, re-evaluate.
+- **slice_flag semantics** — Caller-side windowing override (`Note.metadata` + `Score.SliceFlag` + `Windowing` fixup passes).
+- **TrackMeta side table** — mix/preset/ui_state per track, outside History (not undoable).
+- **synth_graph Session-side storage** — graph/cluster are Kernel compile-time concepts; they live in `Session.Context.graphs` (`%{track_id => Graph.t()}`).
+- **channel spec (projection/target) contract** — channel→port binding and projection supply are Host-side configuration (`Configurator.channels`, `projection` arity-2 `(request, patch)`), injected into the Runner check phase.
+- **Per-window render dispatch** — unit id `{track_id, window.start_tick}`; coconut's own render granularity is whole-workspace Snapshot, equinox keeps per-window `RenderRequest`s.
 - **Domain–Kernel–Session–UI layering** (`EquinoxDomain` vs Kernel import bans)
-- **RenderRequest / Compiler / Orchid Hook** wiring (`param_name → port`)
+- **Compiler / Orchid Hook** wiring (`param_name → port`)
 - **Raster NIF placement** in Kernel (Domain keeps pure reference)
-- **UI History**, Douglas-Peucker before History, LiveView bridge
-- **Phrase cache implementation** (e.g. Stratum) — constrained by zongzi `boundary-ownership-open`, implemented here
+- **UI History surfacing** (op-tree undo/redo wiring into LiveView), Douglas-Peucker before History, LiveView bridge
+- **Phrase cache implementation** (e.g. Stratum)
 
 ### Historical note
 
-Former numbered ADR-001…014 text that described pure domain rules was **migrated** into zongzi `docs/zh/spec/decisions/*` and de-Equinox'd (no `EquinoxDomain` / Track / Compiler requirements in the kernel docs). Prefer the zongzi files as source of truth for those rules.
+The zongzi decision files (`zongzi/docs/zh/spec/decisions/*`) are superseded by the coconut/tamale docs above. The 2026-08 migration record is `docs/coconut-migration.md` (target architecture, module map, mapping tables). Prefer coconut/tamale docs as the source of truth for kernel-level rules.
 
 When implementing Equinox Host glue:
 
 ```text
-edit → Track (Timeline + notes_by_seq sync) → Track.rebase_interventions (Anchor.rebase_all)
-  → Track.slice (Windowing.Strategy) → [Zongzi.Windowing.Segment]
-  → Engine.check(%{segments: ...}) → (user resolution) → Engine.render(%{segments: ...})
+edit → Operations.*/Command → History.apply/run (op batch; drag = Move+Retime)
+  → workspace write-time transport (dead patches → graveyard, drained + surfaced)
+  → Score.Track.slice (EquinoxDomain.Windowing) → [Windowing.Window]
+  → RenderRequest.from_window (patches filtered by anchor ∩ window)
+  → Runner check (Tamale.Patch.resolve per patch) → (user resolution) → render (Oi.execute)
 ```
 
-Do not re-introduce persistent Utterance/Segment-as-identity in Domain.
+Do not re-introduce persistent window/segment-as-identity in Domain.
 
 ## 8. Do Not Do 💡
 
 ### Domain Red Lines (permanent)
 
-- Do not let `EquinoxDomain.*` modules import, alias, or use anything from `Equinox.Kernel.*`, `Equinox.Session.*`, or `Equinox.Editor.*`. Domain's only allowed dependency is `:zongzi`.
-- Do not add `graph`, `cluster`, or `synth_override` fields to Domain structs. These are Kernel compile-time concepts; they belong in `RenderRequest` (ADR-006).
-- Do not persist `Zongzi.Windowing.Segment`, and do not re-introduce a `Slicer` module or slice-repair passes. Windowing is an explicit one-way projection via `Track.slice/2`; segments are recomputed from scratch after edits.
-- Do not store user/engine interventions as tick-anchored chunks — the `LayerChunk`/`data_channels` model is abolished, and `EquinoxDomain.Rebase.*` must not be revived. Use `Zongzi.Intervention` + `Declaration` with `Anchor` rebase.
+- Do not let `EquinoxDomain.*` modules import, alias, or use anything from `Equinox.Kernel.*`, `Equinox.Session.*`, or `Equinox.Editor.*`. Domain's only allowed dependencies are coconut + tamale.
+- Do not add `graph`, `cluster`, or `synth_override` fields to Domain structs. These are Kernel compile-time concepts.
+- Do not persist `EquinoxDomain.Windowing.Window`, and do not re-introduce slice-repair passes. Windowing is an explicit one-way projection via `Score.Track.slice/3`; windows are recomputed from scratch after edits.
+- Do not store user/engine interventions as tick-anchored chunks — use `Coconut.Edit.Patch` (tamale Anchor + `Tamale.Patch`) with explicit anchors.
+- Do not write notes/tempo/patches through `Workspace.*` directly outside kernel tests — `Coconut.Edit.History` is the only write entry; time-changing edits must carry `Retime` in the same op batch (tamale hard rule).
+- Do not feed raw floats into tamale-facing structures (anchors, spans, digest bases). Normalize first (milli-bpm ints, µs ints, frame numbers, decimal strings).
 - Do not feed raw per-frame drawing samples into Editor or History. Simplify to control points first via Douglas-Peucker (ADR-003).
 
 ### Kernel Guidelines
@@ -168,7 +188,7 @@ The Kernel layer exists as a thin wrapper over Domain + runtime state management
 
 ## 9. Testing Guidelines
 
-- **Domain (Elixir)**: Focus on pure unit tests (`ExUnit`). Avoid mocking in the `domain/` project since everything is pure data/functions. Use table-driven tests (or `Enum.each`) for matrix logic like `SlicePolicy` windowing edge cases.
+- **Domain (Elixir)**: Focus on pure unit tests (`ExUnit`). Avoid mocking in the `domain/` project since everything is pure data/functions. Use table-driven tests (or `Enum.each`) for matrix logic like `Windowing` edge cases. Test fixtures write notes through `Coconut.Edit.History` + `Operations.*` (see `EquinoxDomain.TestFactory`) — do not re-test coconut/tamale internals.
 - **Kernel (Elixir)**: Test stateful boundaries (e.g., GenServers) and integration with Domain types.
 - **Frontend (Svelte)**: UI testing is deferred to Phase 3. For pure TS logic (e.g., math, formatting), use standard unit tests.
 
@@ -177,27 +197,12 @@ The Kernel layer exists as a thin wrapper over Domain + runtime state management
 Current priority: **Phase 1a → 1b → 1c → 1d (Domain MVP) → Phase 2 (Domain-Kernel integration) → Phase 3 (UI Shell)**.
 
 ```
-Phase 1a ─── Standalone Domain Models (domain/)
-  Key.TwelveET, Note (pitch/duration/timing) — now provided by zongzi.
-  Deferred: Curves rasterization/simplification, Tempo.Curve (Kernel NIF verification).
-
-Phase 1b ─── Aggregate Roots (domain/)
-  Track (zongzi Caller trio + CRUD), Project, Phoneme linkage.
-
-Phase 1c ─── Windowing & Interventions (domain/)
-  slice_flag in Note.metadata, SlicePolicy (Windowing strategy),
-  Track interventions (mount/rebase), PhonemeTiming declaration.
-
-Phase 1d ─── Polish & Serialization (domain/)
-  Editing commands, Session, Pickle + comprehensive tests.
-
+Phase 1a ─── Standalone Domain Models (domain/)  [superseded: base types now from coconut]
+Phase 1b ─── Aggregate Roots (domain/)           [superseded: coconut Workspace/Track]
+Phase 1c ─── Windowing & Interventions (domain/) [windowing equinox-owned; patches via coconut]
+Phase 1d ─── Polish & Serialization (domain/)    [Coconut.Pickle; History landed early]
 Phase 2 ──── Domain-Kernel Integration (kernel/)
-  Replace legacy Domain types with the new domain project.
-  Adapt Editor / Session / Compiler to Windowing + RenderRequest + Intervention.
-  Curve channel Declaration + resolve-at-check pipeline.
-
-Phase 3 ──── UI Shell Polish (ui_shell/)
-  Arranger, History, Plugin System.
+Phase 3 ──── UI Shell (ui_shell/)
 ```
 
 ### Completed
@@ -208,63 +213,43 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 2. ~~**M1 — Piano Roll parity**: Port notes/viewport/grid from KinoBayanroll.~~
 3. ~~**M2 — Node Editor parity**: SvelteFlow-based Synth editor, StepRegistry-driven palette, graph persistence via `Equinox.Project`.~~
 4. ~~**M3 — Kernel compile/runtime decoupling**: `Compiler`, `Planner`, `Session.Context`, and OrchidStratum-backed session storage are wired into the render path.~~
-5. ~~**Zongzi Migration (domain)**: `:zongzi` path dependency added; duplicated base types (`Timeline.*`, `Key.*`, `Curve.*`, `Util.*`, `Helpers`) deleted in favor of zongzi; `Track` rebuilt on `Zongzi.Timeline` + `notes_by_seq` + `interventions` with the Caller sync contract; `Slicer` replaced by `Score.SlicePolicy` (`slice_flag` in `Note.metadata`); `Rebase.*` / `LayerChunk` / `Port.Declaration` replaced by zongzi Intervention/Declaration (`Port.Declarations.PhonemeTiming` first channel); `RenderRequest` carries survived interventions; `AdoptRequest` mounts interventions.~~
+5. ~~**Zongzi Migration (domain)**: `:zongzi` path dependency; Caller trio Track; `SlicePolicy`; interventions; `RenderRequest`/`AdoptRequest`.~~ (superseded by the coconut migration)
+6. ~~**Coconut Migration (2026-08, branch `zongzi-to-coconut`)**: all three subprojects moved from zongzi to coconut+tamale (see `docs/coconut-migration.md`). Domain slimmed to equinox-specific concerns (`Score.Project` workspace wrapper + `TrackMeta` side table, stateless `Score.Track` facade, equinox-owned `Windowing` + `SliceFlag`, `Port.Preset`/`Port.Channels.PhonemeTiming`, per-window `RenderRequest`, `AdoptRequest.build_patch/3`; `EquinoxDomain.Pickle.*` deleted in favor of `Coconut.Pickle.*`). Kernel `Session.Context` holds `Coconut.Edit.History` as the only write entry (undo/redo foundation landed early — the op tree + checkpoints are in place; UI surfacing remains Phase 3); note edits flow through `Operations.*`/`Command` (`replace_window_notes` via `Coconut.Edit.Diff`); Runner check phase resolves patches via `Tamale.Patch.resolve/2`. Audio track type mapping (`:external_audio` → `Coconut.Edit.Track.Audio`) wired through `add_track`. ui_shell presenter reads workspace views; frontend JSON contract (`NoteData`/`SegmentData`) unchanged.
 
 **Completed sector list:**
-- Base types (from zongzi): `Tick`, `TempoMap`, `Tempo.Step/Linear`, `TimeSigMap`, `RecordMap`, `Grid`, `Key.TwelveET`, `Curve.Chunk/ControlPoint/Adapters`
-- Utilities (from zongzi): `Util.Model`, `Util.Object`, `Util.ID`, `Helpers`
-- Score: `Track` (zongzi Caller trio + CRUD + `slice/2`), `Project` (skeletal), `Phoneme`
-- Windowing: `Score.SliceFlag`, `Score.SlicePolicy`
-- Interventions: `Track.interventions` + `mount_intervention/5` + `rebase_interventions/1`; `Port.Declarations.PhonemeTiming`
-- Commands: `Command.RenderRequest` (interventions projection), `Command.AdoptRequest` (mount flow)
-- VO: `Segment` (rendering context)
-- Deferred: curves rasterization/simplification, Pickle serialization (see Phase 1d)
-
-### Phase 1a — Standalone Domain Models (domain/)
-5. **Note (standalone)** — Done, via `Zongzi.Score.Note` (explicit-id `new/1`, pure `split/4` / `merge/4`).
-6. **Timeline** — Done, via `Zongzi.Score.{Tempo*, TimeSig*, Record*}` (`TimeSigMap.compile/1`, `Tempo.Linear`). `Tempo.Curve` deferred — reserved as a Kernel NIF integration verification point.
-7. **Curves (pure data)** — Done, via `Zongzi.Curve.*`. RasterCache, rasterizer, Douglas-Peucker simplification: **deferred** (see Curves section).
-
-### Phase 1b — Aggregate Roots (domain/)
-8. **Track** — Done: zongzi Caller trio (`timeline`, `notes_by_seq`, `interventions`) + mix/preset fields. Note CRUD (`insert_note`, `delete_note`, `split_note`, `merge_notes`, `update_note`, `apply_slice_flag`) follows the zongzi Caller sync contract. The old ADR-012/013 anchor-semantics questions are superseded by zongzi Anchor/Declaration.
-9. **Project** — Tracks map + project-level metadata. Track CRUD. **Blocked on Track completion** → unblocked, still skeletal.
-10. **Phoneme** — Pure identity VO (`symbol`, `type`); timing lives in the engine projection. User timing edits are `:phoneme_timing` interventions (`Port.Declarations.PhonemeTiming`).
-
-### Phase 1c — Windowing & Interventions (domain/)
-11. **Windowing** — Done: `slice_flag` in `Note.metadata`; `Score.SlicePolicy` (`:force_slice` / `:force_merge` overrides on `RestSplit3Beats`). `Notes → [Zongzi.Windowing.Segment]` projection; no materialization step. Slice repair rules abolished — flags are stable note metadata, windows recomputed from scratch.
-12. **Interventions** — Done: `Track.interventions` + `mount_intervention/5` + `rebase_interventions/1`; first channel `Port.Declarations.PhonemeTiming`. A curve (continuous-data) channel Declaration is still pending.
-13. **Segment** — Rendering context VO: acoustic boundaries, `phonemes`/`curves`. The Domain defines the struct; fields are populated by the Kernel at compile time and do not participate in serialization.
-
-### Phase 1d — Polish & Serialization (domain/)
-14. **Editing commands** — `Command.Editing` (DragNote, ResizeNote, EditLyric, SplitNote, MergeNotes, AddTrack, DeleteTrack) + command stack for undo/redo. Orchestrates Track ops + `rebase_interventions/1`. **Blocked on Track + Project CRUD** → Track done; Project CRUD pending.
-15. **Session / RenderRequest** — `Command.RenderRequest` rewritten (carries survived interventions + declarations). `Session` still a placeholder; the zongzi Caller state (per-track trio) now lives on `Track`, so Session mainly holds selection, clipboard, viewport.
-16. **Pickle (native-object codec)** — Done: per-type `dump/1` / `load/1` producing plain maps/lists/numbers/binaries/atoms/nil (tuples→lists, structs flattened). `EquinoxDomain.Pickle.*` covers zongzi-owned structs (Note/Key/Timeline/Intervention/tempo & time-sig events); Track/Project/Preset carry their own. The old three-layer `Util.Pickle` is deleted. Channel Declarations must keep payload/snapshot dump-safe. Jason remains a trivial future transform, not implemented.
+- Base types (from coconut): `Tick`, `TempoMap`, `Tempo.Step/Linear`, `TimeSigMap`, `RecordMap`, `Grid`, `Key.TwelveET`, `Curve.Chunk/ControlPoint/Adapters`
+- Editing aggregate (from coconut): `Edit.Workspace`, `Edit.Track.{Vocal, Tempo, Audio}`, `Edit.Operations.*`, `Edit.History`, `Edit.Command`, `Edit.Diff`, `Edit.Patch`
+- Rebase kernel (from tamale): `Space`, `Op.*`, `Anchor.{Ordinal, Metric, Relative}`, `Transport`, `Warp`, `Patch`, `Digest`, `Coord`
+- Serialization (from coconut): `Pickle.*` + `Pickle.File` envelope (registry-driven)
+- Equinox domain: `Score.Project` (+ `TrackMeta`), `Score.Track` facade, `Windowing` + `Window`, `Score.SliceFlag`, `Phoneme`, `Segment` (rendering-context VO), `Port.Preset`, `Port.Channels.PhonemeTiming`, `Command.RenderRequest`, `Command.AdoptRequest`
+- Deferred: curves rasterization/simplification, curve channel (see Curves section)
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
 
-> Handoff from the 2026-07-25 session (approved kernel cleanup plan + verified ui_shell↔kernel coupling findings): `docs/phase2-kernel-handoff.md`.
-
-17. **Domain dependency** — done (Phase 2 mid-stage): legacy `Equinox.{Track, Project, Editor, Domain.*, Util.{Id, Attrs}}` deleted; kernel and ui_shell consume `EquinoxDomain.*` + zongzi directly (`:zongzi` path dep added to both).
-18. **Slicer → Windowing** — done: the legacy `materialize_segments` path is gone; `Track.slice/2` → `[Zongzi.Windowing.Segment]` drives dispatch (unit id `{track_id, window.start_tick}`; the UI's "segment" is a presenter-side simulation over windows).
-19. **Track API** — done: domain Track CRUD + `rebase_interventions/1` are wired through `Session.Server` named editing APIs (`add_track` / `remove_track` / `update_track_mix` / `update_track_ui_state` / `replace_window_notes` / `update_synth_graph`); synth graphs live in `Session.Context.graphs` until item 20 moves them into `RenderRequest`.
-20. **RenderRequest + AdoptRequest** — main wiring done: `prepare_dispatch/1` builds one `RenderRequest` per window via `from_window/3` (slice passes `tempo_map` + `interventions` so scopes widen windows); `Runner.run/3` is two-phase (check-all → render-all), resolving interventions per channel via `Declaration.resolve_within/2` and binding resolved artifacts to `data_interventions` through the Configurator `channels` contract (`projection` + `target`, PortRef-keyed); check failures aggregate as `{:error, {:check_failed, entries}}`; `Server.adopt_intervention/4` wraps `AdoptRequest.adopt/3`. Channel developer guide: `docs/channel-development.md`. Deferred to the second cut: curve channel Declaration, frame-grid `timing_spec`, rasterization.
-21. **Editor / Session adaptation**: Editor ops → Track API. Session manages selection, clipboard, viewport, and per-track Caller state. Note the naming clash: `Equinox.Kernel.Engine` (Orchid runner) vs `Zongzi.Engine` (check/render contract) — **resolved**: the runner was deleted in the oi migration (absorbed by `Oi.execute/2` via `Equinox.Kernel.Runner`); only `Zongzi.Engine` remains.
+17. **Domain dependency** — done; deepened by the coconut migration (kernel and ui_shell consume `EquinoxDomain.*` + coconut/tamale directly; zongzi fully removed).
+18. **Slicer → Windowing** — done: `Score.Track.slice/3` (equinox-owned `EquinoxDomain.Windowing`) → `[Windowing.Window]` drives dispatch (unit id `{track_id, window.start_tick}`; the UI's "segment" is a presenter-side simulation over windows). Metric-anchored patches widen windows via `extra_spans`.
+19. **Track API** — done: domain Project/TrackMeta + coconut Operations are wired through `Session.Server` named editing APIs (`add_track` / `remove_track` / `update_track_mix` / `update_track_ui_state` / `replace_window_notes` / `update_synth_graph` / `adopt_intervention`); synth graphs live in `Session.Context.graphs`.
+20. **RenderRequest + AdoptRequest** — main wiring done: `prepare_dispatch/1` builds one `RenderRequest` per window via `from_window/3`; `Runner.run/3` is two-phase (check-all → render-all), resolving patches per channel via `Tamale.Patch.resolve/2` against the Configurator `channels` contract (`projection` arity-2 + `target`, PortRef-keyed); check failures aggregate as `{:error, {:check_failed, entries}}`; `Server.adopt_intervention/3` wraps `AdoptRequest.build_patch/3` + `Command.attach_patches`. Channel developer guide: `docs/channel-development.md`. Deferred to the second cut: curve channel, frame-grid `timing_spec`, rasterization.
+21. **Editor / Session adaptation**: done — Session manages selection, clipboard, viewport, the coconut History, and the query-side Project. Only `Coconut.Render.Engine` remains as the engine contract naming (the legacy `Equinox.Kernel.Engine` runner was deleted in the oi migration).
 
 ### Phase 3 — UI Shell (ui_shell/)
-22. **Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances.
-23. **History & Collaboration hooks**: Session-level undo/redo; design space for future CRDT.
+22. **Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances. Audio tracks: creation + presenter round-trip work; clip insertion needs a declared workspace `frame_rate` and frame-domain UI (not yet wired).
+23. **History & Collaboration hooks**: Session-level undo/redo — the substrate (`Coconut.Edit.History` op tree, `undo/1` / `redo/1`, version pins) landed with the coconut migration; what remains is LiveView surfacing (undo/redo events, conflict UI for dead patches — currently only logged); design space for future CRDT.
 24. **Plugin System**: Runtime dynamic loading of custom Synth Nodes.
     - Frontend: WebComponent wrapping for SvelteFlow, third-party UI `.js` via dynamic `<script type="module">`.
     - Backend: Distributed Erlang — isolated BEAM `Engine Node` per Session for Orchid graph execution, hot-load `.beam` modules without risking the Phoenix `Web Node`.
 
 ## Windowing Semantics
 
+Windowing is **equinox-owned** (`EquinoxDomain.Windowing`); coconut deliberately defers phrase segmentation.
+
 ### Windowing Scenarios
 
-- **Continuous Notes Import**: MIDI/ustx import produces dense note sequences. Default behavior: `Zongzi.Windowing.RestSplit3Beats` cuts on rest gaps ≥ 3 beats (1 beat joins the previous segment, 2 beats join the next; longer gaps leave a dead zone).
+- **Continuous Notes Import**: MIDI/ustx import produces dense note sequences. Default behavior (ported from zongzi `RestSplit3Beats`): cuts on rest gaps ≥ 3 beats (1 beat joins the previous window, 2 beats join the next; longer gaps leave a dead zone). `beat_ticks` = `opts[:beat_ticks] || opts[:tpqn] || 480`.
 - **Manual Override**: `slice_flag` in `Note.metadata` (via `Score.SliceFlag`) overrides derivation at the boundary **before** the flagged note: `:force_slice` always cuts, `:force_merge` never cuts.
-- **Edits**: there is no repair step. Flags are stable note metadata; windows are recomputed from scratch by `Track.slice/2` after every edit. Intervention survival across edits is a separate concern handled by `Anchor.rebase_all` (via `Track.rebase_interventions/1`), not by windowing.
-- **Segment Semantics**: `Zongzi.Windowing.Segment` is a transient projection — never persisted, never an intervention anchor. User interventions live in `Track.interventions`, orthogonal to windows. 💡
+- **Intervention spans widen windows**: tick-ranged (Metric-anchored) patches contribute `extra_spans` that merge into content before cutting — the zongzi "scope widens the window" semantic. The kernel derives `extra_spans` at dispatch time.
+- **Edits**: there is no repair step. Flags are stable note metadata; windows are recomputed from scratch by `Score.Track.slice/3` after every edit. Intervention survival across edits is a separate concern handled by coconut's write-time transport (dead patches → graveyard), not by windowing.
+- **Window Semantics**: `EquinoxDomain.Windowing.Window` is a transient projection `{start_tick, end_tick, note_ids}` (half-open) — never persisted, never an intervention anchor. User patches live in `Coconut.Edit.Track.patches`, orthogonal to windows. 💡
 
 ### `slice_flag` Design
 
@@ -276,85 +261,72 @@ Phase 3 ──── UI Shell Polish (ui_shell/)
 
 Stored as `note.metadata["slice_flag"]` (`"force_slice"` / `"force_merge"`; `:auto` = key absent). The flag governs the boundary **immediately before** the note:
 
-- `:auto`: default; `RestSplit3Beats` decides via rest-gap detection.
+- `:auto`: default; the base RestSplit3Beats rule decides via rest-gap detection.
 - `:force_slice`: force a boundary before this note, even with no rest gap.
 - `:force_merge`: suppress the boundary before this note, even across a rest gap ≥ threshold.
 
-Each boundary is governed by exactly one note's flag (the note after the boundary), so overrides never conflict with each other.
+Each boundary is governed by exactly one note's flag (the note after the boundary), so overrides never conflict with each other. Degenerate cuts (zero-length halves, e.g. chord notes sharing a start tick) are skipped.
 
-`Score.SlicePolicy` implements `Zongzi.Windowing.Strategy`: it delegates to `RestSplit3Beats.window/1`, then applies force-merge joins and force-slice splits on `current_segments`. Degenerate cuts (zero-length halves, e.g. chord notes sharing a start tick) are skipped.
+### Note Editing (coconut Operations)
 
-### Note Editing Functions (`Zongzi.Score.Note`)
+Note edits are **gesture requests** lowered to tamale op batches, executed through `Coconut.Edit.History.apply/4` (kernel Session owns this):
 
-Note-local transforms (pure; IDs injected by the caller):
+- `Operations.InsertNote{track_id, note_id, after_id, span, attrs}` → `[Insert]`
+- `Operations.DeleteNote{track_id, note_id}` → `[Delete]`
+- `Operations.DragNote{...}` → `[Move, Retime]` in one batch (tamale hard rule)
+- `Operations.SplitNote{..., at_tick, new_id}` → `[Split]` — the first child inherits the parent id
+- `Operations.MergeNotes{..., note_ids}` → `[Merge]` — adjacency enforced, `into == hd(ids)`
+- `Operations.EditNote{..., changes}` → **no ops** — pure content edits (lyric etc.) only rewrite the side table
+- `Operations.TrimNote` / `MoveNote` / `DragNoteAcrossTracks` — see coconut sources
+- `Edit.Diff.diff/2` — reverse-engineers an op batch from before/after `[{span, attrs}]` (UI whole-window replacement; exact span+content matches keep ids, everything else is visible Delete+Insert)
+- `Command.{add_track, remove_track, rename_track, set_time_sigs, attach_patches, consume_dead}` — structural commands via `History.run/3`
 
-- `new/1(attrs)` — create a note (`:id` required)
-- `update/2(note, attrs)` — update note fields
-- `drag_note/2`, `drag_duration/2`, `update_lyric/2`, `update_annotation/2`, metadata helpers
-- `split/4(note, split_tick, new_id, attrs)` — split at a tick position
-- `merge/4(note1, note2, merged_id, opts)` — merge two overlapping notes
+Note `Coconut.Edit.Track.Vocal` rejects same-track overlap at gesture validation (half-open spans; abutting is legal). `Coconut.Score.Note` itself only carries content (`key`, `lyric`, `annotation`, `metadata`); timing is always the span.
 
-### Track Editing Functions (`EquinoxDomain.Score.Track`)
+### Querying (domain facade)
 
-Track owns the zongzi Caller trio (`timeline`, `notes_by_seq`, `interventions`) and follows the zongzi Caller sync contract:
-
-- `insert_note(track, attrs)` → `{:ok, track, note}` — positioned by `start_tick`; seq auto-assigned
-- `delete_note(track, seq_id)` → `{:ok, track}`
-- `split_note(track, seq_id, split_tick, attrs \\ [])` → `{:ok, track, before, after}` — before keeps its seq, after gets a new seq
-- `merge_notes(track, seq_a, seq_b)` → `{:ok, track, merged}` — merged at seq_a; seq_b becomes a merge tombstone
-- `update_note(track, seq_id, attrs)` → `{:ok, track}` — re-links via `move_note` when `start_tick` crosses neighbors (seq preserved)
-- `apply_slice_flag(track, seq_id, flag)` → `{:ok, track}` — manual override
-- `slice(track, opts \\ [])` → `{:ok, [Zongzi.Windowing.Segment.t()]}` — one-way windowing projection
-- `note(track, seq_id)`, `active_notes(track)` — queries
-
-Note operations do NOT auto-rebase interventions. After an edit batch, the Caller runs:
-
-- `rebase_interventions(track)` → `{:ok, track, %{conflicts, decisions}}` — wraps `Anchor.rebase_all`; prunes dead interventions, surfaces conflicts for the UI
-- `mount_intervention(track, int, payload, seq_id, projection)` → `{:ok, track, mounted}` — derives a `NoteTriplet` anchor and stores the declaration snapshot
+- `Score.Track.notes(project, track_id)` → `{:ok, [{id, Note.t(), {start_tick, end_tick}}]}` (view order: `{start, id}`)
+- `Score.Track.note(project, track_id, note_id)`
+- `Score.Track.slice(project, track_id, opts)` → `{:ok, [Windowing.Window.t()]}` — one-way windowing projection
+- `Score.Project.tempo_map/1` / `time_sig_map/1` — compiled maps on demand
 
 ### Data Flow
 
-1. [auto] Track edits update `timeline` + `notes_by_seq` per the sync contract.
-2. [explicit] Caller runs `Track.rebase_interventions/1` after the edit batch; structural conflicts (dead anchors) surface to the user.
-3. [auto] `Track.slice/2` produces transient `Zongzi.Windowing.Segment`s via `SlicePolicy`.
-4. [auto] `RenderRequest.from_window/3` builds the compile request: notes by seq, tempo slice, survived interventions filtered by `Declaration.scope` ∩ window, and the channel → declaration-module map.
-5. [engine check] The Compiler/engine resolves each intervention against a fresh projection (`Declaration.resolve/2`): apply deltas or raise a semantic conflict.
-6. [explicit] Adopting engine output mounts a new intervention (`AdoptRequest.adopt/3`) — it never writes tick-anchored chunks.
+1. [explicit] Edits enter as `Operations.*`/`Command` through `History` (kernel Session); op batch is atomic, `edit_version` +1.
+2. [auto] Workspace write-time transport marches surviving patches; dead ones land in the per-track graveyard and are drained + surfaced (`History.take_dead_patches/1`).
+3. [auto] `Score.Track.slice/3` produces transient `Windowing.Window`s.
+4. [auto] `RenderRequest.from_window/3` builds the compile request: notes with spans, tempo slice, structurally-survived patches filtered by anchor ∩ window, and the channel registry map.
+5. [engine check] The Runner resolves each patch against a fresh projection (`Tamale.Patch.resolve/2`, digest zero tolerance): apply payloads or raise a semantic conflict (one-vote veto).
+6. [explicit] Adopting engine output builds + mounts a new patch (`AdoptRequest.build_patch/3` + `Command.attach_patches`).
 
 ## Curves
 
-Split into Phase 1 (domain) and Phase 2 (kernel integration).
+Split into Phase 1 (domain) and Phase 2 (kernel integration). Status after the coconut migration: `Coconut.Curve.*` exists but is **parked at the adapter layer** (float-world, excluded from digests, not yet wired to any channel) — same deferred state as before.
 
 ### Goals
 
-1. Continuous parameter curves become first-class, **intervention-based** data anchored on notes (not tick ranges).
-2. `Zongzi.Windowing.Segment` is the transient windowing output (`start_tick`, `end_tick`, `seq_ids`); `EquinoxDomain.Segment` is a pure rendering-context VO.
-3. Compiler becomes the sole translator from resolved curve interventions → `data_intervention`.
+1. Continuous parameter curves become first-class, **patch-based** data anchored on notes (not tick ranges).
+2. `EquinoxDomain.Windowing.Window` is the transient windowing output; `EquinoxDomain.Segment` is a pure rendering-context VO.
+3. Compiler/Runner becomes the sole translator from resolved curve patches → `data_intervention`.
 4. Kernel stays semantics-agnostic about individual curve parameters; consumption is Orchid Hook territory.
 
 ### Data Structures
 
-- `Zongzi.Curve.Chunk`: `{id, adapter, container, start_tick, rasterized | nil, extra}` (adapter/container pattern; `end_tick` is computed via the adapter, not stored). Control points carry `(tick, value, handle_left, handle_right)`.
-- `Zongzi.Intervention` (curve channels): `{channel, anchor, payload, snapshot, declaration}` — curve payloads are control-point chunks plus a maintained boundary; snapshots hold the original projected values. Replaces the abolished `EquinoxDomain.LayerChunk`.
+- `Coconut.Curve.Chunk`: `{id, adapter, container, start_tick, rasterized | nil, extra}` (adapter/container pattern; `end_tick` is computed via the adapter, not stored). Control points carry `(tick, value, handle_left, handle_right)`.
+- `Coconut.Edit.Patch` (curve channels): `{anchor, patch :: Tamale.Patch{base_digest, payload}, channel}` — curve payloads are control-point chunks; the base digest covers the canonical projected values. Anchors: Metric for tick ranges (transported by warps), Ordinal/Relative for note-anchored data.
 - RasterCache (deferred): `{stride, samples :: binary, fingerprint}`. Rebuildable from control points; never serialized.
-- `EquinoxDomain.Command.RenderRequest`: `{track_id, note_ids, notes, time_range, tempo_segments, interventions, declarations}`. The only struct passed into `Compiler.compile/1`. Constructed via `from_window/3`.
+- `EquinoxDomain.Command.RenderRequest`: `{track_id, note_ids, notes, time_range, tempo_segments, patches, channels}`. The only struct passed into the dispatch. Constructed via `from_window/3`.
 
-### Segment Shrinkage
+### Curve Facade API (Phase 2/3 Editor concern)
 
-After curves integration, `%EquinoxDomain.Segment{}` retains only rendering-context fields: `track_id, start_tick, end_tick, core_start_sec, core_end_sec, context_start_sec, context_end_sec, phonemes, curves` (the `phonemes` and `curves` fields are populated by the Kernel at compile time and are not serialized).
-
-Removed from Kernel's legacy Segment: `curves`, `synth_override`, `graph`, `cluster`. These move to `RenderRequest` (compile-time) or `Track.interventions`.
-
-### Curve Facade API (Phase 2 Editor concern)
-
-- A completed stroke becomes a curve intervention, mounted via `Track.mount_intervention/5` with the channel's declaration. Facade helpers (`apply_curve_stroke`, `erase_curve_range`, `clear_curve_layer`) are Editor-level conveniences built on intervention mount/remove.
+- A completed stroke becomes a curve patch, mounted via `AdoptRequest.build_patch/3` + `Command.attach_patches` through History. Facade helpers (`apply_curve_stroke`, `erase_curve_range`, `clear_curve_layer`) are Editor-level conveniences built on patch attach/remove.
 - Strokes are assumed already-simplified control-point chunks (see ADR-003). The Editor does **not** accept raw sample arrays.
-- A curve `Declaration` channel (scope/snapshot/resolve for continuous data, per zongzi `declaration-projection-resolution`) is still to be defined — `Port.Declarations.PhonemeTiming` is the reference implementation.
+- A curve `Coconut.Render.Channel` (projection + target for continuous data, with canonical digest normalization) is still to be defined — `Port.Channels.PhonemeTiming` is the reference implementation.
 
 ### Compiler Integration
 
-1. Caller builds one `RenderRequest` per window via `RenderRequest.from_window/3` (survived interventions filtered by `Declaration.scope` ∩ window).
-2. At check time, the Compiler resolves interventions per channel (`Zongzi.Intervention.Declaration.resolve_within/2`) and dispatches resolved data to `data_interventions`, keyed by `PortRef`. The `PortRef → Orchid key` translation reuses existing `Graph.PortRef.to_orchid_key/1`.
+1. Caller builds one `RenderRequest` per window via `RenderRequest.from_window/3` (patches filtered by anchor ∩ window).
+2. At check time, the Runner resolves patches per channel (`Tamale.Patch.resolve/2` against the channel spec's fresh projection) and dispatches resolved data to `data_interventions`, keyed by `PortRef`. The `PortRef → Orchid key` translation reuses existing `Graph.PortRef.to_orchid_key/1`.
 3. Payload shape given to the Hook:
    ```text
    %{param: atom(), start_tick: non_neg_integer(), end_tick: non_neg_integer(),
@@ -364,26 +336,25 @@ Removed from Kernel's legacy Segment: `curves`, `synth_override`, `graph`, `clus
 
 ### Phase 1 — Domain
 
-- [x] Curve types come from zongzi (`Zongzi.Curve.Chunk`, `ControlPoint`, `Adapter.Bezier/CatmullRom`).
-- [ ] Curve channel `Declaration` (continuous data) — pending; reference implementation: `Port.Declarations.PhonemeTiming`.
+- [x] Curve types come from coconut (`Coconut.Curve.Chunk`, `ControlPoint`, `Adapter.Bezier/CatmullRom`).
+- [ ] Curve channel (`Coconut.Render.Channel` impl for continuous data) — pending; reference implementation: `Port.Channels.PhonemeTiming`.
 - [ ] Add `RasterCache` + rasterizer — **deferred**: plugs into the resolve-at-check flow.
 - [ ] Add stroke-simplification helper (Douglas-Peucker) — **deferred**: same as above.
-- [x] ~~`Track.data_channels` / `LayerChunk`~~ — abolished; `Track.interventions` instead.
-- [ ] Implement serialization for curve types — **deferred**: pending curve model stabilization.
+- [x] ~~`Track.data_channels` / `LayerChunk`~~ — abolished; `Coconut.Edit.Patch` instead.
+- [ ] Implement serialization for curve types — **deferred**: pending curve model stabilization (coconut-side).
 
 Each step ends on a green `cd domain && mix precommit`.
 
 ### Phase 2 — Kernel Integration
 
-After Domain is stable:
-
-- [x] `EquinoxDomain.Command.RenderRequest` rewritten (interventions + declarations; `from_window/3` done).
-- [x] `EquinoxDomain.Command.AdoptRequest` rewritten (mount intervention; `adopt/3` done).
-- [x] Remove `curves`, `synth_override`, `graph`, `cluster` from legacy `%Segment{}` — done in the mid-stage migration: the legacy Segment module was deleted outright; `EquinoxDomain.Segment` is the rendering-context VO.
-- [x] ~~Add legacy-tolerant loader in `Project.from_json/1` for old payloads.~~ — obsolete: the kernel legacy JSON chain was removed in the oi migration; project hydration will be rebuilt on domain Pickle + `Zongzi.Timeline.build/1`.
-- [x] Update `Session.Context.prepare_dispatch/1` (formerly `dispatch_to_plans/1`) to build `RenderRequest` per window via `RenderRequest.from_window/3`.
-- [ ] Define curve channel Declaration(s) and emit curve `data_interventions` in the Compiler (resolve at check time).
-- [ ] Thread curve operations through Session-level undo/redo (Phase 3; the legacy `Equinox.Editor.History` module was removed in the oi migration).
+- [x] `EquinoxDomain.Command.RenderRequest` rewritten (patches + channels; `from_window/3`).
+- [x] `EquinoxDomain.Command.AdoptRequest` rewritten (`build_patch/3`).
+- [x] Legacy `%Segment{}` slimmed to the rendering-context VO (`EquinoxDomain.Segment`).
+- [x] Legacy JSON chain removed — `Coconut.Pickle` codecs replace it (domain `Project.dump/load` composes `Coconut.Pickle.Workspace` + TrackMeta codec).
+- [x] `Session.Context.prepare_dispatch/1` builds `RenderRequest` per window via `RenderRequest.from_window/3`.
+- [x] Runner check phase resolves patches via `Tamale.Patch.resolve/2` (Configurator `channels` contract).
+- [ ] Define curve channel(s) and emit curve `data_interventions` (resolve at check time).
+- [ ] Thread curve operations through Session-level undo/redo (Phase 3; the `Coconut.Edit.History` substrate is in place).
 
 Each step ends on a green `cd kernel && mix precommit`.
 
@@ -406,17 +377,16 @@ Configurator.new(
 
 Kernel does not ship a reference Hook. Curves integration delivers the contract and payload shape; the first concrete Hook lives outside Kernel (userland or a sibling package).
 
-## 10. Known Issues (kernel scope — address during Phase 2)
+## 10. Known Issues (kernel scope)
 
 Ordered roughly by priority; do not fix opportunistically without a matching commit plan.
 
-Former #1–#3 (`Track.remove_segment/2` + `Project.remove_track/2` silent failures, `Editor.add_note/4` hard-match, English-only `Equinox.Editor.*` comments) disappeared with the legacy modules in the Phase 2 mid-stage migration. Remaining:
-
 1. `StepRegistry` startup ordering: `Supervisor.start_link` then `register_builtin_steps` — works but not clean.
+2. Dead patches are currently only logged (`Logger.warning` after edit batches) — Phase 3 must surface them to the UI as user-visible conflicts (tamale discipline: uncertainty flows to conflict, never to silence).
+3. Audio tracks: creation/presenter round-trip works; clip insertion needs a declared workspace `frame_rate` + frame-domain UI; rendering skips frame-domain tracks by design for now.
 
-Resolved during the oi migration (2026-07): former #4 (`Session.Server.handle_info/2` swallowing render-task failures — now logged distinctly) and #6 (`Compiler.compile_cache` typespec mismatch — cache shape rewritten on `Oi.Compiled`).
+Facts after the coconut migration (2026-08):
 
-Facts after the oi migration:
-
-- The kernel legacy JSON chain (`@derive Jason.Encoder` / `from_json` / `from_attrs` on `Project` / `Track` / `Domain.Segment`) has been removed — the domain Pickle codecs replace it. `Kernel.Graph.*` keeps its `@derive` (SvelteFlow graph persistence is used by ui_shell), and the `:jason` dependency stays.
-- `Equinox.PubSub` naming belongs to ui_shell; kernel has no PubSub code path (`Kernel.Engine`'s never-implemented PubSub moduledoc claim died with that module).
+- The kernel legacy JSON chain is gone — `Coconut.Pickle` codecs replace it (domain `Project.dump/load` composes `Coconut.Pickle.Workspace` with the default registry + the TrackMeta codec; registry includes vocal/tempo/audio element codecs). `Kernel.Graph.*` keeps its `@derive Jason.Encoder` (SvelteFlow graph persistence is used by ui_shell), and the `:jason` dependency stays.
+- `Equinox.PubSub` naming belongs to ui_shell; kernel has no PubSub code path.
+- Note ids are reminted by `Coconut.Edit.Diff` on whole-window replacement (exact span+content matches keep their ids); the frontend receives fresh ids via the `project_load` re-push — this is deliberate (visible death over optimistic survival).

@@ -26,12 +26,12 @@ kernel/    # 可独立运行的编辑器内核、调用领域、整合 Orchid
 ui_shell/  # Phoenix LiveView shell + Svelte 5 前端岛
 ```
 
-- **Domain**：无外部依赖[^dep]的纯领域模型（音符、轨道、工程、时间线、音素、曲线等），是所有业务逻辑的基础。
+- **Domain**：构建在 coconut 之上的纯领域模型[^dep]（音符、轨道、工程、时间线、音素、曲线等），是所有业务逻辑的基础。coconut 是引擎无关的编辑器核心（编辑/渲染/序列化），tamale 是其 rebase 内核。
 - **Kernel**：增量生成、DAG、数据介入、缓存、重服务。
 - **UI Shell**：托管浏览器界面，通过本地 path dep 依赖 `kernel/`。
 - 根目录仅保留仓库级文档与约定，不承载运行时代码。
 
-[^dep]: zongzi 由开发者本人维护，所以符合「无外部依赖」的定义。
+[^dep]: coconut 与 tamale 由开发者本人维护，所以符合「无外部依赖」的定义。
 
 ## 前置条件
 
@@ -81,5 +81,5 @@ cd ui_shell/assets && npm run check
 - [Phoenix 框架官网](https://www.phoenixframework.org/)
 - [Svelte 文档](https://svelte.dev/docs)
 - [Orchid](https://hex.pm/packages/orchid) / [Oi](https://hex.pm/packages/oi)
-- [Zongzi](https://github.com/SynapticStrings/Zongzi)
+- [Coconut](https://github.com/GES233/Coconut) / [Tamale](https://github.com/SynapticStrings/Tamal)
 - [**If You are Agent or AI Assistant**] 请查看 `./AGENTS.md`

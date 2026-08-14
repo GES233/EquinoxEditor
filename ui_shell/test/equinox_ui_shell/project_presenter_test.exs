@@ -1,7 +1,7 @@
 defmodule EquinoxUIShell.ProjectPresenterTest do
   use ExUnit.Case, async: true
 
-  alias Coconut.Edit.{History, Operations.InsertNote}
+  alias Coconut.Edit.{History, Operations.InsertNote, Workspace}
   alias Coconut.Score.Key.TwelveET
   alias Equinox.Kernel.Graph
   alias EquinoxDomain.Score.{Project, TrackMeta}
@@ -17,7 +17,16 @@ defmodule EquinoxUIShell.ProjectPresenterTest do
       Project.new(id: "Project_test", metadata: %{name: "Presenter Fixture"})
 
     {:ok, project, _track} = Project.add_track(project, id: "Track_1", name: "Lead")
-    {:ok, project, _empty} = Project.add_track(project, id: "Track_empty", name: "Empty")
+
+    # 音频轨：domain `add_track/2` 固定建 Vocal，Audio 轨直接构造 struct
+    # 经 `Workspace.add_track/2` 挂入，再补一份缺省 TrackMeta 侧表
+    {:ok, audio_track} =
+      Coconut.Edit.Track.new(id: "Track_empty", name: "Empty", module: Coconut.Edit.Track.Audio)
+
+    {:ok, workspace} = Workspace.add_track(project.workspace, audio_track)
+    project = %{project | workspace: workspace}
+    {:ok, empty_meta} = TrackMeta.new()
+    {:ok, project} = Project.put_track_meta(project, "Track_empty", empty_meta)
 
     {:ok, project} =
       seed_elements(project, [
@@ -112,8 +121,8 @@ defmodule EquinoxUIShell.ProjectPresenterTest do
       assert track.extra == %{}
 
       empty = data.tracks["Track_empty"]
-      # coconut 时代 kernel 只造 Vocal 轨，type 恒推导为 "synth"（无 external_audio）
-      assert empty.type == "synth"
+      # Audio 轨由 module 推导为 "external_audio"（frame 域，无窗口投影）
+      assert empty.type == "external_audio"
       assert empty.synth_graph == nil
       assert empty.color == ""
       assert empty.ui_state == %{}

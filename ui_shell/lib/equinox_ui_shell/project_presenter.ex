@@ -224,6 +224,7 @@ defmodule EquinoxUIShell.ProjectPresenter do
 
   # coconut Track 无 type 字段，由 module 推导前端 type 字符串
   defp track_type_to_string(Coconut.Edit.Track.Vocal), do: "synth"
+  defp track_type_to_string(Coconut.Edit.Track.Audio), do: "external_audio"
 
   defp track_type_to_string(module) when is_atom(module),
     do: module |> Module.split() |> List.last() |> Macro.underscore()

@@ -17,6 +17,7 @@ defmodule Equinox.Session.Server do
 
   alias Coconut.Edit.{Command, Diff, History}
   alias Coconut.Edit.Track, as: CoconutTrack
+  alias Coconut.Edit.Track.{Audio, Vocal}
   alias Coconut.Util.ID
   alias Equinox.Session.Context
   alias Equinox.Kernel.{Graph, Runner}
@@ -32,8 +33,11 @@ defmodule Equinox.Session.Server do
   @doc """
   新增轨道（经 `History.run(Command.add_track(...))`，可 undo）。
 
-  `attrs`（map 或 keyword）缺 `:id` 时自动生成；`:module` 固定为
-  `Coconut.Edit.Track.Vocal`。成功回复构造好的 `Coconut.Edit.Track`
+  `attrs`（map 或 keyword）缺 `:id` 时自动生成；`:type` 映射 coconut
+  轨型模块——`:external_audio`（或 `"external_audio"`）→
+  `Coconut.Edit.Track.Audio`（帧域音频轨），其余 / 缺省 →
+  `Coconut.Edit.Track.Vocal`；混音键（`:gain` / `:pan` / `:mute` / `:solo`）
+  进 `TrackMeta` 侧表。成功回复构造好的 `Coconut.Edit.Track`
   （含铸造后的 id），并初始化该轨的 `TrackMeta` 侧表项。
   """
   @spec add_track(GenServer.server(), map() | keyword()) ::
@@ -161,10 +165,12 @@ defmodule Equinox.Session.Server do
   end
 
   def handle_call({:add_track, attrs}, _from, state) do
-    attrs = attrs |> Map.new() |> Map.put(:module, Coconut.Edit.Track.Vocal)
+    {track_type, attrs} = attrs |> Map.new() |> pop_track_type()
+    attrs = Map.put(attrs, :module, track_module(track_type))
+    mix_attrs = Map.take(attrs, [:gain, :pan, :mute, :solo])
 
     with {:ok, %Command{payload: %CoconutTrack{} = track} = command} <- Command.add_track(attrs),
-         {:ok, meta} <- TrackMeta.new(),
+         {:ok, meta} <- TrackMeta.new(mix_attrs),
          {:ok, state} <- run_history(state, command) do
       project = %{state.project | tracks_meta: Map.put(state.project.tracks_meta, track.id, meta)}
       {:reply, {:ok, track}, %{state | project: project}}
@@ -288,6 +294,18 @@ defmodule Equinox.Session.Server do
   end
 
   # ---- 内部编排 ----
+
+  # 调用方的轨道类型 → coconut 轨型模块：`:external_audio`（或字符串形）映射
+  # `Track.Audio`（帧域），其余 / 缺省一律 `Track.Vocal`。`:type` 不是
+  # `Coconut.Edit.Track` 的字段，须在 `Track.new/1` 归一化丢弃前取出。
+  defp pop_track_type(attrs) do
+    {type, attrs} = Map.pop(attrs, :type)
+    {string_type, attrs} = Map.pop(attrs, "type")
+    {type || string_type, attrs}
+  end
+
+  defp track_module(type) when type in [:external_audio, "external_audio"], do: Audio
+  defp track_module(_other), do: Vocal
 
   # History 写入口统一收尾：写入 → 排干死 patch 墓地（日志上浮，等价旧
   # rebase 冲突上浮通道；当前无 UI 订阅方，先记录不丢弃）→ workspace 回挂

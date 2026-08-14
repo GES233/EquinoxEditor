@@ -35,11 +35,8 @@ defmodule EquinoxWeb.EditorLive.ArrangerComponent do
   end
 
   def handle_event("add_external_node", %{"label" => label}, socket) do
-    # TS 侧只发 label；type 在此边界显式固定为 :external_audio。
-    # 注意（coconut 迁移期已知偏差）：kernel `add_track/2` 目前把 :module
-    # 强制为 `Coconut.Edit.Track.Vocal`，且 coconut Track 不收 :type/:gain
-    # 字段——此处的音频轨意图会被静默丢弃，实际落成一条 Vocal 轨。
-    # 待 kernel 支持音频轨型前，保持 UI 意图原样上送。
+    # TS 侧只发 label；type 在此边界显式固定为 :external_audio
+    # （kernel `add_track/2` 映射为 `Coconut.Edit.Track.Audio`，mix 键落入 TrackMeta）
     case Server.add_track(server(socket), %{type: :external_audio, name: label, gain: 1.0}) do
       {:ok, _track} ->
         send(self(), :project_updated)
