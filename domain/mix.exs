@@ -12,14 +12,13 @@ defmodule EquinoxDomain.MixProject do
     ]
   end
 
-  # zongzi 是唯一的允许依赖：同为零依赖纯函数内核库，
-  # 提供 Timeline / Anchor / Windowing / Intervention / Score 基础类型真源。
+  # coconut 是唯一的允许依赖：引擎无关编辑器内核（Score 基础类型 /
+  # Edit.Workspace / Render.Channel / Pickle）。tamale（rebase 内核）
+  # 由 coconut 传递引入，override 到本地 path 便于联动调试。
   defp deps do
     [
-      # {:zongzi, path: "../../zongzi"}
-      # 保持相对路径的原因是一旦发现 zongzi 问题后便于修改
-      # 待经过验证后用 hex version
-      {:zongzi, "~> 0.3"}
+      {:coconut, path: "../../coconut"},
+      {:tamale, path: "../../tamale", override: true}
     ]
   end
 

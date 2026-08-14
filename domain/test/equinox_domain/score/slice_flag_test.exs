@@ -1,67 +1,54 @@
 defmodule EquinoxDomain.Score.SliceFlagTest do
   use ExUnit.Case, async: true
 
+  alias Coconut.Score.Note
   alias EquinoxDomain.Score.SliceFlag
-  alias Zongzi.Score.{Key.TwelveET, Note}
-  alias Zongzi.Util.ID
 
-  defp new_note(metadata \\ %{}) do
-    {:ok, key} = TwelveET.new(60)
-
-    {:ok, note} =
-      Note.new(%{
-        id: ID.generate_id("Note_"),
-        start_tick: 0,
-        duration_tick: 480,
-        key: key,
-        lyric: "a",
-        metadata: metadata
-      })
-
+  defp note!(metadata) do
+    {:ok, note} = Note.new(%{id: "Note_t1", metadata: metadata})
     note
   end
 
-  test "get/1：metadata 缺省或读不到该键时均为 :auto" do
-    assert SliceFlag.get(new_note()) == :auto
-    assert SliceFlag.get(new_note(%{"other" => 1})) == :auto
-  end
+  describe "get/1" do
+    test "缺省（无 metadata 键）为 :auto" do
+      assert SliceFlag.get(note!(%{})) == :auto
+    end
 
-  test "get/1 容忍原子与字符串两种写法，未知值按 :auto" do
-    for {stored, expected} <- [
-          {"force_slice", :force_slice},
-          {:force_slice, :force_slice},
-          {"force_merge", :force_merge},
-          {:force_merge, :force_merge},
-          {"auto", :auto},
-          {"unknown", :auto},
-          {42, :auto}
-        ] do
-      assert SliceFlag.get(new_note(%{"slice_flag" => stored})) == expected
+    test "读取字符串形式" do
+      assert SliceFlag.get(note!(%{"slice_flag" => "force_slice"})) == :force_slice
+      assert SliceFlag.get(note!(%{"slice_flag" => "force_merge"})) == :force_merge
+    end
+
+    test "容忍原子形式" do
+      assert SliceFlag.get(note!(%{"slice_flag" => :force_slice})) == :force_slice
+    end
+
+    test "未知值按 :auto" do
+      assert SliceFlag.get(note!(%{"slice_flag" => "bogus"})) == :auto
     end
   end
 
-  test "set/2 写入字符串形式并可 get 往返" do
-    note = new_note()
+  describe "set/2" do
+    test "写入字符串形式" do
+      {:ok, note} = SliceFlag.set(note!(%{}), :force_slice)
+      assert note.metadata == %{"slice_flag" => "force_slice"}
+      assert SliceFlag.get(note) == :force_slice
+    end
 
-    {:ok, note} = SliceFlag.set(note, :force_slice)
-    assert note.metadata["slice_flag"] == "force_slice"
-    assert SliceFlag.get(note) == :force_slice
+    test ":auto 删除该键" do
+      {:ok, note} = SliceFlag.set(note!(%{"slice_flag" => "force_merge", "keep" => 1}), :auto)
+      assert note.metadata == %{"keep" => 1}
+    end
 
-    {:ok, note} = SliceFlag.set(note, :force_merge)
-    assert note.metadata["slice_flag"] == "force_merge"
-    assert SliceFlag.get(note) == :force_merge
-  end
+    test "非法 flag 报错" do
+      assert {:error, {:invalid_slice_flag, :bogus}} = SliceFlag.set(note!(%{}), :bogus)
+    end
 
-  test "set/2 :auto 从 metadata 删除该键" do
-    {:ok, note} = SliceFlag.set(new_note(), :force_slice)
-    assert Map.has_key?(note.metadata, "slice_flag")
-
-    {:ok, note} = SliceFlag.set(note, :auto)
-    refute Map.has_key?(note.metadata, "slice_flag")
-    assert SliceFlag.get(note) == :auto
-  end
-
-  test "set/2 非法 flag 报错" do
-    assert {:error, {:invalid_slice_flag, :bogus}} = SliceFlag.set(new_note(), :bogus)
+    test "set → get 往返" do
+      for flag <- [:force_slice, :force_merge, :auto] do
+        {:ok, note} = SliceFlag.set(note!(%{}), flag)
+        assert SliceFlag.get(note) == flag
+      end
+    end
   end
 end
