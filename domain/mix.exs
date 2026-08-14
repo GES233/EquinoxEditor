@@ -12,9 +12,10 @@ defmodule EquinoxDomain.MixProject do
     ]
   end
 
-  # coconut 是唯一的允许依赖：引擎无关编辑器内核（Score 基础类型 /
-  # Edit.Workspace / Render.Channel / Pickle）。tamale（rebase 内核）
-  # 由 coconut 传递引入，override 到本地 path 便于联动调试。
+  # 提供 Score 基础类型 / Edit.Workspace / Render.Channel / Pickle 的
+  # 引擎无关编辑器内核 coconut 是唯一的允许依赖；
+  # tamale（rebase 内核）由 coconut 传递引入，
+  # override 到本地 path 便于联动调试。
   defp deps do
     [
       {:coconut, path: "../../coconut"},
