@@ -1,119 +1,208 @@
 defmodule EquinoxDomain.Command.RenderRequestTest do
   use ExUnit.Case, async: true
 
+  import EquinoxDomain.TestFactory
+
+  alias Coconut.Edit.{Patch, Workspace}
   alias EquinoxDomain.Command.RenderRequest
-  alias EquinoxDomain.Port.Declarations.PhonemeTiming
-  alias EquinoxDomain.Score.Track
-  alias Zongzi.{Intervention, Windowing.Segment}
-  alias Zongzi.Score.{Key.TwelveET, Tempo, TempoMap}
-  alias Zongzi.Util.ID
+  alias EquinoxDomain.Port.{Channels.PhonemeTiming, Preset}
+  alias EquinoxDomain.Score.{Project, Track, TrackMeta}
 
-  @tpqn 480
+  # n1 [0,480) n2 [480,960) 粘连；n2→n3 空档 3 拍（1440）切开：
+  # 前 1 拍归前窗、后 2 拍归后窗 → [0,1440) 与 [1440,2880)
+  @notes [
+    {"n1", 0, 480, %{pitch: 60, lyric: "あ"}},
+    {"n2", 480, 960, %{pitch: 62, lyric: "い"}},
+    {"n3", 2400, 2880, %{pitch: 64, lyric: "う"}}
+  ]
 
-  setup do
-    {:ok, track} =
-      Track.new(
-        id: ID.generate_id("Track_"),
-        project_id: ID.generate_id("Project_"),
-        name: "渲染轨"
-      )
-
-    {:ok, key} = TwelveET.new(60)
-
-    {:ok, tempo_map} =
-      TempoMap.compile([{0, %Tempo.Event{module: Tempo.Step, context: %{bpm: 120}}}], tpqn: @tpqn)
-
-    %{track: track, key: key, tempo_map: tempo_map}
+  defp setup_project do
+    {project, track_id} = project_with_track()
+    project = insert_notes(project, track_id, @notes)
+    {project, track_id}
   end
 
-  defp insert(track, key, start_tick, duration \\ @tpqn) do
-    {:ok, track, note} =
-      Track.insert_note(track,
-        start_tick: start_tick,
-        duration_tick: duration,
-        key: key,
-        lyric: "a"
-      )
+  defp attach_patch!(project, track_id, channel, anchor) do
+    {:ok, tamale_patch} = Tamale.Patch.new(%{"note" => "base"}, %{"delta" => 1})
 
-    {track, note}
+    {:ok, patch} =
+      Patch.new(%{
+        track_id: track_id,
+        anchor: anchor,
+        patch: tamale_patch,
+        channel: channel
+      })
+
+    {:ok, workspace, _minted} = Workspace.attach_patch(project.workspace, patch)
+    %{project | workspace: workspace}
   end
 
-  defp mount(track, seq_id, range) do
-    {:ok, int} =
-      Intervention.new(
-        id: ID.generate_id("iv_"),
-        channel: PhonemeTiming.channel(),
-        declaration: PhonemeTiming
-      )
-
-    payload = %{range: range, deltas: []}
-
-    {:ok, track, mounted} = Track.mount_intervention(track, int, payload, seq_id, %{})
-    {track, mounted}
+  defp at_version(project, track_id) do
+    {:ok, track} = Project.fetch_track(project, track_id)
+    track.space.version
   end
 
-  defp window(start_tick, end_tick, seq_ids) do
-    {:ok, segment} = Segment.new(start_tick, end_tick, seq_ids)
-    segment
+  defp slice!(project, track_id) do
+    {:ok, windows} = Track.slice(project, track_id)
+    windows
   end
 
-  describe "from_window/3 notes 与 tempo_segments 行为不变" do
-    test "按 seq_ids 取回 Note 本体、切片 tempo_segments", %{
-      track: track,
-      key: key,
-      tempo_map: tempo_map
-    } do
-      {track, a} = insert(track, key, 0)
-      {track, _b} = insert(track, key, 960)
+  test "from_window：notes 带 span、time_range 与 tempo_segments" do
+    {project, track_id} = setup_project()
+    [w1, w2] = slice!(project, track_id)
 
-      segment = window(0, 960, [a.seq_id])
-      assert {:ok, req} = RenderRequest.from_window(segment, track, tempo_map)
+    assert {:ok, req1} = RenderRequest.from_window(project, w1, tempo_map())
+    assert req1.track_id == track_id
+    assert req1.time_range == {0, 1440}
+    assert req1.note_ids == ["n1", "n2"]
 
-      assert req.track_id == track.id
-      assert req.note_ids == [a.id]
-      assert req.notes == [a]
-      assert req.time_range == {0, 960}
-      assert [%{start_pos: 0, start_sec: start_sec}] = req.tempo_segments
-      assert start_sec == 0.0
-      assert req.interventions == []
-      assert req.declarations == %{}
-    end
+    assert [
+             {"n1", %Coconut.Score.Note{lyric: "あ"}, {0, 480}},
+             {"n2", %Coconut.Score.Note{lyric: "い"}, {480, 960}}
+           ] = req1.notes
 
-    test "seq 缺 Note 本体时报 note_not_found", %{track: track, tempo_map: tempo_map} do
-      segment = window(0, 960, [42_424])
+    assert [%{start_pos: 0} | _] = req1.tempo_segments
 
-      assert {:error, {:note_not_found, 42_424}} =
-               RenderRequest.from_window(segment, track, tempo_map)
-    end
+    assert {:ok, req2} = RenderRequest.from_window(project, w2, tempo_map())
+    assert req2.time_range == {1440, 2880}
+    assert req2.note_ids == ["n3"]
   end
 
-  describe "from_window/3 interventions 过滤" do
-    test "scope 与窗口区间（左闭右开）相交才纳入，declarations 随之派生", %{
-      track: track,
-      key: key,
-      tempo_map: tempo_map
-    } do
-      {track, a} = insert(track, key, 0)
-      {track, b} = insert(track, key, 960)
-      {track, int_a} = mount(track, a.seq_id, [0, 480])
-      {track, int_b} = mount(track, b.seq_id, [960, 1440])
+  test "patch 过滤：Ordinal 按 refs ∩ note_ids，Metric 按 tick 区间相交" do
+    {project, track_id} = setup_project()
+    version = at_version(project, track_id)
 
-      # 窗口 A [0, 960)：int_a 相交，int_b 起点贴右边界被排除
-      segment_a = window(0, 960, [a.seq_id])
-      assert {:ok, req_a} = RenderRequest.from_window(segment_a, track, tempo_map)
-      assert Enum.map(req_a.interventions, & &1.id) == [int_a.id]
-      assert req_a.declarations == %{phoneme_timing: PhonemeTiming}
+    project =
+      project
+      |> attach_patch!(track_id, :phoneme_timing, %Tamale.Anchor.Ordinal{
+        refs: ["n1"],
+        at_version: version
+      })
+      |> attach_patch!(track_id, :phoneme_timing, %Tamale.Anchor.Ordinal{
+        refs: ["n3"],
+        at_version: version
+      })
+      |> attach_patch!(track_id, :phoneme_timing, %Tamale.Anchor.Metric{
+        coord: :tick,
+        from: 500,
+        to: 700,
+        at_version: version
+      })
+      # 跨两窗的 Metric 锚
+      |> attach_patch!(track_id, :phoneme_timing, %Tamale.Anchor.Metric{
+        coord: :tick,
+        from: 1000,
+        to: 2000,
+        at_version: version
+      })
+      # 窗外 Metric 锚
+      |> attach_patch!(track_id, :phoneme_timing, %Tamale.Anchor.Metric{
+        coord: :tick,
+        from: 5000,
+        to: 6000,
+        at_version: version
+      })
+      # Relative 锚按 ref 归属
+      |> attach_patch!(track_id, :phoneme_timing, %Tamale.Anchor.Relative{
+        ref: "n2",
+        from_offset: 0,
+        to_offset: 240,
+        at_version: version
+      })
 
-      # 窗口 B [480, 1440)：int_a 终点贴左边界被排除，int_b 相交
-      segment_b = window(480, 1440, [b.seq_id])
-      assert {:ok, req_b} = RenderRequest.from_window(segment_b, track, tempo_map)
-      assert Enum.map(req_b.interventions, & &1.id) == [int_b.id]
+    [w1, w2] = slice!(project, track_id)
 
-      # 窗口 C [0, 1920)：两者都纳入
-      segment_c = window(0, 1920, [a.seq_id, b.seq_id])
-      assert {:ok, req_c} = RenderRequest.from_window(segment_c, track, tempo_map)
-      assert Enum.map(req_c.interventions, & &1.id) == [int_b.id, int_a.id]
-      assert req_c.declarations == %{phoneme_timing: PhonemeTiming}
-    end
+    {:ok, req1} = RenderRequest.from_window(project, w1, tempo_map())
+    anchors1 = Enum.map(req1.patches, fn patch -> anchor_shape(patch.anchor) end)
+
+    assert Enum.count(anchors1) == 4
+    assert {:ordinal, ["n1"]} in anchors1
+    assert {:relative, "n2"} in anchors1
+    assert {:metric, 500, 700} in anchors1
+    assert {:metric, 1000, 2000} in anchors1
+
+    {:ok, req2} = RenderRequest.from_window(project, w2, tempo_map())
+    anchors2 = Enum.map(req2.patches, fn patch -> anchor_shape(patch.anchor) end)
+
+    assert Enum.count(anchors2) == 2
+    assert {:ordinal, ["n3"]} in anchors2
+    assert {:metric, 1000, 2000} in anchors2
+  end
+
+  # 锚形状摘要（at_version 随写入推进，不参与断言）
+  defp anchor_shape(%Tamale.Anchor.Ordinal{refs: refs}), do: {:ordinal, refs}
+  defp anchor_shape(%Tamale.Anchor.Relative{ref: ref}), do: {:relative, ref}
+  defp anchor_shape(%Tamale.Anchor.Metric{from: from, to: to}), do: {:metric, from, to}
+
+  test "channels 从 patch + active preset 注册表派生；未注册 channel 不收录" do
+    {project, track_id} = setup_project()
+    version = at_version(project, track_id)
+
+    # 侧表挂 preset：只注册 :phoneme_timing
+    {:ok, preset} =
+      Preset.new(name: "default", channels: %{phoneme_timing: PhonemeTiming})
+
+    {:ok, meta} =
+      TrackMeta.new(presets: %{"default" => preset}, active_preset: "default")
+
+    {:ok, project} = Project.put_track_meta(project, track_id, meta)
+
+    project =
+      project
+      |> attach_patch!(track_id, :phoneme_timing, %Tamale.Anchor.Ordinal{
+        refs: ["n1"],
+        at_version: version
+      })
+      |> attach_patch!(track_id, :pitch, %Tamale.Anchor.Ordinal{
+        refs: ["n1"],
+        at_version: version
+      })
+
+    [w1, _w2] = slice!(project, track_id)
+    {:ok, req} = RenderRequest.from_window(project, w1, tempo_map())
+
+    # :pitch 未注册 → 不收录（kernel check 阶段以 unknown_channel 上报）
+    assert req.channels == %{phoneme_timing: PhonemeTiming}
+    assert Enum.sort(Enum.map(req.patches, & &1.channel)) == [:phoneme_timing, :pitch]
+  end
+
+  test "无 preset 侧表时 channels 为空表" do
+    {project, track_id} = setup_project()
+    version = at_version(project, track_id)
+
+    project =
+      attach_patch!(project, track_id, :phoneme_timing, %Tamale.Anchor.Ordinal{
+        refs: ["n1"],
+        at_version: version
+      })
+
+    [w1, _w2] = slice!(project, track_id)
+    {:ok, req} = RenderRequest.from_window(project, w1, tempo_map())
+
+    assert req.channels == %{}
+  end
+
+  test "多轨工程按 note_ids 定位正确轨道" do
+    {project, track_a} = setup_project()
+    {:ok, project, _track} = Project.add_track(project, id: "Track_2", name: "和声")
+    project = insert_notes(project, "Track_2", [{"m1", 0, 480, %{pitch: 67}}])
+
+    {:ok, [wb]} = Track.slice(project, "Track_2")
+    assert {:ok, req} = RenderRequest.from_window(project, wb, tempo_map())
+    assert req.track_id == "Track_2"
+    assert req.note_ids == ["m1"]
+
+    [wa | _] = slice!(project, track_a)
+    assert {:ok, req} = RenderRequest.from_window(project, wa, tempo_map())
+    assert req.track_id == track_a
+  end
+
+  test "空 note_ids 的窗无法定位轨道" do
+    {project, track_id} = setup_project()
+    [w1 | _] = slice!(project, track_id)
+    {:ok, empty_window} = EquinoxDomain.Windowing.Window.update(w1, note_ids: [])
+
+    assert {:error, :cannot_locate_track} =
+             RenderRequest.from_window(project, empty_window, tempo_map())
   end
 end

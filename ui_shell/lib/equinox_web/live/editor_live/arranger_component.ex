@@ -36,6 +36,7 @@ defmodule EquinoxWeb.EditorLive.ArrangerComponent do
 
   def handle_event("add_external_node", %{"label" => label}, socket) do
     # TS 侧只发 label；type 在此边界显式固定为 :external_audio
+    # （kernel `add_track/2` 映射为 `Coconut.Edit.Track.Audio`，mix 键落入 TrackMeta）
     case Server.add_track(server(socket), %{type: :external_audio, name: label, gain: 1.0}) do
       {:ok, _track} ->
         send(self(), :project_updated)

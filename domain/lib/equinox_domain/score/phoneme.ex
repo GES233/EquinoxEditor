@@ -7,23 +7,23 @@ defmodule EquinoxDomain.Score.Phoneme do
   存在，而不必天然成为 Domain fact。
 
   当用户显式锁定或编辑音素序列 / 音素时序时，该编辑以
-  zongzi Intervention 持久化（note 结构锚 + Declaration 生命周期，
-  见 zongzi intervention-semantics）；时序编辑的 channel 实现为
-  `EquinoxDomain.Port.Declarations.PhonemeTiming`。
+  `Coconut.Edit.Patch`（锚 + `Tamale.Patch` digest 校验）持久化在
+  轨道上；时序编辑的 channel 实现为
+  `EquinoxDomain.Port.Channels.PhonemeTiming`。
 
   ## 时长
 
   Phoneme timing，包括 duration、boundary、preutterance 等，不属于
-  Phoneme 本体。它们由引擎投影产生基值，用户修改以 intervention
-  delta 挂载，最终在引擎 check 阶段经 `Declaration.resolve/2`
-  决议为渲染输入。
+  Phoneme 本体。它们由引擎投影产生基值，用户修改以 delta payload
+  挂载，最终在渲染 check 阶段经 `Tamale.Patch.resolve/2` 判定有效性后
+  作为渲染输入。
 
   ## Preutterance
 
   Domain 不再直接存储辅音提前量。
 
-  辅音提前量由模型投影与用户干涉在 Declaration resolve 阶段计算。
-  策略性约束未来由 channel Declaration 的 constraints 表达，例如：
+  辅音提前量由模型投影与用户干涉在 resolve 阶段计算。
+  策略性约束未来由 channel 的 constraints 表达，例如：
 
   - consonant_preutter_limit
   - allow_cross_note_boundary
@@ -33,6 +33,8 @@ defmodule EquinoxDomain.Score.Phoneme do
   不代表 Domain 中存在实际音素提前时间。
   """
 
+  import Coconut.Util.Helpers, only: [normalize_attrs: 2, strictly_normalize_attrs: 2]
+
   @type symbol :: String.t()
   @type phoneme_type :: :consonant | :vowel | :silence
 
@@ -41,5 +43,37 @@ defmodule EquinoxDomain.Score.Phoneme do
           type: phoneme_type()
         }
 
-  use Zongzi.Util.Object, keys: [:symbol, :type]
+  @keys [:symbol, :type]
+  defstruct @keys
+
+  @doc "创建音素；`:symbol` / `:type` 必填。"
+  @spec new(map() | keyword()) :: {:ok, t()} | {:error, term()}
+  def new(attrs) do
+    with {:ok, normalized} <- normalize_attrs(attrs, @keys) do
+      struct(__MODULE__, normalized) |> validate()
+    end
+  end
+
+  @doc "更新音素字段，重新校验。"
+  @spec update(t(), map() | keyword()) :: {:ok, t()} | {:error, term()}
+  def update(%__MODULE__{} = phoneme, attrs) do
+    with {:ok, normalized} <- strictly_normalize_attrs(attrs, @keys) do
+      struct(phoneme, normalized) |> validate()
+    end
+  end
+
+  @doc "校验：`symbol` 非空字符串，`type` 为 `:consonant | :vowel | :silence`。"
+  @spec validate(t()) :: {:ok, t()} | {:error, term()}
+  def validate(%__MODULE__{symbol: symbol, type: type} = phoneme) do
+    cond do
+      not (is_binary(symbol) and symbol != "") ->
+        {:error, {:invalid_phoneme_symbol, symbol}}
+
+      type not in [:consonant, :vowel, :silence] ->
+        {:error, {:invalid_phoneme_type, type}}
+
+      true ->
+        {:ok, phoneme}
+    end
+  end
 end

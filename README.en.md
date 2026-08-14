@@ -17,12 +17,12 @@ Equinox is organized into three directories: `domain/`, `kernel/`, and `ui_shell
 ## Layout
 
 ```text
-domain/    # zero-dependency domain model
+domain/    # domain model built on coconut (+tamale)
 kernel/    # standalone editor kernel, domain model, Orchid orchestration
 ui_shell/  # Phoenix LiveView shell + Svelte 5 islands
 ```
 
-- **Domain**: pure data structures and domain logic (notes, tracks, projects, timeline, phonemes, curves). Zero dependencies.
+- **Domain**: pure data structures and domain logic (notes, tracks, projects, timeline, phonemes, curves), built on coconut — an engine-agnostic editor core (editing/rendering/serialization) with tamale as its rebase kernel, both maintained by the same developer.
 - **Kernel**: core editor logic, sessions, project model, render dispatch.
 - **UI Shell**: browser-facing shell that depends on `kernel/` via a local path dependency.
 - The repository root now keeps repo-level docs and conventions only.
@@ -84,4 +84,5 @@ Equinox = Domain + Kernel + UI Shell
 - [Phoenix Framework](https://www.phoenixframework.org/)
 - [Svelte Docs](https://svelte.dev/docs)
 - [Orchid](https://hex.pm/packages/orchid)
+- [Coconut](https://github.com/GES233/Coconut) / [Tamale](https://github.com/SynapticStrings/Tamal)
 - Review `./AGENTS.md` for architectural conventions.

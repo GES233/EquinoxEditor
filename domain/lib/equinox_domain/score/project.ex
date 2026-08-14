@@ -1,173 +1,224 @@
 defmodule EquinoxDomain.Score.Project do
   @moduledoc """
-  工程——可序列化的顶层聚合根。
+  工程——可序列化的顶层聚合根（coconut 时代的**纯数据查询层**）。
 
-  ## 序列化模型
+  ## 职责划分
 
-  - `tempo_map` / `time_sig_map` 字段存的是**源事件列表**（plain data：
-    `Zongzi.Score.Tempo.tempo_events()` / `Zongzi.Score.TimeSig.time_sig_events()`），
-    不是编译态 tuple；编译态是运行时投影，用 `compiled_tempo_map/2` /
-    `compiled_time_sig_map/2` 现场编译（缺省 `[]` 正好契合「尚未设置」语义，
-    编译会返回 `{:error, :empty_*_events}`，由调用方处理）。
-  - `tracks` 为 `%{track_id => Track.t()}`。
-  - `dump/1` / `load/1` 遵循 `EquinoxDomain.Pickle` 原生对象 codec 约定，
-    dump 产物带 `version: 1` 便于将来演进。
+  - `workspace :: Coconut.Edit.Workspace.t()` — 全部音符 / patch（干预）/
+    tempo / time_sig 真相。coconut 已收纳领域模型，本模块不再持有任何
+    音符级状态，只做查询代理与侧表组合。
+  - `tracks_meta :: %{track_id => TrackMeta.t()}` — equinox 侧表
+    （混音 / 预设 / UI 状态），**不进 History、不可 undo**。
+  - **写操作不在此层**：一切音符 / 干预 / tempo 写路径由 kernel 经
+    `Coconut.Edit.History` + Operations/Command 完成；本层只提供
+    `add_track/2` / `remove_track/2` 两个结构级便捷封装
+    （`Workspace.add_track/2` + TrackMeta 初始化/清理的原子组合）。
+
+  ## 序列化
+
+  `dump/1` / `load/1` 组合 `Coconut.Pickle.Workspace`
+  （registry 取 `Coconut.Pickle.Track.default_registry/0`，宿主扩展轨型时
+  需同步扩展）与 TrackMeta 的 plain map codec；产物带 `version: 1`。
   """
 
-  alias EquinoxDomain.Pickle
-  alias EquinoxDomain.Score.Track
-  alias Zongzi.Score.{TempoMap, TimeSigMap}
+  import Coconut.Util.Helpers, only: [normalize_attrs: 2, strictly_normalize_attrs: 2]
 
-  use Zongzi.Util.Model,
-    keys: [
-      :id,
-      :name,
-      # tempo / 拍号源事件列表（plain data，编译态是运行时投影）
-      tempo_map: [],
-      time_sig_map: [],
-      # %{track_id => Track}
-      tracks: %{},
-      metadata: %{}
-    ],
-    id_prefix: "Project_"
+  alias Coconut.Edit.{Track, Workspace}
+  alias EquinoxDomain.Score.TrackMeta
 
   @type t :: %__MODULE__{
-          id: Zongzi.Util.ID.t(t()),
-          name: String.t(),
-          tempo_map: Zongzi.Score.Tempo.tempo_events(),
-          time_sig_map: Zongzi.Score.TimeSig.time_sig_events(),
-          tracks: %{Zongzi.Util.ID.t(Track) => Track.t()},
+          id: Coconut.Util.ID.t(t()),
+          workspace: Workspace.t(),
+          tracks_meta: %{Track.track_id() => TrackMeta.t()},
           metadata: map()
         }
 
-  # ---- 编译态投影 ----
+  @keys [:id, :workspace, tracks_meta: %{}, metadata: %{}]
+  defstruct @keys
 
-  @doc "把 `tempo_map` 源事件编译为 `Zongzi.Score.TempoMap.t()`（opts 透传 compile/2，如 `:tpqn`）。"
-  @spec compiled_tempo_map(t(), keyword()) :: {:ok, TempoMap.t()} | {:error, term()}
-  def compiled_tempo_map(%__MODULE__{tempo_map: events}, opts \\ []),
-    do: TempoMap.compile(events, opts)
-
-  @doc "把 `time_sig_map` 源事件编译为 `Zongzi.Score.TimeSigMap.t()`（opts 透传 compile/2）。"
-  @spec compiled_time_sig_map(t(), keyword()) :: {:ok, TimeSigMap.t()} | {:error, term()}
-  def compiled_time_sig_map(%__MODULE__{time_sig_map: events}, opts \\ []),
-    do: TimeSigMap.compile(events, opts)
-
-  # ---- Track CRUD ----
+  # ---- 构造 ----
 
   @doc """
-  把 Track 挂进工程。
-
-  `track.project_id` 会对齐为 `project.id`；track id 冲突报 `{:already_exists, id}`。
+  创建工程；`:id` 必填。`:workspace` 缺省时新建空 Workspace
+  （id 自动以 `"WSpc_"` 前缀生成）。
   """
-  @spec add_track(t(), Track.t()) ::
-          {:ok, t()} | {:error, {:already_exists, Zongzi.Util.ID.t(Track)}}
-  def add_track(%__MODULE__{} = project, %Track{} = track) do
-    if Map.has_key?(project.tracks, track.id) do
-      {:error, {:already_exists, track.id}}
-    else
-      with {:ok, track} <- Track.update(track, %{project_id: project.id}) do
-        {:ok, %{project | tracks: Map.put(project.tracks, track.id, track)}}
-      end
+  @spec new(map() | keyword()) :: {:ok, t()} | {:error, term()}
+  def new(attrs) do
+    with {:ok, normalized} <- normalize_attrs(attrs, @keys),
+         {:ok, id} <- fetch_id(normalized),
+         {:ok, workspace} <- build_workspace(normalized) do
+      {:ok,
+       %__MODULE__{
+         id: id,
+         workspace: workspace,
+         tracks_meta: Map.get(normalized, :tracks_meta, %{}),
+         metadata: Map.get(normalized, :metadata, %{})
+       }}
     end
   end
 
-  @doc "按 id 移除 Track；不存在报 `{:track_not_found, id}`（不静默）。"
-  @spec remove_track(t(), Zongzi.Util.ID.t(Track)) ::
-          {:ok, t()} | {:error, {:track_not_found, Zongzi.Util.ID.t(Track)}}
+  defp fetch_id(attrs) do
+    case Map.fetch(attrs, :id) do
+      {:ok, id} -> {:ok, id}
+      :error -> {:error, {:missing_id, "Project_"}}
+    end
+  end
+
+  defp build_workspace(attrs) do
+    case Map.fetch(attrs, :workspace) do
+      {:ok, %Workspace{} = workspace} -> {:ok, workspace}
+      :error -> Workspace.new(id: Coconut.Util.ID.generate_id("WSpc_"), edit_version: 0)
+    end
+  end
+
+  @doc "更新顶层字段（`:id` / `:workspace` 不可经此修改）。"
+  @spec update(t(), map() | keyword()) :: {:ok, t()} | {:error, term()}
+  def update(%__MODULE__{} = project, attrs) do
+    with {:ok, normalized} <- strictly_normalize_attrs(attrs, [:tracks_meta, :metadata]) do
+      {:ok, struct(project, normalized)}
+    end
+  end
+
+  # ---- Track 结构（Workspace 写 + 侧表同步的组合） ----
+
+  @doc """
+  新建一条 Vocal 轨并挂进工程。
+
+  `attrs` 透传 `Coconut.Edit.Track.new/1`（`:id` 必填，`:module` 固定为
+  `Coconut.Edit.Track.Vocal`，不可覆盖）；成功后初始化缺省 TrackMeta。
+  返回 `{:ok, project, track}`。
+  """
+  @spec add_track(t(), map() | keyword()) ::
+          {:ok, t(), Track.t()} | {:error, term()}
+  def add_track(%__MODULE__{} = project, attrs) do
+    attrs = attrs |> Map.new() |> Map.put(:module, Coconut.Edit.Track.Vocal)
+
+    with {:ok, track} <- Track.new(attrs),
+         {:ok, workspace} <- Workspace.add_track(project.workspace, track),
+         {:ok, meta} <- TrackMeta.new() do
+      project = %{
+        project
+        | workspace: workspace,
+          tracks_meta: Map.put(project.tracks_meta, track.id, meta)
+      }
+
+      {:ok, project, track}
+    end
+  end
+
+  @doc "移除轨道（连同侧表）；不存在报 `{:error, {:unknown_track, id}}`。"
+  @spec remove_track(t(), Track.track_id()) :: {:ok, t()} | {:error, term()}
   def remove_track(%__MODULE__{} = project, track_id) do
-    if Map.has_key?(project.tracks, track_id) do
-      {:ok, %{project | tracks: Map.delete(project.tracks, track_id)}}
-    else
-      {:error, {:track_not_found, track_id}}
+    with {:ok, workspace} <- Workspace.remove_track(project.workspace, track_id) do
+      {:ok,
+       %{project | workspace: workspace, tracks_meta: Map.delete(project.tracks_meta, track_id)}}
     end
   end
 
-  @doc "按 id 取 Track。"
-  @spec get_track(t(), Zongzi.Util.ID.t(Track)) ::
-          {:ok, Track.t()} | {:error, {:track_not_found, Zongzi.Util.ID.t(Track)}}
-  def get_track(%__MODULE__{} = project, track_id) do
-    case Map.fetch(project.tracks, track_id) do
-      {:ok, track} -> {:ok, track}
-      :error -> {:error, {:track_not_found, track_id}}
+  # ---- 查询代理 ----
+
+  @doc "按 id 取 `Coconut.Edit.Track`。"
+  @spec fetch_track(t(), Track.track_id()) ::
+          {:ok, Track.t()} | {:error, {:unknown_track, term()}}
+  def fetch_track(%__MODULE__{workspace: workspace}, track_id),
+    do: Workspace.fetch_track(workspace, track_id)
+
+  @doc "取轨道元数据侧表项。"
+  @spec track_meta(t(), Track.track_id()) ::
+          {:ok, TrackMeta.t()} | {:error, {:unknown_track_meta, Track.track_id()}}
+  def track_meta(%__MODULE__{tracks_meta: tracks_meta}, track_id) do
+    case Map.fetch(tracks_meta, track_id) do
+      {:ok, meta} -> {:ok, meta}
+      :error -> {:error, {:unknown_track_meta, track_id}}
     end
   end
 
-  @doc "整体替换或用 updater 函数（`Track.t() -> Track.t()`）更新指定 Track。"
-  @spec update_track(t(), Zongzi.Util.ID.t(Track), Track.t() | (Track.t() -> Track.t())) ::
-          {:ok, t()} | {:error, {:track_not_found, Zongzi.Util.ID.t(Track)}}
-  def update_track(%__MODULE__{} = project, track_id, %Track{} = track) do
-    put_track(project, track_id, fn _old -> track end)
-  end
-
-  def update_track(%__MODULE__{} = project, track_id, updater) when is_function(updater, 1) do
-    put_track(project, track_id, updater)
-  end
-
-  @doc "列出全部 Track（顺序不保证）。"
-  @spec list_tracks(t()) :: [Track.t()]
-  def list_tracks(%__MODULE__{} = project), do: Map.values(project.tracks)
-
-  defp put_track(project, track_id, fun) do
-    case Map.fetch(project.tracks, track_id) do
-      {:ok, old} -> {:ok, %{project | tracks: Map.put(project.tracks, track_id, fun.(old))}}
-      :error -> {:error, {:track_not_found, track_id}}
+  @doc "写入轨道元数据侧表项（轨道须已存在；meta 经 `TrackMeta.validate/1`）。"
+  @spec put_track_meta(t(), Track.track_id(), TrackMeta.t()) :: {:ok, t()} | {:error, term()}
+  def put_track_meta(%__MODULE__{} = project, track_id, %TrackMeta{} = meta) do
+    with {:ok, _track} <- Workspace.fetch_track(project.workspace, track_id),
+         {:ok, meta} <- TrackMeta.validate(meta) do
+      {:ok, %{project | tracks_meta: Map.put(project.tracks_meta, track_id, meta)}}
     end
   end
 
-  # ---- 序列化（EquinoxDomain.Pickle 原生对象 codec） ----
+  @doc "编译态 tempo map（代理 `Workspace.tempo_map/1`）。"
+  @spec tempo_map(t()) :: {:ok, Coconut.Score.TempoMap.t()} | {:error, term()}
+  def tempo_map(%__MODULE__{workspace: workspace}), do: Workspace.tempo_map(workspace)
 
-  @doc "摊平为 plain map（`version: 1`；tracks 的 track_id 键原生保留）。"
+  @doc "编译态 time sig map（代理 `Workspace.time_sig_map/1`）。"
+  @spec time_sig_map(t()) :: {:ok, Coconut.Score.TimeSigMap.t()} | {:error, term()}
+  def time_sig_map(%__MODULE__{workspace: workspace}), do: Workspace.time_sig_map(workspace)
+
+  @doc """
+  轨道的扁平乐谱视图（代理 `Coconut.Edit.Track.view/1`）：
+  `[{note_id, Note.t(), {start_tick, end_tick}}]`，按 `{start, id}` 排序。
+  """
+  @spec view(t(), Track.track_id()) :: {:ok, Track.view()} | {:error, term()}
+  def view(%__MODULE__{} = project, track_id) do
+    with {:ok, track} <- fetch_track(project, track_id) do
+      {:ok, Track.view(track)}
+    end
+  end
+
+  # ---- 序列化 ----
+
+  @doc "摊平为 plain map（`version: 1`；workspace 与 tracks_meta 分别走各自 codec）。"
   @spec dump(t()) :: {:ok, map()} | {:error, term()}
   def dump(%__MODULE__{} = project) do
-    with {:ok, tempo_events} <- Pickle.TempoEvents.dump(project.tempo_map),
-         {:ok, time_sig_events} <- Pickle.TimeSigEvents.dump(project.time_sig_map),
-         {:ok, tracks} <- dump_tracks(project.tracks) do
+    with {:ok, workspace} <-
+           Coconut.Pickle.Workspace.dump(project.workspace, pickle_registry()),
+         {:ok, tracks_meta} <- dump_tracks_meta(project.tracks_meta) do
       {:ok,
        %{
          version: 1,
          id: project.id,
-         name: project.name,
-         tempo_events: tempo_events,
-         time_sig_events: time_sig_events,
-         tracks: tracks,
+         workspace: workspace,
+         tracks_meta: tracks_meta,
          metadata: project.metadata
        }}
     end
   end
 
-  @doc "从 plain map 重建 Project（组合各子 codec；`version` 键忽略）。"
+  @doc "从 plain map 重建 Project（workspace 与 tracks_meta 各自 load 后组合）。"
   @spec load(map()) :: {:ok, t()} | {:error, term()}
   def load(%{} = data) do
-    with {:ok, tempo_map} <- Pickle.TempoEvents.load(Map.get(data, :tempo_events, %{events: []})),
-         {:ok, time_sig_map} <-
-           Pickle.TimeSigEvents.load(Map.get(data, :time_sig_events, %{events: []})),
-         {:ok, tracks} <- load_tracks(Map.get(data, :tracks, %{})) do
-      new(
-        id: Map.get(data, :id),
-        name: Map.get(data, :name),
-        tempo_map: tempo_map,
-        time_sig_map: time_sig_map,
-        tracks: tracks,
-        metadata: Map.get(data, :metadata, %{})
-      )
+    with {:ok, workspace} <-
+           Coconut.Pickle.Workspace.load(Map.get(data, :workspace, %{}), pickle_registry()),
+         {:ok, tracks_meta} <- load_tracks_meta(Map.get(data, :tracks_meta, %{})),
+         {:ok, project} <-
+           new(
+             id: Map.get(data, :id),
+             workspace: workspace,
+             tracks_meta: tracks_meta,
+             metadata: Map.get(data, :metadata, %{})
+           ) do
+      {:ok, project}
     end
   end
 
-  defp dump_tracks(tracks) do
-    Enum.reduce_while(tracks, {:ok, %{}}, fn {track_id, track}, {:ok, acc} ->
-      case Track.dump(track) do
-        {:ok, dumped} -> {:cont, {:ok, Map.put(acc, track_id, dumped)}}
+  def load(other), do: {:error, {:invalid_project_dump, other}}
+
+  # registry 是存档格式的一部分：宿主扩展轨型 / 元素 codec 时应在此处扩展
+  defp pickle_registry, do: Coconut.Pickle.Track.default_registry()
+
+  # TrackMeta.dump/1 恒 {:ok, _}（Preset.dump/1 同为恒成功），故直接映射
+  defp dump_tracks_meta(tracks_meta) do
+    {:ok,
+     Map.new(tracks_meta, fn {track_id, meta} ->
+       {:ok, dumped} = TrackMeta.dump(meta)
+       {track_id, dumped}
+     end)}
+  end
+
+  defp load_tracks_meta(dumped) when is_map(dumped) do
+    Enum.reduce_while(dumped, {:ok, %{}}, fn {track_id, meta_dump}, {:ok, acc} ->
+      case TrackMeta.load(meta_dump) do
+        {:ok, meta} -> {:cont, {:ok, Map.put(acc, track_id, meta)}}
         {:error, _} = err -> {:halt, err}
       end
     end)
   end
 
-  defp load_tracks(dumped) do
-    Enum.reduce_while(dumped, {:ok, %{}}, fn {track_id, track_dump}, {:ok, acc} ->
-      case Track.load(track_dump) do
-        {:ok, track} -> {:cont, {:ok, Map.put(acc, track_id, track)}}
-        {:error, _} = err -> {:halt, err}
-      end
-    end)
-  end
+  defp load_tracks_meta(other), do: {:error, {:invalid_tracks_meta_dump, other}}
 end

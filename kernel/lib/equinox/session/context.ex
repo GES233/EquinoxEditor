@@ -3,13 +3,19 @@ defmodule Equinox.Session.Context do
   `Equinox.Session.Server` 状态容器。
   包含一个 Project 的实时运行状态（而非持久化数据）。
 
-  - `project` — `EquinoxDomain.Score.Project` 聚合根（音符 / 混音 / 元数据）。
+  - `project` — `EquinoxDomain.Score.Project` 查询投影（workspace + 侧表）。
+    只读快照：每次 History 写后由 `sync_workspace/1` 回挂
+    `History.current(hist).workspace`，`tracks_meta` 侧表留在 Project 上。
+  - `history` — `Coconut.Edit.History`，全部音符 / patch / 轨道结构写
+    的**唯一入口**（undo/redo 地基）。
   - `graphs` — `%{track_id => Equinox.Kernel.Graph.t()}`，轨级合成图。
     graph 是 Kernel 编译期概念（不进 Domain struct），过渡期存于本字段。
   - `compile_cache` — `%{track_id => {graph, compiled}}`，按轨缓存编译产物，
     供编辑-渲染循环增量复用。
   """
 
+  alias Coconut.Edit.History
+  alias Coconut.Edit.Track, as: CoconutTrack
   alias Equinox.Session
   alias Equinox.Kernel.{Blackboard, Compiler, Graph, Runner}
   alias EquinoxDomain.Command.RenderRequest
@@ -18,6 +24,7 @@ defmodule Equinox.Session.Context do
   @type t :: %__MODULE__{
           session_id: atom() | String.t(),
           project: Project.t(),
+          history: History.t(),
           graphs: %{term() => Graph.t()},
           compile_cache: Compiler.compile_cache(),
           blackboard: Blackboard.t(),
@@ -27,6 +34,7 @@ defmodule Equinox.Session.Context do
   defstruct [
     :session_id,
     :project,
+    :history,
     :task_supervisor,
     graphs: %{},
     compile_cache: %{},
@@ -35,23 +43,33 @@ defmodule Equinox.Session.Context do
   ]
 
   @spec new(atom() | String.t(), Project.t()) :: t()
-  def new(session_id, project) do
+  def new(session_id, %Project{} = project) do
     %__MODULE__{
       session_id: session_id,
       project: project,
+      history: History.new(project.workspace),
       task_supervisor: Session.task_sup(session_id),
       blackboard: Blackboard.new()
     }
   end
 
   @doc """
+  History 写后回同步：把 `History.current(hist).workspace` 挂回
+  `project.workspace`（`tracks_meta` 等侧表留在 Project 上，不受影响）。
+  """
+  @spec sync_workspace(t()) :: t()
+  def sync_workspace(%__MODULE__{history: hist, project: project} = ctx) do
+    %{ctx | project: %{project | workspace: History.current(hist).workspace}}
+  end
+
+  @doc """
   编译全部轨道并组装一次渲染 dispatch（`Runner.dispatch()`）。
 
-  流程：先把工程 tempo 源事件编译为 `TempoMap`
-  （`Project.compiled_tempo_map/2`，tpqn 480）；逐轨 `Track.slice/2`
-  （传 `tempo_map` 与 `interventions`，干预 scope 并集参与扩窗），再按轨编译
-  合成图（`Compiler.compile_track/3`，结果按轨缓存进 Context）；每个窗口经
-  `RenderRequest.from_window/3` 产出一个执行单元
+  流程：工程 tempo 轨编译为 `TempoMap`（`Project.tempo_map/1`，tpqn 取自
+  workspace）；逐轨 `EquinoxDomain.Score.Track.slice/3`（传 workspace tpqn
+  与 Metric 锚 patch 推导的 `extra_spans`，干预 scope 并集参与扩窗），再按轨
+  编译合成图（`Compiler.compile_track/3`，结果按轨缓存进 Context）；每个窗口
+  经 `RenderRequest.from_window/3` 产出一个执行单元
   `{{track_id, window_start_tick}, graph, render_request, compiled}`。
   units 按 `{track_id, window_start_tick}` 排序，保证确定性。
 
@@ -62,10 +80,10 @@ defmodule Equinox.Session.Context do
   """
   @spec prepare_dispatch(t()) :: {t(), Runner.dispatch() | {:error, term()}}
   def prepare_dispatch(%__MODULE__{} = ctx) do
-    tracks = Enum.sort_by(ctx.project.tracks, fn {track_id, _track} -> track_id end)
-    tempo = Project.compiled_tempo_map(ctx.project, tpqn: 480)
+    track_ids = ctx.project.tracks_meta |> Map.keys() |> Enum.sort()
+    tempo = Project.tempo_map(ctx.project)
 
-    case reduce_tracks(ctx, tracks, tempo) do
+    case reduce_tracks(ctx, track_ids, tempo) do
       {:ok, units, compile_cache} ->
         dispatch = %{session_id: ctx.session_id, units: units}
         {%{ctx | compile_cache: compile_cache}, dispatch}
@@ -77,13 +95,12 @@ defmodule Equinox.Session.Context do
 
   # 逐轨 slice + compile，累积 units 与新 compile_cache；任一失败即中断。
   # tempo 是 `{:ok, TempoMap.t()} | {:error, reason}`：编译失败时 slice 仍可
-  # 不带 tempo_map 进行（窗口只依赖 tick），真正有窗口产出时才强制要求它。
-  defp reduce_tracks(ctx, tracks, tempo) do
-    tracks
-    |> Enum.reduce_while({:ok, [], %{}}, fn {track_id, track}, {:ok, units_acc, cache_acc} ->
-      with {:ok, windows} <- slice_track(track, tempo),
+  # 进行（窗口只依赖 tick），真正有窗口产出时才强制要求它。
+  defp reduce_tracks(ctx, track_ids, tempo) do
+    Enum.reduce_while(track_ids, {:ok, [], %{}}, fn track_id, {:ok, units_acc, cache_acc} ->
+      with {:ok, windows} <- slice_track(ctx.project, track_id),
            {:ok, track_units, cache_acc} <-
-             compile_units(ctx, track_id, track, windows, cache_acc, tempo) do
+             compile_units(ctx, track_id, windows, cache_acc, tempo) do
         {:cont, {:ok, units_acc ++ track_units, cache_acc}}
       else
         {:error, _} = err -> {:halt, err}
@@ -91,16 +108,38 @@ defmodule Equinox.Session.Context do
     end)
   end
 
-  defp slice_track(track, {:ok, tempo_map}),
-    do: Track.slice(track, tempo_map: tempo_map, interventions: track.interventions)
+  # 分窗投影：tpqn 取自 workspace；`extra_spans` 由轨上 Metric 锚 patch 的
+  # tick 区间推导（旧「干预 scope 撑窗」语义，Ordinal/Relative 锚挂在音符上
+  # 不扩窗）。非整数有理数端点不进 Windowing（tick 网格只认整数）。
+  # 非 tick 域轨（Audio 帧域）不出渲染窗口——帧域渲染尚未接入，跳过。
+  defp slice_track(%Project{} = project, track_id) do
+    with {:ok, track} <- Project.fetch_track(project, track_id) do
+      if CoconutTrack.coord_domain(track) == :tick do
+        Track.slice(project, track_id,
+          tpqn: project.workspace.tpqn,
+          extra_spans: metric_anchor_spans(track.patches)
+        )
+      else
+        {:ok, []}
+      end
+    end
+  end
 
-  defp slice_track(track, {:error, _reason}),
-    do: Track.slice(track, interventions: track.interventions)
+  defp metric_anchor_spans(patches) do
+    Enum.flat_map(patches, fn
+      %{anchor: %Tamale.Anchor.Metric{from: from, to: to}}
+      when is_integer(from) and is_integer(to) ->
+        [{from, to}]
+
+      _other ->
+        []
+    end)
+  end
 
   # 空窗口轨不出单元，也不消耗编译缓存（tempo 编译失败此时无关紧要）
-  defp compile_units(_ctx, _track_id, _track, [], cache_acc, _tempo), do: {:ok, [], cache_acc}
+  defp compile_units(_ctx, _track_id, [], cache_acc, _tempo), do: {:ok, [], cache_acc}
 
-  defp compile_units(ctx, track_id, track, windows, cache_acc, tempo) do
+  defp compile_units(ctx, track_id, windows, cache_acc, tempo) do
     graph = Map.get(ctx.graphs, track_id, %Graph{})
 
     # 有窗口产出就必须有编译态 tempo map：`RenderRequest.from_window/3` 切片
@@ -108,16 +147,16 @@ defmodule Equinox.Session.Context do
     with {:ok, tempo_map} <- tempo,
          {:ok, {graph, compiled}, cache_acc} <-
            Compiler.compile_track(track_id, graph, cache_acc),
-         {:ok, units} <- build_units(track_id, track, windows, tempo_map, graph, compiled) do
+         {:ok, units} <- build_units(ctx.project, track_id, windows, tempo_map, graph, compiled) do
       {:ok, units, cache_acc}
     end
   end
 
-  defp build_units(track_id, track, windows, tempo_map, graph, compiled) do
+  defp build_units(project, track_id, windows, tempo_map, graph, compiled) do
     windows
     |> Enum.sort_by(& &1.start_tick)
     |> Enum.reduce_while({:ok, []}, fn window, {:ok, acc} ->
-      case RenderRequest.from_window(window, track, tempo_map) do
+      case RenderRequest.from_window(project, window, tempo_map) do
         {:ok, request} ->
           {:cont, {:ok, [{{track_id, window.start_tick}, graph, request, compiled} | acc]}}
 

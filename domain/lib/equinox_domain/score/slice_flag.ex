@@ -1,21 +1,21 @@
 defmodule EquinoxDomain.Score.SliceFlag do
   @moduledoc """
-  音符切片旗标（slice_flag）——`Slicer`/`SlicePolicy` 的输入信号。
+  音符切片旗标（slice_flag）——`EquinoxDomain.Windowing` 的输入信号。
 
-  存储于 `Zongzi.Score.Note.metadata`（zongzi 设计的 Caller 扩展点），
-  键为 `"slice_flag"`，值为字符串 `"force_slice" | "force_merge"`；
-  `:auto` 为缺省（不写或读不到即视为 `:auto`）。
+  存储于 `Coconut.Score.Note.metadata`（宿主扩展点），键为 `"slice_flag"`，
+  值为字符串 `"force_slice" | "force_merge"`；`:auto` 为缺省
+  （不写或读不到即视为 `:auto`）。
 
   ## 语义
 
-  flag 管辖的是该音符**之前**的边界（与 equinox 旧 Slicer 一致）：
+  flag 管辖的是该音符**之前**的边界：
 
   - `:force_slice` — 此音符前必切（无论间隙多小）
   - `:force_merge` — 此音符前禁切（无论休止多大）
   - `:auto` — 交给休止检测
   """
 
-  alias Zongzi.Score.Note
+  alias Coconut.Score.Note
 
   @type t :: :auto | :force_slice | :force_merge
 

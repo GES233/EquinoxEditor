@@ -1,29 +1,42 @@
 defmodule EquinoxUIShell.ProjectPresenter do
   @moduledoc """
-  Session 视图（domain 聚合 + 轨级合成图）→ 前端 TS 数据形状的投影器。
+  Session 视图（domain 工程投影 + 轨级合成图）→ 前端 TS 数据形状的投影器。
 
   输出为 plain map（可直接 Jason 编码），字段与 `assets/src/lib/bridge/index.ts`
   的 `ProjectData` / `TrackData` / `SegmentData` / `NoteData` 逐一对齐，前端零改动。
 
-  ## 关键映射
+  ## 关键映射（coconut 时代）
 
-  - **窗口即 segment**：`Track.slice/1` 的瞬态 `Zongzi.Windowing.Segment` 被仿真为
-    TS 的 `SegmentData`：id 为 `"w<start_tick>"`（见 `window_id/1`），`offset_tick`
-    取窗口起点，窗口内音符转为**窗口相对** tick（入方向经 `ui_note_to_attrs/2` 还原）。
-  - **key**：domain 侧是 `Zongzi.Score.Key.TwelveET`；出方向 `Key.to_midi/1`（float
-    取整），入方向 `TwelveET.new/1`。
-  - **phoneme**：domain Note 无此字段，round-trip 走 `Note.metadata["phoneme"]`。
-  - **color / ui_state**：存于 `Track.metadata` 的 `"color"` / `"ui_state"` 键。
-  - **type**：atom（`:synth` / `:external_audio`）显式映射为字符串（禁反向 `String.to_atom`）。
-  - **tempo**：`Project.tempo_map` 源事件列表抽 `%{tick, bpm}`；tpqn 恒 480。
+  - **轨道二元组**：音符/时序真相在 `project.workspace` 的 `Coconut.Edit.Track`
+    （`{id, name, module}`），混音/UI 状态在 `project.tracks_meta` 的
+    `EquinoxDomain.Score.TrackMeta`（`gain/pan/mute/solo/ui_state/metadata`）。
+    二者按 `track_id` 在此会合。
+  - **窗口即 segment**：`Track.slice/3` 的瞬态 `EquinoxDomain.Windowing.Window`
+    被仿真为 TS 的 `SegmentData`：id 为 `"w<start_tick>"`（见 `window_id/1`），
+    `offset_tick` 取窗口起点，窗口内音符转为**窗口相对** tick（入方向经
+    `ui_note_to_attrs/2` 还原）。
+  - **音符**：coconut Note 不带时序，span `{start, end}` 来自 `Track.notes/2`
+    视图项；`duration_tick = end - start`。
+  - **key**：domain 侧是 `Coconut.Score.Key.TwelveET`；出方向 `Key.to_midi/1`
+    （float 取整），入方向 `TwelveET.new/1`。
+  - **phoneme**：coconut Note 无此字段，round-trip 走 `Note.metadata["phoneme"]`。
+  - **color**：存于 `TrackMeta.metadata` 的 `"color"` 键；`ui_state` 直取
+    `TrackMeta.ui_state`。
+  - **type**：由 coconut Track 的 `module` 推导（Vocal → `"synth"`）。
+  - **tempo**：tempo 是一条全局轨（`workspace.globals["global:tempo"]`，
+    `Coconut.Edit.Track.Tempo`），经 `tempo_events/1` 投影为 `%{tick, bpm}`
+    列表；tpqn 恒 480。
   """
 
+  alias Coconut.Edit.Track, as: CoconutTrack
+  alias Coconut.Edit.Workspace
+  alias Coconut.Score.Key
+  alias Coconut.Score.Key.TwelveET
   alias Equinox.Kernel.Graph
-  alias EquinoxDomain.Score.{Project, Track}
-  alias Zongzi.Score.Key
-  alias Zongzi.Score.Key.TwelveET
+  alias EquinoxDomain.Score.{Project, Track, TrackMeta}
 
   @ticks_per_beat 480
+  @tempo_global_id "global:tempo"
 
   # ---- 出方向：Session 视图 → 前端 ----
 
@@ -32,13 +45,13 @@ defmodule EquinoxUIShell.ProjectPresenter do
   def to_frontend(%{project: %Project{} = project, graphs: graphs}) do
     %{
       id: project.id,
-      name: project.name,
+      name: project_name(project),
       version: 1,
-      tempo_map: tempo_points(project.tempo_map),
+      tempo_map: tempo_points(project),
       ticks_per_beat: @ticks_per_beat,
       tracks:
-        Map.new(project.tracks, fn {track_id, track} ->
-          {track_id, track_to_frontend(track, graphs)}
+        Map.new(project.workspace.tracks, fn {track_id, track} ->
+          {track_id, track_to_frontend(project, track, graphs)}
         end),
       arranger_graph: nil,
       extra: %{}
@@ -62,15 +75,19 @@ defmodule EquinoxUIShell.ProjectPresenter do
 
   def parse_window_id(other), do: {:error, {:invalid_window_id, other}}
 
-  # ---- 入方向：前端音符 → domain insert attrs ----
+  # ---- 入方向：前端音符 → replace_window_notes attrs ----
 
   @doc """
-  把前端 `replace_segment_notes` 的单个音符 map 转为 `Track.insert_note/2` 的 attrs。
+  把前端 `replace_segment_notes` 的单个音符 map 转为
+  `Equinox.Session.Server.replace_window_notes/4` 的单音符 attrs。
 
   - `start_tick` 由窗口相对转为绝对（加 `window_start`）；
   - `key`（midi 数，兼容前端别名 `pitch`）经 `TwelveET.new/1` 转为 Key struct；
-  - `phoneme` 写入 `metadata["phoneme"]`；`extra` 字段忽略（domain Note 无此字段）；
-  - `id` 非空时透传（replace 语义下窗口音符已先整体删除，id 重用无冲突）。
+  - `phoneme` 平铺进 attrs（kernel 侧经 coconut `Note.from_element/2` 落入
+    `Note.metadata["phoneme"]`）；
+  - `extra` 字段忽略（domain Note 无此字段）；
+  - `id` 不透传：整窗替换走 `Coconut.Edit.Diff` 反推 op 批次，音符 id 由
+    kernel 重新铸造，内容不变的音符自动保留原 id（锚其上的 patch 随之存活）。
   """
   @spec ui_note_to_attrs(map(), non_neg_integer()) :: {:ok, map()} | {:error, term()}
   def ui_note_to_attrs(note, window_start) when is_map(note) and is_integer(window_start) do
@@ -83,11 +100,10 @@ defmodule EquinoxUIShell.ProjectPresenter do
           start_tick: window_start + Map.get(note, "start_tick", 0),
           duration_tick: Map.get(note, "duration_tick", Map.get(note, "length_tick", 480)),
           key: key,
-          lyric: Map.get(note, "lyric", "la"),
-          metadata: note_metadata(note)
+          lyric: Map.get(note, "lyric", "la")
         }
 
-        {:ok, maybe_put_id(attrs, Map.get(note, "id"))}
+        {:ok, maybe_put_phoneme(attrs, Map.get(note, "phoneme"))}
       end
     else
       {:error, {:invalid_key, key_midi}}
@@ -96,25 +112,40 @@ defmodule EquinoxUIShell.ProjectPresenter do
 
   # ---- 内部 ----
 
-  defp track_to_frontend(%Track{} = track, graphs) do
+  # 工程名存于顶层 metadata（kernel 夹具约定 atom 键 :name；读档兼容字符串键）
+  defp project_name(%Project{} = project) do
+    Map.get(project.metadata, :name, Map.get(project.metadata, "name"))
+  end
+
+  defp track_to_frontend(%Project{} = project, %CoconutTrack{} = track, graphs) do
+    meta = track_meta_or_default(project, track.id)
+
     %{
       id: track.id,
-      project_id: track.project_id,
-      type: track_type_to_string(track.type),
-      name: track.name,
+      project_id: project.id,
+      type: track_type_to_string(track.module),
+      name: track.name || "",
       topology_ref: nil,
       synth_graph: graphs |> Map.get(track.id) |> graph_to_frontend(),
-      color: Map.get(track.metadata, "color", ""),
-      gain: track.gain,
-      pan: track.pan,
-      mute: track.mute,
-      solo: track.solo,
+      color: Map.get(meta.metadata, "color", ""),
+      gain: meta.gain,
+      pan: meta.pan,
+      mute: meta.mute,
+      solo: meta.solo,
       insert_fx_chain: [],
-      ui_state: Map.get(track.metadata, "ui_state", %{}),
+      ui_state: meta.ui_state,
       parameters: %{},
-      segments: windows_to_segments(track),
+      segments: windows_to_segments(project, track.id),
       extra: %{}
     }
+  end
+
+  # 侧表缺项（如直接构造 workspace 未经 Server.add_track）按缺省 meta 投影
+  defp track_meta_or_default(%Project{} = project, track_id) do
+    case Project.track_meta(project, track_id) do
+      {:ok, meta} -> meta
+      {:error, _} -> %TrackMeta{}
+    end
   end
 
   # Graph 的 edges 是 MapSet（Jason 无对应 Encoder），摊平为 list；
@@ -125,67 +156,79 @@ defmodule EquinoxUIShell.ProjectPresenter do
     do: %{nodes: graph.nodes, edges: MapSet.to_list(graph.edges)}
 
   # 窗口投影失败按无 segment 处理，不让单轨拖垮整个工程投影
-  defp windows_to_segments(%Track{} = track) do
-    case Track.slice(track) do
-      {:ok, windows} ->
-        Map.new(windows, fn window ->
-          segment_id = window_id(window.start_tick)
+  defp windows_to_segments(%Project{} = project, track_id) do
+    with {:ok, windows} <- Track.slice(project, track_id),
+         {:ok, entries} <- Track.notes(project, track_id) do
+      notes_by_id = Map.new(entries, fn {id, note, span} -> {id, {note, span}} end)
 
-          {segment_id,
-           %{
-             id: segment_id,
-             track_id: track.id,
-             name: segment_id,
-             offset_tick: window.start_tick,
-             notes: window_notes(track, window),
-             curves: %{},
-             synth_override: nil,
-             extra: %{}
-           }}
+      Map.new(windows, fn window ->
+        segment_id = window_id(window.start_tick)
+
+        {segment_id,
+         %{
+           id: segment_id,
+           track_id: track_id,
+           name: segment_id,
+           offset_tick: window.start_tick,
+           notes: window_notes(notes_by_id, window),
+           curves: %{},
+           synth_override: nil,
+           extra: %{}
+         }}
+      end)
+    else
+      {:error, _} -> %{}
+    end
+  end
+
+  # 窗口内音符按 window.note_ids 顺序投影为窗口相对 tick；
+  # 视图中已消亡的 id（理论上不出现）跳过
+  defp window_notes(notes_by_id, window) do
+    Enum.flat_map(window.note_ids, fn note_id ->
+      case Map.fetch(notes_by_id, note_id) do
+        {:ok, {note, {start_tick, end_tick}}} ->
+          [
+            %{
+              id: note.id,
+              start_tick: start_tick - window.start_tick,
+              duration_tick: end_tick - start_tick,
+              key: note.key |> Key.to_midi() |> trunc(),
+              lyric: note.lyric,
+              phoneme: Map.get(note.metadata, "phoneme"),
+              extra: %{}
+            }
+          ]
+
+        :error ->
+          []
+      end
+    end)
+  end
+
+  # tempo 全局轨事件 → `%{tick, bpm}`；`tempo_events/1` 已把 milli-bpm
+  # 反归一化为普通 bpm；tempo 轨缺失/为空时投影为空列表
+  defp tempo_points(%Project{} = project) do
+    case Workspace.fetch_track(project.workspace, @tempo_global_id) do
+      {:ok, tempo_track} ->
+        tempo_track
+        |> Coconut.Edit.Track.Tempo.tempo_events()
+        |> Enum.flat_map(fn
+          {tick, %{context: %{bpm: bpm}}} -> [%{tick: tick, bpm: bpm}]
+          _other -> []
         end)
 
       {:error, _} ->
-        %{}
+        []
     end
   end
 
-  defp window_notes(%Track{} = track, window) do
-    Enum.map(window.seq_ids, fn seq ->
-      note = Map.fetch!(track.notes_by_seq, seq)
+  # coconut Track 无 type 字段，由 module 推导前端 type 字符串
+  defp track_type_to_string(Coconut.Edit.Track.Vocal), do: "synth"
+  defp track_type_to_string(Coconut.Edit.Track.Audio), do: "external_audio"
 
-      %{
-        id: note.id,
-        start_tick: note.start_tick - window.start_tick,
-        duration_tick: note.duration_tick,
-        key: note.key |> Key.to_midi() |> trunc(),
-        lyric: note.lyric,
-        phoneme: Map.get(note.metadata, "phoneme"),
-        extra: %{}
-      }
-    end)
-  end
+  defp track_type_to_string(module) when is_atom(module),
+    do: module |> Module.split() |> List.last() |> Macro.underscore()
 
-  # tempo 源事件 `{tick, %Tempo.Event{context}}` → `%{tick, bpm}`；
-  # Step 取 :bpm、Linear 取 :bpm_start，无法识别的事件跳过
-  defp tempo_points(events) do
-    Enum.flat_map(events, fn
-      {tick, %{context: %{bpm: bpm}}} -> [%{tick: tick, bpm: bpm}]
-      {tick, %{context: %{bpm_start: bpm}}} -> [%{tick: tick, bpm: bpm}]
-      _other -> []
-    end)
-  end
-
-  defp track_type_to_string(:synth), do: "synth"
-  defp track_type_to_string(:external_audio), do: "external_audio"
-  defp track_type_to_string(other) when is_atom(other), do: Atom.to_string(other)
-
-  defp note_metadata(note) do
-    case Map.get(note, "phoneme") do
-      nil -> %{}
-      phoneme -> %{"phoneme" => phoneme}
-    end
-  end
-
-  defp maybe_put_id(attrs, nil), do: attrs
-  defp maybe_put_id(attrs, id), do: Map.put(attrs, :id, id)
+  defp maybe_put_phoneme(attrs, nil), do: attrs
+  defp maybe_put_phoneme(attrs, phoneme), do: Map.put(attrs, :phoneme, phoneme)
 end

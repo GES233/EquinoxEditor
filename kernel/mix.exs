@@ -38,7 +38,8 @@ defmodule EquinoxKernel.MixProject do
     [
       ## 领域模型
       {:equinox_domain, path: "../domain"},
-      {:zongzi, path: "../../zongzi"},
+      {:coconut, path: "../../coconut"},
+      {:tamale, path: "../../tamale", override: true},
       ## Orchid 生态
       {:orchid, "~> 0.6"},
       {:orchid_symbiont, "~> 0.2"},
