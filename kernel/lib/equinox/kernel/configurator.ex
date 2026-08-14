@@ -7,9 +7,10 @@ defmodule Equinox.Kernel.Configurator do
   alias Equinox.Kernel.Graph
   alias EquinoxDomain.Command.RenderRequest
 
-  @typedoc "通道规格：`projection` 以窗口 RenderRequest 求通道投影；`target` 为 PortRef 直取，或 artifact → [{PortRef, value}] 的一元 fan-out 函数。"
+  @typedoc "通道规格：`projection` 以窗口 RenderRequest + 单条 patch 求该 patch 锚区的新鲜投影（canonical term，作 `Tamale.Patch.resolve/2` 的 digest 输入）；`target` 为 PortRef 直取，或 payload → [{PortRef, value}] 的一元 fan-out 函数。"
   @type channel_spec :: %{
-          projection: (RenderRequest.t() -> {:ok, term()} | {:error, term()}),
+          projection: (RenderRequest.t(), Coconut.Edit.Patch.t() ->
+                         {:ok, term()} | {:error, term()}),
           target: Graph.PortRef.t() | (term() -> [{Graph.PortRef.t(), term()}])
         }
 

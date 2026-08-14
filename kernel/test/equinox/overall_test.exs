@@ -1,39 +1,29 @@
 defmodule Equinox.OverallTest do
   use ExUnit.Case, async: false
 
+  alias Coconut.Edit.{History, Operations.InsertNote}
+  alias Coconut.Score.Key.TwelveET
+  alias Coconut.Util.ID
   alias Equinox.Kernel.{Blackboard, Graph, StepRegistry}
   alias Equinox.Session
   alias Equinox.Session.Server
-  alias EquinoxDomain.Port.Declarations.PhonemeTiming
+  alias EquinoxDomain.Port.Channels.PhonemeTiming
   alias EquinoxDomain.Score.{Project, Track}
-  alias Zongzi.Score.Key.TwelveET
-  alias Zongzi.Score.Tempo
-  alias Zongzi.Util.ID
 
   test "overall kernel flow covers registry, server editing APIs, and session lifecycle" do
     assert {:ok, phonemizer_spec} = StepRegistry.lookup(:phonemizer)
     assert phonemizer_spec.inputs == [:notes]
 
-    # domain 夹具：工程（带 120bpm step tempo）+ 一轨 + 一个音符（全部经 domain API 构造）
+    # domain 夹具：工程（tempo 轨带 120bpm 事件）+ 一轨 + 一个音符
+    # （结构写经 coconut History/Operations，与 kernel 写路径同源）
+    project = build_project("Overall Flow")
+    {:ok, project, _track} = Project.add_track(project, id: ID.generate_id("Track_"))
+    [track_id] = Map.keys(project.tracks_meta)
+
     {:ok, project} =
-      Project.new(
-        id: ID.generate_id("Project_"),
-        name: "Overall Flow",
-        tempo_map: [step_tempo_event(120)]
-      )
-
-    {:ok, track} = Track.new(id: ID.generate_id("Track_"), name: "Lead")
-
-    {:ok, track, _note} =
-      Track.insert_note(track, %{
-        start_tick: 0,
-        duration_tick: 480,
-        key: twelve_et(60),
-        lyric: "la"
-      })
-
-    {:ok, project} = Project.add_track(project, track)
-    track_id = track.id
+      insert_notes(project, [
+        {track_id, ID.generate_id("Note_"), :head, {0, 480}, %{pitch: twelve_et(60), lyric: "la"}}
+      ])
 
     session_id = "overall-session"
     assert {:error, :session_not_found} = Session.resolve(session_id)
@@ -55,17 +45,16 @@ defmodule Equinox.OverallTest do
 
     # ---- get_view：初始视图 ----
     view = Server.get_view(server)
-    assert view.project.name == "Overall Flow"
+    assert view.project.metadata.name == "Overall Flow"
     assert view.graphs == %{}
-    assert {:ok, _track} = Project.get_track(view.project, track_id)
+    assert {:ok, _track} = Project.fetch_track(view.project, track_id)
 
-    # ---- add_track：缺 :id 自动补；project_id 对齐；重复 id 报错 ----
+    # ---- add_track：缺 :id 自动补；重复 id 报错 ----
     assert {:ok, added} = Server.add_track(server, %{name: "Backing"})
     assert is_binary(added.id)
-    assert added.project_id == view.project.id
     assert added.name == "Backing"
 
-    assert {:error, {:already_exists, _}} = Server.add_track(server, %{id: added.id})
+    assert {:error, {:track_id_taken, _}} = Server.add_track(server, %{id: added.id})
 
     # ---- replace_window_notes：对既有 window（start 0）整体替换 ----
     assert {:ok, updated} =
@@ -74,98 +63,91 @@ defmodule Equinox.OverallTest do
                %{start_tick: 240, duration_tick: 480, key: twelve_et(62), lyric: "ha"}
              ])
 
-    active = Track.active_notes(updated)
-    assert length(active) == 2
-    assert Enum.any?(active, fn {_seq, note} -> note.lyric == "ha" end)
+    assert length(Coconut.Edit.Track.view(updated)) == 2
 
     # 窗口不存在 → 显式报错
     assert {:error, {:window_not_found, 9999}} =
              Server.replace_window_notes(server, track_id, 9999, [])
 
-    # ---- update_track_mix：只取混音字段 ----
+    # ---- update_track_mix：只取混音字段（侧表写） ----
     assert {:ok, mixed} =
              Server.update_track_mix(server, track_id, gain: 0.75, pan: -0.2, bogus: 1)
 
     assert mixed.gain == 0.75
     assert mixed.pan == -0.2
 
-    # ---- update_track_ui_state：写入 metadata["ui_state"] ----
+    # ---- update_track_ui_state：写入 TrackMeta.ui_state（侧表写） ----
     assert {:ok, ui} = Server.update_track_ui_state(server, track_id, :focused_window, 0)
-    assert ui.metadata["ui_state"] == %{focused_window: 0}
+    assert ui.ui_state == %{focused_window: 0}
 
     assert {:ok, ui} = Server.update_track_ui_state(server, track_id, :zoom, 1.5)
-    assert ui.metadata["ui_state"] == %{focused_window: 0, zoom: 1.5}
+    assert ui.ui_state == %{focused_window: 0, zoom: 1.5}
 
     # ---- update_synth_graph：写入 Session 侧 graphs ----
     graph = Graph.new()
     assert :ok = Server.update_synth_graph(server, track_id, graph)
 
-    assert {:error, {:track_not_found, _}} =
+    assert {:error, {:unknown_track, _}} =
              Server.update_synth_graph(server, "Track_missing", graph)
 
-    # ---- remove_track：连带清 graphs；重复移除报错 ----
+    # ---- remove_track：连带清 graphs 与侧表；重复移除报错 ----
     assert :ok = Server.update_synth_graph(server, added.id, graph)
     assert :ok = Server.remove_track(server, added.id)
-    assert {:error, {:track_not_found, _}} = Server.remove_track(server, added.id)
+    assert {:error, {:unknown_track, _}} = Server.remove_track(server, added.id)
 
     # ---- get_view：汇总断言 ----
     view = Server.get_view(server)
     assert view.graphs == %{track_id => graph}
-    assert {:ok, stored} = Project.get_track(view.project, track_id)
-    assert stored.gain == 0.75
-    assert stored.pan == -0.2
-    assert stored.metadata["ui_state"] == %{focused_window: 0, zoom: 1.5}
-    assert length(Track.active_notes(stored)) == 2
+    assert {:ok, stored_meta} = Project.track_meta(view.project, track_id)
+    assert stored_meta.gain == 0.75
+    assert stored_meta.pan == -0.2
+    assert stored_meta.ui_state == %{focused_window: 0, zoom: 1.5}
+    assert {:ok, notes} = Track.notes(view.project, track_id)
+    assert length(notes) == 2
+    assert Enum.any?(notes, fn {_id, note, _span} -> note.lyric == "ha" end)
 
-    # ---- adopt_intervention：采纳引擎产出为轨道干预 ----
-    [{first_seq, _first_note} | _] = Track.active_notes(stored)
+    # ---- adopt_intervention：采纳引擎产出为轨道 patch ----
+    [{first_id, _first_note, _span} | _] = notes
 
-    projection = %{"ph_a" => [0.0, 0.12], "ph_b" => [0.12, 0.24]}
+    payload = %{
+      deltas: [%{identity: "ph_a", onset_delta_ms: 10, duration_delta_ms: 20}]
+    }
 
-    assert {:ok, adopted_track, intervention} =
+    assert {:ok, adopted_track, patch} =
              Server.adopt_intervention(
                server,
                track_id,
-               [
-                 channel: PhonemeTiming.channel(),
-                 declaration: PhonemeTiming,
-                 seq_id: first_seq,
-                 payload: %{
-                   range: [0, 240],
-                   deltas: [%{identity: "ph_a", onset_delta_ms: 10, duration_delta_ms: 20}]
-                 }
-               ],
-               projection
+               channel: PhonemeTiming,
+               seq_id: first_id,
+               payload: payload
              )
 
-    assert [^intervention] = adopted_track.interventions
-    assert String.starts_with?(intervention.id, "iv_")
-    assert intervention.channel == PhonemeTiming.channel()
-    assert intervention.snapshot == %{"ph_a" => [0.0, 0.12]}
+    assert [^patch] = adopted_track.patches
+    assert String.starts_with?(patch.id, "Patch_")
+    assert patch.channel == PhonemeTiming.channel()
+    assert patch.patch.payload == payload
+    assert is_binary(patch.patch.base_digest)
 
-    # Server 状态里的 track 也已写入同一条干预
-    assert {:ok, stored} = Project.get_track(Server.get_view(server).project, track_id)
-    assert [^intervention] = stored.interventions
+    # Server 状态里的 track 也已写入同一条 patch
+    assert {:ok, stored} = Project.fetch_track(Server.get_view(server).project, track_id)
+    assert [^patch] = stored.patches
 
-    # seq_id 非 active → 显式报错
-    assert {:error, :not_active} =
+    # seq_id 非存活音符 → 投影失败显式报错
+    assert {:error, {:note_not_found, _}} =
              Server.adopt_intervention(
                server,
                track_id,
-               [
-                 channel: PhonemeTiming.channel(),
-                 declaration: PhonemeTiming,
-                 seq_id: 999_999,
-                 payload: %{range: [0, 240], deltas: []}
-               ],
-               projection
+               channel: PhonemeTiming,
+               seq_id: "Note_missing",
+               payload: %{deltas: []}
              )
 
     # ---- dispatch 冒烟：cast 驱动完整编译-渲染链路 ----
-    # 异步调度，空 Graph 可能瞬间完成 —— 不等中间态，直接校验最终结果
+    # 轨上有一条 patch 但未注入 channel spec → check 阶段一票否决（渲染任务
+    # 报错收尾，黑板不被污染）；本断言只关心任务收尾与编译缓存
     assert :ok = Server.dispatch(server, [])
 
-    # 等渲染任务收尾：黑板合并、render_tasks 清空、编译缓存按轨填充
+    # 等渲染任务收尾：render_tasks 清空、编译缓存按轨填充
     Process.sleep(300)
     state = :sys.get_state(server)
     assert state.render_tasks == nil
@@ -185,8 +167,43 @@ defmodule Equinox.OverallTest do
     assert {:error, :session_not_found} = Oi.Runtime.Session.resolve(session_id)
   end
 
-  # zongzi tempo 源事件：`{tick, %Tempo.Event{module, context}}`
-  defp step_tempo_event(bpm), do: {0, %Tempo.Event{module: Tempo.Step, context: %{bpm: bpm}}}
+  # 工程夹具：tempo 轨一个 120bpm 事件（经 History + InsertNote 写入）
+  defp build_project(name) do
+    {:ok, project} = Project.new(id: ID.generate_id("Project_"), metadata: %{name: name})
+
+    {:ok, project} =
+      insert_notes(project, [
+        {"global:tempo", ID.generate_id("Tempo_"), :head, {0, 480}, %{bpm: 120}}
+      ])
+
+    project
+  end
+
+  # 经 coconut History 批量插入元素（InsertNote 手势逐条 apply），
+  # 返回 workspace 已推进的 project
+  defp insert_notes(%Project{} = project, inserts) do
+    hist = History.new(project.workspace)
+
+    Enum.reduce_while(inserts, {:ok, hist}, fn {track_id, note_id, after_id, span, attrs},
+                                               {:ok, hist} ->
+      req = %InsertNote{
+        track_id: track_id,
+        note_id: note_id,
+        after_id: after_id,
+        span: span,
+        attrs: attrs
+      }
+
+      case History.apply(hist, req) do
+        {:ok, hist} -> {:cont, {:ok, hist}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, hist} -> {:ok, %{project | workspace: History.current(hist).workspace}}
+      {:error, _} = err -> err
+    end
+  end
 
   defp twelve_et(midi) do
     {:ok, key} = TwelveET.new(midi)

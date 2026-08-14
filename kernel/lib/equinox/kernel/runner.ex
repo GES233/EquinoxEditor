@@ -2,12 +2,13 @@ defmodule Equinox.Kernel.Runner do
   @moduledoc """
   Dispatch units 的执行器（`Oi.execute/2` 的薄封装），两段式：先 check 后 render。
 
-  check 阶段对全部 unit 的存活干预（`RenderRequest.interventions`）按 channel
-  分组，经 Configurator 注入的 channel spec 求投影并
-  `Zongzi.Intervention.Declaration.resolve_within/2` 批量 resolve；冲突 / 未知
-  通道 / 投影失败全量聚合为 `{:error, {:check_failed, [entry]}}`，且一个窗口
-  都不执行。全部通过才把 resolved artifact 折叠为
-  `%{PortRef => %{input: value}}` 干预规格，进入 render 阶段。
+  check 阶段对全部 unit 的存活 patch（`RenderRequest.patches`，写时 transport
+  已由 workspace 完成）按 channel 分组，经 Configurator 注入的 channel spec
+  逐 patch 求新鲜投影并 `Tamale.Patch.resolve/2` 判定（digest 零容差比对，
+  与 `Coconut.Render.Resolve` 同语义）；冲突 / 未知通道 / 投影失败全量聚合为
+  `{:error, {:check_failed, [entry]}}`，且一个窗口都不执行。全部通过才把
+  resolved payload 折叠为 `%{PortRef => %{input: value}}` 干预规格，进入
+  render 阶段。
 
   输入装配沿用旧 Engine 语义：Blackboard 优先、干预兜底、悬空输入给 `:void` Param；
   跨 bundle 的内部键由 Oi 在执行计划内自动流转，不参与装配。
@@ -18,7 +19,6 @@ defmodule Equinox.Kernel.Runner do
 
   alias Equinox.Kernel.{Blackboard, Compiler, Configurator, Graph}
   alias Equinox.Kernel.Graph.PortRef
-  alias Zongzi.Intervention.Declaration
 
   @typedoc "单个窗口的执行单元（即 Compiler 的编译产物）：第三元素是窗口 RenderRequest，check 通过后派生 `Compiler.interventions_map()` 喂输入装配。"
   @type unit :: Compiler.compiled_unit()
@@ -26,7 +26,7 @@ defmodule Equinox.Kernel.Runner do
   @typedoc "一次渲染 dispatch：会话标识 + 全部窗口的执行单元。"
   @type dispatch :: %{session_id: atom() | String.t(), units: [unit()]}
 
-  @typedoc "check 失败条目；`:conflict` 另带 `:intervention_id` 字段。"
+  @typedoc "check 失败条目；`:conflict` 另带 `:intervention_id`（patch id）字段。"
   @type check_entry :: %{
           optional(:intervention_id) => term(),
           unit_id: Compiler.unit_id(),
@@ -38,8 +38,8 @@ defmodule Equinox.Kernel.Runner do
   @doc """
   执行全部窗口的 dispatch units，把结果合并进 Blackboard。
 
-  先跑 check（全部 unit 的干预 resolve，见模块文档）：任一失败全量聚合
-  为 `{:error, {:check_failed, [entry]}}` 且一个窗口都不执行；空干预快路径
+  先跑 check（全部 unit 的 patch resolve，见模块文档）：任一失败全量聚合
+  为 `{:error, {:check_failed, [entry]}}` 且一个窗口都不执行；空 patch 快路径
   零成本。check 通过后跨窗口以 `Task.async_stream` 扇出（首个错误中断）；
   单个窗口内部的 stage 编排与并发由 `Oi.execute/2` 负责。窗口之间无参数共享
   （Blackboard 按 `{unit_id, io_key}` 寻址且仅同单元读取，unit id 为
@@ -76,11 +76,12 @@ defmodule Equinox.Kernel.Runner do
     end
   end
 
-  # ---- check 阶段：干预 resolve（先于任何执行） ----
+  # ---- check 阶段：patch resolve（先于任何执行） ----
 
-  # 逐 unit 把存活干预按 channel 分组 resolve；错误条目全量聚合（不放过任何一个
-  # unit），全部通过才换形为 {unit_id, graph, interventions_map, compiled}。
-  # 空干预快路径零成本：group_by 得空 map，reduce 直接返回 {[], %{}}。
+  # 逐 unit 把存活 patch 按 channel 分组 resolve；错误条目全量聚合（不放过
+  # 任何一个 unit），全部通过才换形为 {unit_id, graph, interventions_map,
+  # compiled}。空 patch 快路径零成本：group_by 得空 map，reduce 直接返回
+  # {[], %{}}。
   @spec resolve_units([unit()], %{atom() => Configurator.channel_spec()}) ::
           {:ok, [{Compiler.unit_id(), Graph.t(), Compiler.interventions_map(), Oi.Compiled.t()}]}
           | {:error, {:check_failed, [check_entry()]}}
@@ -98,78 +99,82 @@ defmodule Equinox.Kernel.Runner do
   end
 
   defp resolve_unit(unit_id, request, channels) do
-    request.interventions
+    request.patches
     |> Enum.group_by(& &1.channel)
-    |> Enum.reduce({[], %{}}, fn {channel, interventions}, {entries_acc, data_acc} ->
-      {entries, data} = resolve_channel(unit_id, channel, interventions, request, channels)
+    |> Enum.reduce({[], %{}}, fn {channel, patches}, {entries_acc, data_acc} ->
+      {entries, data} = resolve_channel(unit_id, channel, patches, request, channels)
       {entries_acc ++ entries, Map.merge(data_acc, data)}
     end)
   end
 
-  # 单 channel：无 spec → :unknown_channel；projection 失败 → :projection_failed；
-  # resolve 冲突 → :conflict（带 intervention_id）；全部 ok 则折叠为干预规格
-  defp resolve_channel(unit_id, channel, interventions, request, channels) do
-    with {:ok, spec} <- fetch_channel_spec(channels, channel, unit_id),
-         {:ok, projection} <- run_projection(spec, request, channel, unit_id) do
-      case Declaration.resolve_within(interventions, projection) do
-        %{ok: resolved, conflicts: []} ->
-          {[], fold_resolved(resolved, spec.target)}
+  # 单 channel：无 spec → :unknown_channel（每 patch 一条）；逐 patch 求新鲜
+  # 投影（projection 失败 → :projection_failed）后 `Tamale.Patch.resolve/2`
+  # 判定（digest 漂移 → :conflict，带 patch id）；全部 ok 则把 payload 经
+  # spec.target 折叠为干预规格
+  defp resolve_channel(unit_id, channel, patches, request, channels) do
+    case Map.fetch(channels, channel) do
+      :error ->
+        entries =
+          Enum.map(patches, fn patch ->
+            %{
+              unit_id: unit_id,
+              channel: channel,
+              kind: :unknown_channel,
+              reason: :no_channel_spec,
+              intervention_id: patch.id
+            }
+          end)
 
-        %{conflicts: conflicts} ->
-          entries =
-            Enum.map(conflicts, fn {intervention, reason} ->
-              %{
+        {entries, %{}}
+
+      {:ok, spec} ->
+        Enum.reduce(patches, {[], %{}}, fn patch, {entries_acc, data_acc} ->
+          case resolve_patch(spec, request, patch) do
+            {:ok, payload} ->
+              {entries_acc, Map.merge(data_acc, fold_resolved(payload, spec.target))}
+
+            {:error, kind, reason} ->
+              entry = %{
                 unit_id: unit_id,
                 channel: channel,
-                kind: :conflict,
+                kind: kind,
                 reason: reason,
-                intervention_id: intervention.id
+                intervention_id: patch.id
               }
-            end)
 
-          {entries, %{}}
-      end
+              {[entry | entries_acc], data_acc}
+          end
+        end)
+        |> then(fn {entries, data} -> {Enum.reverse(entries), data} end)
+    end
+  end
+
+  # 逐 patch resolve：新鲜投影（digest 输入的 canonical 归一化是 channel /
+  # Host 侧职责）→ digest 零容差比对。`Tamale.Patch.resolve/2` 的
+  # `{:error, _}`（投影非 canonical）归入 :projection_failed
+  defp resolve_patch(spec, request, patch) do
+    with {:ok, fresh_base} <- spec.projection.(request, patch),
+         {:ok, payload} <- Tamale.Patch.resolve(patch.patch, fresh_base) do
+      {:ok, payload}
     else
-      {:error, entry} -> {[entry], %{}}
+      {:conflict, reason} -> {:error, :conflict, reason}
+      {:error, reason} -> {:error, :projection_failed, reason}
+      other -> {:error, :projection_failed, other}
     end
   end
 
-  defp fetch_channel_spec(channels, channel, unit_id) do
-    case Map.fetch(channels, channel) do
-      {:ok, spec} ->
-        {:ok, spec}
-
-      :error ->
-        {:error,
-         %{unit_id: unit_id, channel: channel, kind: :unknown_channel, reason: :no_channel_spec}}
-    end
+  # resolved payload 经 channel spec 的 target 绑定端口，折叠为 assemble_data
+  # 识别的 %{PortRef => %{input: value}} 形状：PortRef 直取，或一元函数
+  # fan-out；同端口后写覆盖先写（与 `Coconut.Render.Resolve` 同语义）
+  defp fold_resolved(payload, target) do
+    target
+    |> bind_payload(payload)
+    |> Map.new(fn {port_ref, value} -> {port_ref, %{input: value}} end)
   end
 
-  defp run_projection(spec, request, channel, unit_id) do
-    case spec.projection.(request) do
-      {:ok, projection} ->
-        {:ok, projection}
+  defp bind_payload(target, payload) when is_function(target, 1), do: target.(payload)
 
-      {:error, reason} ->
-        {:error, %{unit_id: unit_id, channel: channel, kind: :projection_failed, reason: reason}}
-    end
-  end
-
-  # resolved artifact 经 channel spec 的 target 绑定端口，折叠为 assemble_data
-  # 识别的 %{PortRef => %{input: value}} 形状：PortRef 直取，或一元函数 fan-out
-  defp fold_resolved(resolved, target) do
-    Enum.reduce(resolved, %{}, fn {_intervention, artifact}, acc ->
-      target
-      |> bind_artifact(artifact)
-      |> Enum.reduce(acc, fn {port_ref, value}, inner ->
-        Map.put(inner, port_ref, %{input: value})
-      end)
-    end)
-  end
-
-  defp bind_artifact(target, artifact) when is_function(target, 1), do: target.(artifact)
-
-  defp bind_artifact({:port, _node, _port} = port_ref, artifact), do: [{port_ref, artifact}]
+  defp bind_payload({:port, _node, _port} = port_ref, payload), do: [{port_ref, payload}]
 
   defp run_unit(session_id, {unit_id, graph, interventions, compiled}, board, conf) do
     data = assemble_data(unit_id, graph, interventions, board)
