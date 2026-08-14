@@ -3,24 +3,30 @@
 本文面向两类开发者，说明 Equinox 中「可编辑数据通道」的契约与生命周期。
 
 - **管线开发方**：给合成 DAG 加节点（声学模型、vocoder、工具 step）。你只跟 Oi 打交道，
-  干预到达你手里时已经是 resolve 之后的纯数据——**不需要读 zongzi**。
+  干预到达你手里时已经是 resolve 之后的纯数据——**不需要读 coconut/tamale**。
 - **通道定义方**：定义一个新的可编辑通道（新曲线参数、音素时序、可编辑 G2P……）。
-  可编辑性 = zongzi 约束，可执行性 = Oi 约束，你需要理解下述三要素。
+  可编辑性 = coconut/tamale 约束，可执行性 = Oi 约束，你需要理解下述三要素。
 
 ## 1. 数据流总览
 
 ```text
-编辑批次结束 → Track.rebase_interventions/1（结构死活，Anchor）
-             → Track.slice/2（干预 scope 并集扩窗）
-             → 每窗口 RenderRequest.from_window/3（scope ∩ 窗口过滤存活干预）
-             → 【check】Runner 按 channel 分组 → projection → Declaration.resolve_within/2
-               ├─ 全部 {:ok, artifact} → 经 target 绑定为 data_interventions → 执行
+编辑批次结束 → History.run(Command)（唯一写入口；写时 transport 判定结构死活，
+               死 patch 进墓地，由 History.take_dead_patches/1 排干上浮）
+             → Score.Track.slice/3（equinox 自实现 Windowing；Metric 锚 patch 的
+               tick 区间作 extra_spans 撑窗）
+             → 每窗口 RenderRequest.from_window/3（锚 ∩ 窗口过滤存活 patch：
+               Ordinal/Relative 按 refs ∩ note_ids，Metric 按 tick 区间相交）
+             → 【check】Runner 按 channel 分组 → projection.(request, patch) →
+               Tamale.Patch.resolve/2（digest 零容差比对）
+               ├─ 全部 {:ok, payload} → 经 target 绑定为 data interventions → 执行
                └─ 任何 conflict/配置错误 → {:error, {:check_failed, entries}}，一个窗口都不执行
              → 【render】Oi.execute/2（Stratum 按输入内容哈希缓存）
 ```
 
-关键性质：**干预只在 resolve 之后、以普通输入数据的形态跨过 zongzi→Oi 边界**。
+关键性质：**干预只在 resolve 之后、以普通输入数据的形态跨过 coconut→Oi 边界**。
 过了界，Stratum 的内容哈希缓存自动获得正确的失效语义。
+
+另：`Coconut.Edit.History` 的 op tree 同时是 undo/redo 的地基（随 coconut 迁移落地）。
 
 ## 2. 管线开发方：你看到的契约
 
@@ -33,24 +39,33 @@
   - 目标端口**有入边**（producer override）：以 `{:override, value}` 覆盖该 producer
     输出的全部下游消费端口。
 
-值的形状由 channel 自己定义（Opaque to Kernel）。例如 phoneme_timing 的 artifact
-是 `%{identity => [onset_sec, duration_sec]}`；曲线通道（第二刀）将是
-`%{param, start_tick, end_tick, stride, samples}`。
+值的形状由 channel 自己定义（Opaque to Kernel）。resolved 产物即 patch payload
+本体——`Tamale.Patch.resolve/2` 只判 digest，通过则原样返回 payload。例如
+phoneme_timing 的 payload 是 `%{deltas: [%{identity, onset_delta_ms, duration_delta_ms}]}`，
+把 delta 施加到引擎新鲜投影上（换算成最终 onset/duration）是消费方（引擎 Hook）
+的职责；曲线通道（第二刀）将是 `%{param, start_tick, end_tick, stride, samples}`。
 
 ## 3. 通道定义方：三要素
 
-### 3.1 Declaration（zongzi 侧，编辑语义）
+### 3.1 Channel（coconut 侧，编辑语义）
 
-实现 `Zongzi.Intervention.Declaration` behaviour，回答三个问题：
+实现 `Coconut.Render.Channel` behaviour，回答两个问题：
 
-- `scope/2` — 干预在 Timeline 上的作用范围（保守上界）。返回 `{tick, tick}` 或
-  `{:seconds, s, e}`（秒基准，Windowing 侧用 tempo_map 归一）。
-- `snapshot/2` — 挂载时从投影提取本干预依赖的原始值（dump-safe plain data）。
-- `resolve/2` — check 时比对 snapshot 与新鲜投影：`{:ok, artifact}`（delta 叠回
-  当前投影）或 `{:conflict, reason}`。
+- `projection/2` — `(Workspace.t(), Patch.t()) -> {:ok, base} | {:error, _}`：
+  产出 patch 锚区的新鲜 base slice（digest 输入）。base 必须是 canonical term
+  （`Tamale.Digest` 拒绝 float / struct / tuple——归一化是 channel 模块自己的职责，
+  参考 `PhonemeTiming.canonicalize/1`）。check 时 `Tamale.Patch.resolve/2` 对它取
+  digest，与挂载时记录的 base_digest **零容差**比对：失配即 conflict（如
+  `:base_changed`），通过则原样返回 payload。
+- `target/0` 或 `target/1`（至少实现其一）— resolved payload 的落点（见 §3.3）。
+  `target/1` 额外收 patch，用于锚派生端口（如 per-note `{:port, note_id, :pitch}`）。
 
-可选 `on_rebase/4`：结构 rebase 存活后自主维护 payload 边界（如刷新 range）。
-参考实现：`EquinoxDomain.Port.Declarations.PhonemeTiming`。
+锚不再需要三元组匹配猜测：挂载时按意图显式构造 `Tamale.Anchor.Ordinal` /
+`Relative` / `Metric`（见 §5）；结构死活由写时 transport 判定，死 patch 进
+History 墓地（graveyard）而不是冲突列表。
+
+参考实现：`EquinoxDomain.Port.Channels.PhonemeTiming`；coconut 自带
+`Coconut.Render.Channels.{Lyric, Duration, Pitch}`。
 
 ### 3.2 projection（Host 侧，投影供给）
 
