@@ -98,8 +98,10 @@ projection 供给的确定性按版本对齐。
   原则；形状与 `adoptables` 的对应关系待第一个真实引擎接入时定。
 - **globals 校验挂点**（已定案 2026-08-15，见下「globals 与 capabilities
   定案」）。
-- **curve channel / RasterCache / Douglas-Peucker**：沿用 Phase 2 deferred 状态，
-  Adapter 的 `timing_spec` 是其消费入口。
+- **curve channel**：已落地（2026-08-15，`EquinoxDomain.Port.Channels.Curve` +
+  kernel `CurveRaster`，`timing_spec` 消费即帧网格光栅化；细节见
+  `docs/channel-development.md` §6）。**RasterCache / Douglas-Peucker** 沿用
+  deferred 状态。
 
 ### globals 与 capabilities 定案（2026-08-15）
 
@@ -233,4 +235,28 @@ channel atom 对齐，但归属和版本纪律完全不同：
 5. **新增一个 channel 的成本清单**（kernel 零代码是红线）：Channel 模块
    （projection canonicalize + target）→ `Port.Preset` 注册 → Adapter
    capabilities 条目 → 测试。参考 `Port.Channels.PhonemeTiming`；曲线通道
-   （第二刀）将验证「新参数零 coconut/tamale 代码」的通用性承诺。
+   已验证「新参数零 coconut/tamale 代码」的通用性承诺（`Port.Channels.Curve`，
+   2026-08-15）。
+
+### MCPAdapter（2026-08-15 落地，Phase 2 收尾）
+
+第一个「真实 adapter」证明：`Equinox.Kernel.MCPAdapter` 经 MCP（stdio）
+从外部引擎进程拉取声库描述符。
+
+- **定位 = 能力声明拉取**。I/O 集中在 `fetch/1`（建连、经典握手、
+  `resources/read`），注册表构建期调用一次；五回调拿到 enriched config
+  后保持纯函数，Runner check 纯性不破。render-over-MCP（tool 调用进
+  Orchid 图）明确不做——Hook 领地。
+- **MCP client 手写**（`Equinox.Kernel.MCP.StdioClient`，~150 行，零新
+  依赖——Jason 已有）：行分隔 JSON-RPC 2.0 over stdio Port，只覆盖
+  initialize / notifications/initialized / resources/list / resources/read /
+  ping。不引 anubis_mcp（LGPL-3.0 + 全家桶体量 + 规范滞后），不引
+  hermes（停更）；若日后演化为全功能 MCP 宿主（tool 调用），再评估换库。
+- **描述符线上约定**：resource（缺省 `vb://descriptor`）的 JSON text，
+  键同 `Voicebank` 字段字符串形；`capabilities.globals` 规则用列表形
+  （`["range", min, max]` / `["enum", [...]]`）；`adoptables` 缺省回落
+  `supported_channels`（显式空表 = 全不可采纳，不回落）。
+- **channel spec 构造**经 kernel 共享 helper
+  `Equinox.Kernel.ChannelSpecs.build/3`（projection 委派 domain channel
+  单一实现 + stamp_base 盖戳；曲线 spec 需 `timing:`）；声库声明了无法
+  构造的 channel → `channels/1`  raise（配置错误响亮失败）。
