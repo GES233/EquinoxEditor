@@ -5,7 +5,7 @@ defmodule Equinox.Kernel.EngineAdapterTest do
   alias Coconut.Score.Key.TwelveET
   alias Coconut.Util.ID
 
-  alias Equinox.Kernel.{Blackboard, Configurator, Graph, Runner, StubEngineAdapter}
+  alias Equinox.Kernel.{Blackboard, Configurator, Graph, Runner, StubEngineAdapter, Voicebank}
   alias Equinox.Kernel.Graph.Node
   alias Equinox.Session
   alias Equinox.Session.{Context, Server}
@@ -339,6 +339,38 @@ defmodule Equinox.Kernel.EngineAdapterTest do
                seq_id: note1,
                payload: payload
              )
+  end
+
+  test "声库描述符 config：engine_key / channels / timing 从 Voicebank 派生，闭环直跑 render" do
+    {:ok, vb} =
+      Voicebank.new(
+        id: "stub_vb",
+        engine: :stub,
+        engine_version: "0.0.1",
+        capabilities: %{supported_channels: [:phoneme_timing]},
+        timing: %{frame_rate: 50, hop: 256}
+      )
+
+    config = %{voicebank: vb}
+
+    # 派生约定：版本戳 / channel 列表 / 帧网格全部来自描述符
+    assert StubEngineAdapter.engine_key(config) == "stub_vb@0.0.1"
+    assert StubEngineAdapter.timing_spec(config) == {:ok, %{frame_rate: 50, hop: 256}}
+
+    assert %{phoneme_timing: %{projection: p, target: {:port, :synth, :phoneme_timing}}} =
+             StubEngineAdapter.channels(config)
+
+    assert is_function(p, 2)
+
+    # 全闭环（render 需会话基础设施）：盖戳对拍走 Voicebank.engine_key
+    assert {:ok, _pid} = Oi.Runtime.Session.ensure_started("engine-adapter-track_vb_cfg")
+
+    on_exit(fn ->
+      _ = Oi.Runtime.Session.stop("engine-adapter-track_vb_cfg")
+    end)
+
+    {dispatch, _mounted} = stamped_dispatch("track_vb_cfg", config)
+    assert {:ok, _board} = Runner.run(dispatch, Blackboard.new())
   end
 
   # ---- 夹具（风格同 OrchidFlowTest） ----

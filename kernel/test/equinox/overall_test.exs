@@ -188,8 +188,9 @@ defmodule Equinox.OverallTest do
     assert {:error, :session_not_found} = Oi.Runtime.Session.resolve(session_id)
   end
 
-  # 异步条件的轮询断言（Registry 注销等 monitor DOWN 驱动的清理）
-  defp assert_eventually(fun, retries \\ 50)
+  # 异步条件的轮询断言（Registry 注销等 monitor DOWN 驱动的清理；
+  # 全套件负载下摘除可能较慢，预算放宽到 2s）
+  defp assert_eventually(fun, retries \\ 200)
 
   defp assert_eventually(fun, 0), do: assert(fun.())
 

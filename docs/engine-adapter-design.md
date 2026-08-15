@@ -139,8 +139,11 @@ projection 供给的确定性按版本对齐。
 > presets/ui_state 同级。落地状态：TrackMeta `voicebank_id` 字段、
 > per-track 解析（`Context.engine_for/2`）、digest 版本戳
 > （`Channel.stamp_base/2` + `AdoptRequest :engine` 选项 +
-> `EngineAdapter.engine_key/1`）已实现；声库描述符 VO 本体属 userland，
-> 下方形状为约定草案。
+> `EngineAdapter.engine_key/1`）已实现；描述符 VO 落地为
+> `Equinox.Kernel.Voicebank`（下方形状的代码化，`engine_key/1` 即
+> `"id@engine_version"` 约定；stub adapter 演示从描述符派生
+> channels/timing/engine_key 的消费方式）。发现 / 注册机制仍属
+> userland 运行时职责。
 
 三层拆分：
 
@@ -161,6 +164,12 @@ projection 供给的确定性按版本对齐。
      timing: %{frame_rate: 100, hop: 512}       # 喂给 timing_spec
    }
    ```
+
+   VO 校验纪律（`Voicebank.new/1`）：三元组 `id` / `engine` /
+   `engine_version` 必填；`capabilities.supported_channels` /
+   `supported_params` 若存在须为 atom 列表；`timing.frame_rate` / `hop`
+   若存在须为正整数；`models` / `dictionary` 对 kernel 不透明（只校验
+   是 map）。dump/load 为 plain map codec（与 Coconut.Pickle 约定一致）。
 
 2. **挂载点：Adapter config**。声库不进 kernel 状态机，作为
    `Configurator.new(engine: {MyAdapter, %{voicebank: vb}})` 的 config 一部分。

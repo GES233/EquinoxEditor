@@ -7,8 +7,16 @@ defmodule Equinox.Kernel.StubEngineAdapter do
 
       %{voicebank_id: "stub_vb", engine_version: "0.0.1", channels: [:phoneme_timing]}
 
-  可选键：`:globals`（校验规则声明，缺省 `%{}`）、`:adoptables`
-  （可采纳 channel 列表，缺省 `[:phoneme_timing]`）。
+  或直接挂声库描述符（约定用法，见 `Equinox.Kernel.Voicebank`）：
+
+      %{voicebank: %Voicebank{id: "stub_vb", engine_version: "0.0.1",
+                              capabilities: %{supported_channels: [:phoneme_timing]},
+                              timing: %{frame_rate: 100, hop: 512}, ...}}
+
+  `:voicebank` 存在时 `engine_key` / channel 列表 / `timing_spec` 一律从
+  描述符派生（描述符优先于平铺键）。可选平铺键：`:globals`（校验规则
+  声明，缺省 `%{}`）、`:adoptables`（可采纳 channel 列表，缺省
+  `[:phoneme_timing]`）。
 
   check 侧 spec projection 演示「单一 canonical 实现」纪律：从 RenderRequest
   取音符 + span，委派 `PhonemeTiming.base_for/2`（与挂载侧 `projection/2`
@@ -17,19 +25,25 @@ defmodule Equinox.Kernel.StubEngineAdapter do
 
   @behaviour Equinox.Kernel.EngineAdapter
 
+  alias Equinox.Kernel.Voicebank
   alias EquinoxDomain.Command.RenderRequest
   alias EquinoxDomain.Port.Channel
   alias EquinoxDomain.Port.Channels.PhonemeTiming
 
   @impl true
-  def engine_key(config), do: "#{config.voicebank_id}@#{config.engine_version}"
+  def engine_key(config) do
+    case Map.get(config, :voicebank) do
+      %Voicebank{} = vb -> Voicebank.engine_key(vb)
+      _flat -> "#{config.voicebank_id}@#{config.engine_version}"
+    end
+  end
 
   @impl true
   def channels(config) do
     key = engine_key(config)
 
     config
-    |> Map.get(:channels, [:phoneme_timing])
+    |> channel_list()
     |> Map.new(fn
       :phoneme_timing ->
         {:phoneme_timing,
@@ -46,8 +60,21 @@ defmodule Equinox.Kernel.StubEngineAdapter do
     end)
   end
 
+  # channel 列表：描述符的 capabilities.supported_channels 优先于平铺 :channels
+  defp channel_list(config) do
+    case Map.get(config, :voicebank) do
+      %Voicebank{capabilities: %{supported_channels: channels}} -> channels
+      _flat -> Map.get(config, :channels, [:phoneme_timing])
+    end
+  end
+
   @impl true
-  def timing_spec(_config), do: {:ok, %{frame_rate: 100, hop: 512}}
+  def timing_spec(config) do
+    case Map.get(config, :voicebank) do
+      %Voicebank{timing: timing} when map_size(timing) > 0 -> {:ok, timing}
+      _flat -> {:ok, %{frame_rate: 100, hop: 512}}
+    end
+  end
 
   @impl true
   def globals(config), do: Map.get(config, :globals, %{})
