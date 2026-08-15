@@ -189,8 +189,8 @@ defmodule Equinox.OverallTest do
   end
 
   # 异步条件的轮询断言（Registry 注销等 monitor DOWN 驱动的清理；
-  # 全套件负载下摘除可能较慢，预算放宽到 2s）
-  defp assert_eventually(fun, retries \\ 200)
+  # 全套件负载下（MCP 子进程测试拖慢调度）摘除可能较慢，预算放宽到 5s）
+  defp assert_eventually(fun, retries \\ 500)
 
   defp assert_eventually(fun, 0), do: assert(fun.())
 

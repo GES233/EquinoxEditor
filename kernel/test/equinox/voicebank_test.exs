@@ -51,6 +51,10 @@ defmodule Equinox.Kernel.VoicebankTest do
       assert {:error, {:invalid_timing, {:hop, 1.5}}} =
                Voicebank.new(base_attrs(%{timing: %{hop: 1.5}}))
 
+      # frame_rate 允许 float（44100/512 ≈ 86.13 的非整数帧率）
+      assert {:ok, vb} = Voicebank.new(base_attrs(%{timing: %{frame_rate: 86.1328125, hop: 512}}))
+      assert vb.timing.frame_rate == 86.1328125
+
       assert {:ok, _vb} =
                Voicebank.new(
                  base_attrs(%{

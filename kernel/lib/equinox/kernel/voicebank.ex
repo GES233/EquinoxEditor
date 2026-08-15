@@ -100,15 +100,25 @@ defmodule Equinox.Kernel.Voicebank do
     end
   end
 
-  # timing 的帧网格键若存在必须是正整数（frame_rate / hop）
+  # timing 的帧网格键若存在须为正数（frame_rate 允许 float——
+  # 44100/512 ≈ 86.13 之类非整数帧率；hop 仍须正整数）
   defp check_timing(timing) do
-    Enum.reduce_while([:frame_rate, :hop], :ok, fn key, :ok ->
-      case Map.get(timing, key) do
-        nil -> {:cont, :ok}
-        n when is_integer(n) and n > 0 -> {:cont, :ok}
-        other -> {:halt, {:error, {:invalid_timing, {key, other}}}}
-      end
-    end)
+    with :ok <- check_timing_key(timing, :frame_rate, &is_number/1),
+         :ok <- check_timing_key(timing, :hop, &is_integer/1) do
+      :ok
+    end
+  end
+
+  defp check_timing_key(timing, key, type_check) do
+    case Map.get(timing, key) do
+      nil ->
+        :ok
+
+      value ->
+        if type_check.(value) and value > 0,
+          do: :ok,
+          else: {:error, {:invalid_timing, {key, value}}}
+    end
   end
 
   @doc "引擎身份键（`\"id@engine_version\"`）——进 digest base 的版本戳约定。"

@@ -90,11 +90,13 @@ defmodule Equinox.Kernel.MCPAdapter do
   def channels(config) do
     voicebank = voicebank!(config)
     key = Voicebank.engine_key(voicebank)
+    # 无帧网格声明（timing 为空表）→ 曲线透传模态（D1）
+    timing = if map_size(voicebank.timing) == 0, do: :none, else: voicebank.timing
 
     voicebank.capabilities
     |> Map.get(:supported_channels, [])
     |> Map.new(fn channel ->
-      case ChannelSpecs.build(channel, key, timing: voicebank.timing) do
+      case ChannelSpecs.build(channel, key, timing: timing) do
         {:ok, spec} ->
           {channel, spec}
 

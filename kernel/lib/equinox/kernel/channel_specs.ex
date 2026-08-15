@@ -17,9 +17,14 @@ defmodule Equinox.Kernel.ChannelSpecs do
   alias EquinoxDomain.Port.Channels.{Curve, PhonemeTiming}
 
   @doc """
-  构造 channel spec。`:curve` 需 `opts[:timing]`（Adapter `timing_spec`
-  的帧网格声明，缺省报 `{:error, :missing_timing}`）；未知 channel 报
-  `{:error, {:unknown_channel, atom}}`。
+  构造 channel spec。`:curve` 需 `opts[:timing]`：
+
+  - `timing: %{frame_rate, hop}` — 帧网格光栅化（`CurveRaster`）；
+  - `timing: :none` — 无帧网格引擎（拼接式）：控制点 payload **原样
+    透传**，Hook 消费稀疏控制点（UTAU PBS/PBW/PBY 域）；
+  - 缺省 — `{:error, :missing_timing}`（防配置笔误）。
+
+  未知 channel 报 `{:error, {:unknown_channel, atom}}`。
   """
   @spec build(atom(), binary(), keyword()) ::
           {:ok, Configurator.channel_spec()} | {:error, term()}
@@ -40,20 +45,22 @@ defmodule Equinox.Kernel.ChannelSpecs do
   end
 
   def build(:curve, engine_key, opts) do
-    case Keyword.fetch(opts, :timing) do
-      :error ->
+    case Keyword.get(opts, :timing) do
+      nil ->
         {:error, :missing_timing}
 
-      {:ok, timing} ->
+      :none ->
         {:ok,
          %{
-           projection: fn %RenderRequest{} = request, patch ->
-             with {:ok, note_ids} <- anchor_note_ids(patch.anchor),
-                  {:ok, notes} <- fetch_notes(request, note_ids),
-                  {:ok, base} <- Curve.base_for(notes) do
-               {:ok, Channel.stamp_base(base, engine_key)}
-             end
-           end,
+           projection: curve_projection(engine_key),
+           # 透传模态：Hook 直接消费控制点 payload（含 param/adapter/points）
+           target: fn payload, _request -> [{{:port, :synth, payload.param}, payload}] end
+         }}
+
+      timing ->
+        {:ok,
+         %{
+           projection: curve_projection(engine_key),
            target: fn payload, %RenderRequest{} = request ->
              {:ok, rasterized} =
                CurveRaster.rasterize(payload, request.tempo_segments, request.tpqn, timing)
@@ -65,6 +72,18 @@ defmodule Equinox.Kernel.ChannelSpecs do
   end
 
   def build(other, _engine_key, _opts), do: {:error, {:unknown_channel, other}}
+
+  # 曲线 spec 的 check 侧投影（挂载/check 共用 `Curve.base_for/1` 单一实现，
+  # 再盖引擎版本戳）
+  defp curve_projection(engine_key) do
+    fn %RenderRequest{} = request, patch ->
+      with {:ok, note_ids} <- anchor_note_ids(patch.anchor),
+           {:ok, notes} <- fetch_notes(request, note_ids),
+           {:ok, base} <- Curve.base_for(notes) do
+        {:ok, Channel.stamp_base(base, engine_key)}
+      end
+    end
+  end
 
   # ---- 锚 / 音符查找（RenderRequest 粒度） ----
 
