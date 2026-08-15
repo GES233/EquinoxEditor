@@ -32,11 +32,11 @@ defmodule Equinox.Kernel.EngineAdapter do
   @doc "帧网格声明（hop / frame_rate，模型相关；第二刀光栅化时消费）。"
   @callback timing_spec(config :: term()) :: {:ok, map()} | {:error, term()}
 
-  @doc "引擎级旋钮声明（kernel 校验规则；校验挂点待钉，见设计文档开放细节）。"
+  @doc "引擎级旋钮的校验规则声明；值存 `TrackMeta.globals` 侧表，kernel 在 Runner check 阶段门控（`kind: :global` 条目并入 `{:check_failed, _}` 聚合）。"
   @callback globals(config :: term()) :: %{
               atom() => {:range, term(), term()} | {:enum, [term()]}
             }
 
-  @doc "产出侧：哪些 artifact 可采纳、落哪个 channel（对齐 `Port.Preset.allow_adopt`）。"
+  @doc "产出侧：哪些 channel 可采纳（对齐 `Port.Preset.allow_adopt`）；kernel 在 `Session.Server.adopt_intervention/3` 门控，未命中响亮报 `{:not_adoptable, channel}`。"
   @callback adoptables(config :: term()) :: [atom()]
 end

@@ -7,6 +7,9 @@ defmodule Equinox.Kernel.StubEngineAdapter do
 
       %{voicebank_id: "stub_vb", engine_version: "0.0.1", channels: [:phoneme_timing]}
 
+  可选键：`:globals`（校验规则声明，缺省 `%{}`）、`:adoptables`
+  （可采纳 channel 列表，缺省 `[:phoneme_timing]`）。
+
   check 侧 spec projection 演示「单一 canonical 实现」纪律：从 RenderRequest
   取音符 + span，委派 `PhonemeTiming.base_for/2`（与挂载侧 `projection/2`
   同一实现），再用 `Channel.stamp_base/2` 盖引擎版本戳。
@@ -47,10 +50,10 @@ defmodule Equinox.Kernel.StubEngineAdapter do
   def timing_spec(_config), do: {:ok, %{frame_rate: 100, hop: 512}}
 
   @impl true
-  def globals(_config), do: %{}
+  def globals(config), do: Map.get(config, :globals, %{})
 
   @impl true
-  def adoptables(_config), do: [:phoneme_timing]
+  def adoptables(config), do: Map.get(config, :adoptables, [:phoneme_timing])
 
   defp anchor_note_id(%Tamale.Anchor.Ordinal{refs: [id | _]}), do: {:ok, id}
   defp anchor_note_id(%Tamale.Anchor.Relative{ref: id}), do: {:ok, id}

@@ -7,6 +7,10 @@ defmodule Equinox.Kernel.Configurator do
   `new(engine: {adapter, config})` 内部展开为 `adapter.channels(config)`。
   `:channels` 手工注入保留为兼容 / 实验通道；同 key 冲突时 Adapter
   派生者优先（单一来源纪律）。
+
+  `global_rules` 同纪律从 Adapter 派生（`adapter.globals(config)`），是
+  Runner check 阶段 globals 门控的回落规则（per-track 规则挂在 dispatch
+  的 `track_global_rules`）；无 engine 时为 nil（不做门控）。
   """
 
   alias Equinox.Kernel.Graph
@@ -26,6 +30,7 @@ defmodule Equinox.Kernel.Configurator do
           concurrency: pos_integer(),
           timeout: timeout(),
           channels: %{atom() => channel_spec()},
+          global_rules: nil | %{atom() => {:range, term(), term()} | {:enum, [term()]}},
           engine: nil | {module(), term()}
         }
 
@@ -35,6 +40,7 @@ defmodule Equinox.Kernel.Configurator do
             concurrency: System.schedulers_online(),
             timeout: :infinity,
             channels: %{},
+            global_rules: nil,
             engine: nil
 
   @spec new(keyword()) :: t()
@@ -48,6 +54,7 @@ defmodule Equinox.Kernel.Configurator do
       concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
       timeout: Keyword.get(opts, :timeout, :infinity),
       channels: derive_channels(engine, opts |> Keyword.get(:channels, %{}) |> Map.new()),
+      global_rules: derive_global_rules(engine),
       engine: engine
     }
   end
@@ -57,6 +64,12 @@ defmodule Equinox.Kernel.Configurator do
     do: Map.merge(manual, adapter.channels(config))
 
   defp derive_channels(_no_engine, manual), do: manual
+
+  # globals 校验规则同纪律派生；无 engine → nil（Runner 不做 globals 门控）
+  defp derive_global_rules({adapter, config}) when is_atom(adapter),
+    do: adapter.globals(config)
+
+  defp derive_global_rules(_no_engine), do: nil
 
   @spec apply_plugins(t(), {Orchid.Recipe.t(), keyword()}) ::
           {Orchid.Recipe.t(), keyword()}

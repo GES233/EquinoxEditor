@@ -10,6 +10,11 @@ defmodule Equinox.Kernel.Runner do
   resolved payload 折叠为 `%{PortRef => %{input: value}}` 干预规格，进入
   render 阶段。
 
+  同阶段还有 globals 门控：dispatch `track_globals` 携带的 per-track
+  引擎旋钮值按轨对照 `track_global_rules`（缺条目回落
+  `Configurator.global_rules`；nil = 无 Adapter 声明，不门控）校验，
+  违例以 `kind: :global` 条目（带 `:track_id` / `:key`）并入同一聚合。
+
   输入装配沿用旧 Engine 语义：Blackboard 优先、干预兜底、悬空输入给 `:void` Param；
   跨 bundle 的内部键由 Oi 在执行计划内自动流转，不参与装配。
 
@@ -26,20 +31,27 @@ defmodule Equinox.Kernel.Runner do
   @typedoc """
   一次渲染 dispatch：会话标识 + 全部窗口的执行单元 + 按轨派生的 channel
   specs（`track_channels`，per-track EngineAdapter 粒度；缺条目的轨回落
-  `Configurator.channels`）。
+  `Configurator.channels`）；`track_globals` / `track_global_rules` 为
+  per-track 引擎旋钮值与校验规则（globals 门控，见模块文档）。
   """
   @type dispatch :: %{
           required(:session_id) => atom() | String.t(),
           required(:units) => [unit()],
-          optional(:track_channels) => %{term() => %{atom() => Configurator.channel_spec()}}
+          optional(:track_channels) => %{term() => %{atom() => Configurator.channel_spec()}},
+          optional(:track_globals) => %{term() => %{atom() => term()}},
+          optional(:track_global_rules) => %{
+            term() => %{atom() => {:range, term(), term()} | {:enum, [term()]}}
+          }
         }
 
-  @typedoc "check 失败条目；`:conflict` 另带 `:intervention_id`（patch id）字段。"
+  @typedoc "check 失败条目；`:conflict` 另带 `:intervention_id`（patch id）字段；`:global` 条目带 `:track_id` / `:key`（无 `:unit_id` / `:channel`）。"
   @type check_entry :: %{
           optional(:intervention_id) => term(),
-          unit_id: Compiler.unit_id(),
-          channel: atom(),
-          kind: :conflict | :unknown_channel | :projection_failed,
+          optional(:unit_id) => Compiler.unit_id(),
+          optional(:channel) => atom(),
+          optional(:track_id) => term(),
+          optional(:key) => atom(),
+          kind: :conflict | :unknown_channel | :projection_failed | :global,
           reason: term()
         }
 
@@ -68,27 +80,92 @@ defmodule Equinox.Kernel.Runner do
         %Configurator{} = conf
       ) do
     track_channels = Map.get(dispatch, :track_channels, %{})
+    global_entries = check_track_globals(dispatch, conf.global_rules)
 
-    with {:ok, runnable} <- resolve_units(units, conf.channels, track_channels) do
-      runnable
-      |> Task.async_stream(
-        fn unit -> run_unit(session_id, unit, board, conf) end,
-        max_concurrency: conf.concurrency,
-        timeout: conf.timeout,
-        ordered: false
-      )
-      |> Enum.reduce_while({:ok, board}, fn
-        {:ok, {:ok, entries}}, {:ok, acc_board} ->
-          {:cont, {:ok, Blackboard.put(acc_board, entries)}}
+    case resolve_units(units, conf.channels, track_channels) do
+      {:ok, runnable} ->
+        if global_entries == [] do
+          do_run(session_id, runnable, board, conf)
+        else
+          {:error, {:check_failed, global_entries}}
+        end
 
-        {:ok, {:error, reason}}, _acc ->
-          {:halt, {:error, reason}}
-
-        {:exit, reason}, _acc ->
-          {:halt, {:error, {:worker_crashed, reason}}}
-      end)
+      {:error, {:check_failed, entries}} ->
+        {:error, {:check_failed, global_entries ++ entries}}
     end
   end
+
+  # check 全过后跨窗口以 `Task.async_stream` 扇出（首个错误中断）
+  defp do_run(session_id, runnable, board, conf) do
+    runnable
+    |> Task.async_stream(
+      fn unit -> run_unit(session_id, unit, board, conf) end,
+      max_concurrency: conf.concurrency,
+      timeout: conf.timeout,
+      ordered: false
+    )
+    |> Enum.reduce_while({:ok, board}, fn
+      {:ok, {:ok, entries}}, {:ok, acc_board} ->
+        {:cont, {:ok, Blackboard.put(acc_board, entries)}}
+
+      {:ok, {:error, reason}}, _acc ->
+        {:halt, {:error, reason}}
+
+      {:exit, reason}, _acc ->
+        {:halt, {:error, {:worker_crashed, reason}}}
+    end)
+  end
+
+  # ---- check 阶段：globals 门控（与 patch check 共用 one-vote 全量聚合） ----
+
+  # 值来自 dispatch.track_globals（per-track 引擎旋钮，TrackMeta 侧表供给）；
+  # 校验规则按轨取 track_global_rules（Adapter 派生），缺条目回落
+  # conf.global_rules；规则为 nil = 无 Adapter 声明，不做门控。条目顺序按
+  # track_id 排序保证确定性
+  @spec check_track_globals(dispatch(), Configurator.t()[:global_rules]) :: [check_entry()]
+  defp check_track_globals(dispatch, default_rules) do
+    values_by_track = Map.get(dispatch, :track_globals, %{})
+    rules_by_track = Map.get(dispatch, :track_global_rules, %{})
+
+    values_by_track
+    |> Enum.sort_by(fn {track_id, _values} -> inspect(track_id) end)
+    |> Enum.flat_map(fn {track_id, values} ->
+      case Map.get(rules_by_track, track_id, default_rules) do
+        nil -> []
+        rules -> validate_globals(track_id, values, rules)
+      end
+    end)
+  end
+
+  defp validate_globals(track_id, values, rules) do
+    for {key, value} <- values, entry = check_global(track_id, key, value, rules), do: entry
+  end
+
+  defp check_global(track_id, key, value, rules) do
+    case Map.fetch(rules, key) do
+      :error ->
+        %{kind: :global, track_id: track_id, key: key, reason: :unknown_global}
+
+      {:ok, spec} ->
+        case conform_global(spec, value) do
+          :ok -> nil
+          {:error, reason} -> %{kind: :global, track_id: track_id, key: key, reason: reason}
+        end
+    end
+  end
+
+  # 与 coconut `Render.Engine` 的 globals 门控同语义（reason 形状对齐）
+  defp conform_global({:range, lo, hi}, value) when is_number(value) do
+    if value >= lo and value <= hi, do: :ok, else: {:error, {:out_of_range, {lo, hi}}}
+  end
+
+  defp conform_global({:range, _, _}, _value), do: {:error, :not_a_number}
+
+  defp conform_global({:enum, allowed}, value) do
+    if value in allowed, do: :ok, else: {:error, {:not_in_enum, allowed}}
+  end
+
+  defp conform_global(spec, _value), do: {:error, {:invalid_global_spec, spec}}
 
   # ---- check 阶段：patch resolve（先于任何执行） ----
 

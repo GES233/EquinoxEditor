@@ -73,6 +73,18 @@ defmodule Equinox.Session.Server do
     do: GenServer.call(server, {:update_track_voicebank, track_id, voicebank_id})
 
   @doc """
+  写入轨道引擎旋钮（`TrackMeta.globals`；侧表写，不进 History）。
+
+  合并语义：attrs 逐键并入现有 globals；值为 nil 的键删除该旋钮。
+  取值合法性不在写入时校验（引擎规则由 Adapter 声明），违例在
+  Runner check 阶段以 `kind: :global` 条目聚合上浮。
+  """
+  @spec update_track_globals(GenServer.server(), term(), map() | keyword()) ::
+          {:ok, TrackMeta.t()} | {:error, term()}
+  def update_track_globals(server, track_id, attrs),
+    do: GenServer.call(server, {:update_track_globals, track_id, attrs})
+
+  @doc """
   整体替换指定窗口内的音符（一条 History 边，可 undo）。
 
   流程：定位 `start_tick == window_start` 的窗口（不存在报
@@ -101,6 +113,10 @@ defmodule Equinox.Session.Server do
   （base digest 由 channel 模块对当前 workspace 投影算出，并按轨盖上
   Adapter 的 `engine_key/1` 版本戳）→ `History.run(Command.attach_patches(...))`
   挂载）。
+
+  有 Adapter 供给的轨先过 capabilities 门控：channel 须命中该轨 Adapter 的
+  `adoptables/1` 声明，否则响亮报 `{:error, {:not_adoptable, channel}}`
+  （无 Adapter 的轨不门控，userland 自管）。
 
   `attrs` 须含 `:channel`（`Coconut.Render.Channel` 实现模块）、`:payload`，
   锚二选一：`:anchor`（`AdoptRequest.anchor_spec()`）或 `:seq_id`
@@ -244,6 +260,18 @@ defmodule Equinox.Session.Server do
     end
   end
 
+  def handle_call({:update_track_globals, track_id, attrs}, _from, state) do
+    attrs = Map.new(attrs)
+
+    with {:ok, meta} <- Project.track_meta(state.project, track_id),
+         {:ok, meta} <- TrackMeta.update(meta, globals: merge_globals(meta.globals, attrs)),
+         {:ok, project} <- Project.put_track_meta(state.project, track_id, meta) do
+      {:reply, {:ok, meta}, %{state | project: project}}
+    else
+      {:error, _} = err -> {:reply, err, state}
+    end
+  end
+
   def handle_call({:replace_window_notes, track_id, window_start, note_attrs_list}, _from, state) do
     with {:ok, track} <- Project.fetch_track(state.project, track_id),
          {:ok, windows} <- Track.slice(state.project, track_id),
@@ -269,12 +297,13 @@ defmodule Equinox.Session.Server do
 
   def handle_call({:adopt_intervention, track_id, attrs}, _from, state) do
     with {:ok, channel_module, patch_attrs} <- adopt_attrs(track_id, attrs),
-         {:ok, engine_key} <- engine_key_for(state, track_id),
+         {:ok, engine} <- Context.engine_for(state, track_id),
+         :ok <- check_adoptable(engine, channel_module),
          {:ok, patch} <-
            AdoptRequest.build_patch(
              state.project.workspace,
              channel_module,
-             Map.put(patch_attrs, :engine, engine_key)
+             Map.put(patch_attrs, :engine, engine_key_of(engine))
            ),
          {:ok, state} <- run_history(state, Command.attach_patches([patch])),
          {:ok, track} <- Project.fetch_track(state.project, track_id),
@@ -428,14 +457,42 @@ defmodule Equinox.Session.Server do
     run_history(state, Command.batch([{track_id, ops, side_changes}], "ReplaceWindowNotes"))
   end
 
-  # 采纳时的引擎版本戳：按轨解析 Adapter（per-track 粒度），取
-  # `engine_key/1` 进 digest base（与 check 侧 spec projection 同一版本戳）；
-  # 无 Adapter 供给的轨不盖戳（nil → build_patch 跳过）
-  defp engine_key_for(%Context{} = state, track_id) do
-    case Context.engine_for(state, track_id) do
-      {:ok, nil} -> {:ok, nil}
-      {:ok, {adapter, config}} -> {:ok, adapter.engine_key(config)}
-      {:error, _} = err -> err
+  # globals 合并（侧表写）：nil 值 = 删除该旋钮，其余逐键并入
+  defp merge_globals(globals, attrs) do
+    {deletes, sets} = Enum.split_with(attrs, fn {_key, value} -> is_nil(value) end)
+
+    globals
+    |> Map.drop(Enum.map(deletes, fn {key, _} -> key end))
+    |> Map.merge(Map.new(sets))
+  end
+
+  # 采纳时的引擎版本戳：无 Adapter 供给的轨不盖戳（nil → build_patch 跳过）；
+  # 有 Adapter 取 `engine_key/1` 进 digest base（与 check 侧 spec projection
+  # 同一版本戳）
+  defp engine_key_of(nil), do: nil
+  defp engine_key_of({adapter, config}), do: adapter.engine_key(config)
+
+  # capabilities 门控（kernel 责任，Adapter 声明制）：有 Adapter 的轨，
+  # channel 须命中其 `adoptables/1` 声明，否则响亮报 `{:not_adoptable, _}`；
+  # 无 Adapter 供给的轨不门控（userland 自管）。channel atom 取模块
+  # `channel/0`（equinox channel 约定，与 AdoptRequest.channel_of 同源）
+  defp check_adoptable(nil, _channel_module), do: :ok
+
+  defp check_adoptable({adapter, config}, channel_module) do
+    with {:ok, channel} <- channel_atom(channel_module) do
+      if channel in adapter.adoptables(config) do
+        :ok
+      else
+        {:error, {:not_adoptable, channel}}
+      end
+    end
+  end
+
+  defp channel_atom(module) do
+    if Code.ensure_loaded?(module) and function_exported?(module, :channel, 0) do
+      {:ok, module.channel()}
+    else
+      {:error, {:channel_atom_unknown, module}}
     end
   end
 

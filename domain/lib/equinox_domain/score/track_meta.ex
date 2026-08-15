@@ -1,12 +1,16 @@
 defmodule EquinoxDomain.Score.TrackMeta do
   @moduledoc """
-  轨道元数据侧表项——equinox 特有的轨道附加信息（混音、预设、声库选择、UI 状态）。
+  轨道元数据侧表项——equinox 特有的轨道附加信息（混音、引擎旋钮、预设、声库选择、UI 状态）。
 
   与 coconut 的区分：`Coconut.Edit.Track` 承载音符/干预真相并进入
   History（可 undo）；TrackMeta 是宿主侧表，**不进 History、不可 undo**，
   按 `track_id` 挂在 `EquinoxDomain.Score.Project.tracks_meta` 上。
 
   纯数据 VO：无 id（身份即侧表键），手写 new/update/validate + dump/load。
+  `globals` 是引擎级旋钮值（gender / depth 之类，键值由引擎定义，本层
+  不校验取值）——校验发生在 kernel Runner check 阶段，按轨 Adapter 的
+  `globals/1` 声明门控（见 `docs/engine-adapter-design.md`）。
+
   """
 
   import Coconut.Util.Helpers, only: [normalize_attrs: 2, strictly_normalize_attrs: 2]
@@ -20,6 +24,7 @@ defmodule EquinoxDomain.Score.TrackMeta do
           mute: boolean(),
           solo: boolean(),
           voicebank_id: nil | binary(),
+          globals: %{atom() => term()},
           presets: %{binary() => Preset.t()},
           active_preset: nil | binary(),
           ui_state: map(),
@@ -33,6 +38,7 @@ defmodule EquinoxDomain.Score.TrackMeta do
     mute: false,
     solo: false,
     voicebank_id: nil,
+    globals: %{},
     presets: %{},
     active_preset: nil,
     ui_state: %{},
@@ -75,6 +81,9 @@ defmodule EquinoxDomain.Score.TrackMeta do
       not (is_nil(meta.voicebank_id) or is_binary(meta.voicebank_id)) ->
         {:error, {:invalid_voicebank_id, meta.voicebank_id}}
 
+      not is_map(meta.globals) ->
+        {:error, {:invalid_globals, meta.globals}}
+
       true ->
         validate_presets(meta)
     end
@@ -110,6 +119,7 @@ defmodule EquinoxDomain.Score.TrackMeta do
        mute: meta.mute,
        solo: meta.solo,
        voicebank_id: meta.voicebank_id,
+       globals: meta.globals,
        presets: presets,
        active_preset: meta.active_preset,
        ui_state: meta.ui_state,
@@ -129,6 +139,7 @@ defmodule EquinoxDomain.Score.TrackMeta do
         :mute,
         :solo,
         :voicebank_id,
+        :globals,
         :active_preset,
         :ui_state,
         :metadata

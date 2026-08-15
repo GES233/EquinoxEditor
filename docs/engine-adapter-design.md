@@ -96,11 +96,41 @@ projection 供给的确定性按版本对齐。
 
 - **artifact 的具体形状**：目前只有「引擎产出默认 Artifact、不落领域事实」的
   原则；形状与 `adoptables` 的对应关系待第一个真实引擎接入时定。
-- **globals 校验挂点**：倾向放在 Runner check 阶段顺带做——与 patch check 共用
-  one-vote 全量聚合语义（entry kind 增 `:global`）；备选是 Configurator 构造期
-  校验（fail-fast 但与 check 聚合语义分裂）。
+- **globals 校验挂点**（已定案 2026-08-15，见下「globals 与 capabilities
+  定案」）。
 - **curve channel / RasterCache / Douglas-Peucker**：沿用 Phase 2 deferred 状态，
   Adapter 的 `timing_spec` 是其消费入口。
+
+### globals 与 capabilities 定案（2026-08-15）
+
+**globals 校验挂点：Runner check 阶段**，与 patch check 共用 one-vote
+全量聚合语义（entry kind `:global`，带 `:track_id` / `:key`，无
+`:unit_id` / `:channel`——旋钮是轨级判断，不是窗口级）。落选方案
+（Configurator 构造期 fail-fast）与 check 聚合语义分裂，弃。
+
+值与规则的分工：
+
+- **值**存 `TrackMeta.globals` 侧表（per-track、可序列化、不进 History、
+  不可 undo，与 mix 同级）；写入走 `Server.update_track_globals/3`
+  （逐键合并，nil 值删键）。**写时不知、查时有责**：写入侧不校验取值
+  （kernel 写入路径不感知引擎规则），违例在 check 阶段聚合上浮。
+- **规则**由 Adapter `globals/1` 声明，`prepare_dispatch` 按轨派生挂进
+  dispatch `track_global_rules`；缺条目回落 `Configurator.global_rules`
+  （同从 Adapter 派生）；规则为 nil = 无 Adapter 声明，**不门控**。
+  声明空规则（`%{}`）则任何值都 `:unknown_global`（声明制：不声明即
+  不接受，对齐 coconut `Render.Engine` 语义；reason 形状
+  `:unknown_global` / `{:out_of_range, {lo, hi}}` / `:not_a_number` /
+  `{:not_in_enum, allowed}` 亦对齐）。
+
+**capabilities 校验责任：kernel 门控、Adapter 声明制**。两个挂点：
+
+- check 侧：Adapter 不供给的 channel → `:unknown_channel` 响亮失败
+  （既有语义，不变）。
+- adopt 侧：`Server.adopt_intervention/3` 对照该轨 Adapter 的
+  `adoptables/1`，未命中 `{:error, {:not_adoptable, channel}}`；
+  无 Adapter 供给的轨不门控（userland 自管）。channel atom 取模块
+  `channel/0`（equinox channel 约定，与 `AdoptRequest.channel_of/2`
+  同源）。
 
 ### 声库（voicebank）设计草案
 
@@ -158,11 +188,12 @@ projection 供给的确定性按版本对齐。
 - **Adapter 粒度 = per-track**（2026-08-15）：每轨一个 Adapter config，
   `prepare_dispatch` 按轨解析 `voicebank_id` 组装，check 聚合按轨分组。
   混库编辑是一等场景，不接受「每会话单声库」的简化。
+- **globals 校验挂点 + capabilities 校验责任**（2026-08-15）：见上方
+  「globals 与 capabilities 定案」——`TrackMeta.globals` 存值、Runner
+  check 门控；kernel 门控、Adapter 声明制。
 
 待钉问题：
 
-- `capabilities` 的校验责任：Adapter 自检还是 kernel 在 check 阶段顺带做
-  （与 globals 校验挂点同一个问题，共用 one-vote 聚合语义）？
 - 声库资产的发现/注册机制（扫描目录？显式注册表？）——属 userland 运行时
   职责，equinox 侧只需约定描述符形状。
 

@@ -109,7 +109,9 @@ defmodule Equinox.Session.Context do
   同时按轨解析引擎适配器（`engine_for/2`，per-track 粒度），把 Adapter
   派生的 channel specs 挂进 dispatch 的 `track_channels`
   （`%{track_id => %{channel => spec}}`）；无 Adapter 供给的轨不出条目，
-  Runner 回落 `Configurator.channels`。未知声库 id 整体报错
+  Runner 回落 `Configurator.channels`。globals 校验规则同路径按轨派生
+  （`track_global_rules`），旋钮值取自 `TrackMeta.globals` 侧表
+  （`track_globals`，空表不出条目）。未知声库 id 整体报错
   `{ctx, {:error, {:unknown_voicebank, _}}}`（响亮失败，ctx 不变）。
 
   空窗口轨不出单元；tempo 编译失败且全工程无窗口时仍产出正常空 dispatch，
@@ -123,11 +125,13 @@ defmodule Equinox.Session.Context do
     tempo = Project.tempo_map(ctx.project)
 
     case reduce_tracks(ctx, track_ids, tempo) do
-      {:ok, units, compile_cache, track_channels} ->
+      {:ok, units, compile_cache, track_channels, track_global_rules} ->
         dispatch = %{
           session_id: ctx.session_id,
           units: units,
-          track_channels: track_channels
+          track_channels: track_channels,
+          track_global_rules: track_global_rules,
+          track_globals: track_globals(ctx.project)
         }
 
         {%{ctx | compile_cache: compile_cache}, dispatch}
@@ -137,20 +141,30 @@ defmodule Equinox.Session.Context do
     end
   end
 
+  # per-track 引擎旋钮值（TrackMeta.globals 侧表，空表不出条目）；
+  # 校验规则在 reduce_tracks 里按轨由 Adapter 派生（track_global_rules）
+  defp track_globals(%Project{} = project) do
+    for {track_id, meta} <- project.tracks_meta, map_size(meta.globals) > 0, into: %{} do
+      {track_id, meta.globals}
+    end
+  end
+
   # 逐轨解析引擎 + slice + compile，累积 units / 新 compile_cache /
-  # track_channels；任一失败即中断。
+  # track_channels / track_global_rules；任一失败即中断。
   # tempo 是 `{:ok, TempoMap.t()} | {:error, reason}`：编译失败时 slice 仍可
   # 进行（窗口只依赖 tick），真正有窗口产出时才强制要求它。
   defp reduce_tracks(ctx, track_ids, tempo) do
-    Enum.reduce_while(track_ids, {:ok, [], %{}, %{}}, fn track_id,
-                                                         {:ok, units_acc, cache_acc, channels_acc} ->
+    Enum.reduce_while(track_ids, {:ok, [], %{}, %{}, %{}}, fn track_id,
+                                                              {:ok, units_acc, cache_acc,
+                                                               channels_acc, rules_acc} ->
       with {:ok, engine} <- engine_for(ctx, track_id),
            {:ok, windows} <- slice_track(ctx.project, track_id),
            {:ok, track_units, cache_acc} <-
              compile_units(ctx, track_id, windows, cache_acc, tempo) do
         {:cont,
          {:ok, units_acc ++ track_units, cache_acc,
-          put_track_channels(channels_acc, track_id, engine)}}
+          put_track_channels(channels_acc, track_id, engine),
+          put_global_rules(rules_acc, track_id, engine)}}
       else
         {:error, _} = err -> {:halt, err}
       end
@@ -162,6 +176,13 @@ defmodule Equinox.Session.Context do
 
   defp put_track_channels(acc, track_id, {adapter, config}),
     do: Map.put(acc, track_id, adapter.channels(config))
+
+  # globals 校验规则同纪律：无 Adapter 供给的轨不出条目（Runner 回落
+  # conf.global_rules；nil 即不门控）
+  defp put_global_rules(acc, _track_id, nil), do: acc
+
+  defp put_global_rules(acc, track_id, {adapter, config}),
+    do: Map.put(acc, track_id, adapter.globals(config))
 
   # 分窗投影：tpqn 取自 workspace；`extra_spans` 由轨上 Metric 锚 patch 的
   # tick 区间推导（旧「干预 scope 撑窗」语义，Ordinal/Relative 锚挂在音符上

@@ -16,6 +16,7 @@ defmodule EquinoxDomain.Score.TrackMetaTest do
       assert meta.presets == %{}
       assert meta.active_preset == nil
       assert meta.voicebank_id == nil
+      assert meta.globals == %{}
       assert meta.ui_state == %{}
       assert meta.metadata == %{}
     end
@@ -26,6 +27,7 @@ defmodule EquinoxDomain.Score.TrackMetaTest do
       assert {:error, {:invalid_mute, _}} = TrackMeta.new(mute: 1)
       assert {:error, {:invalid_solo, _}} = TrackMeta.new(solo: "yes")
       assert {:error, {:invalid_voicebank_id, _}} = TrackMeta.new(voicebank_id: 42)
+      assert {:error, {:invalid_globals, _}} = TrackMeta.new(globals: [:gender])
     end
 
     test "presets 逐个校验" do
@@ -69,6 +71,7 @@ defmodule EquinoxDomain.Score.TrackMetaTest do
           presets: %{"default" => preset},
           active_preset: "default",
           voicebank_id: "qiyu_v2",
+          globals: %{gender: 0.5, phoneme_mode: :auto},
           ui_state: %{"collapsed" => false},
           metadata: %{"color" => "cyan"}
         )
