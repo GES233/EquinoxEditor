@@ -260,3 +260,46 @@ channel atom 对齐，但归属和版本纪律完全不同：
   `Equinox.Kernel.ChannelSpecs.build/3`（projection 委派 domain channel
   单一实现 + stamp_base 盖戳；曲线 spec 需 `timing:`）；声库声明了无法
   构造的 channel → `channels/1`  raise（配置错误响亮失败）。
+
+### 真实 adapter 边界定案（2026-08-15）
+
+第一批真实引擎 adapter 落地于兄弟项目 `engine_adapters/`
+（`:equinox_engine_adapters`，命名空间 `EquinoxAdapters.*`）——引擎实现属
+userland 的仓库内参考实现（kernel 只定义 behaviour 的红线不破），path
+依赖 domain + kernel。两个边界正好夹住设计空间：**拼接式**
+（`UTAUCompat`，UTAU CV：无帧网格、ms 控制点域）vs **神经式**
+（`UTAUDiffSingerCompat`，OpenUtau 式 DiffSinger：帧网格、密采样曲线域）。
+范围是契约级（loader + 五回调 + specs + 夹具测试）；真实音频渲染
+（resampler 子进程 / onnx 推理）是 Hook/Step 领地。
+
+由这两条边界钉死的决策：
+
+- **D1 timing_spec 可缺席**：拼接式引擎返回 `{:error, :no_frame_grid}`。
+  曲线消费双模态——有帧网格走 `CurveRaster` 光栅化
+  （`%{param, ..., samples}`）；无帧网格走**控制点透传**
+  （`ChannelSpecs.build(:curve, key, timing: :none)`，Hook 消费稀疏控制点，
+  正合 UTAU PBS/PBW/PBY 域）。`timing:` 缺省仍报 `:missing_timing`
+  （防配置笔误）；MCPAdapter 对空 timing 自动落到 `:none`。
+- **D2 engine_version 可为内容哈希**：文件型声库无 semver，用
+  `sha256(声库定义文件)[:12]` 内容戳（`EquinoxAdapters.Util.content_stamp/1`）。
+  engine_key 是不透明版本戳的约定不变。
+- **D3 frame_rate 允许 float**：44100/512 ≈ 86.13 的非整数帧率是真实存在
+  的（`Voicebank` 校验已放宽；hop 仍正整数）。
+- **D4 globals 规则代数够用**：UTAU resampler flags（g/B/t/Y/P，flag 区分
+  大小写）与 DS 表达式（key_shift range / speaker enum）都落在
+  `{:range,_,_} | {:enum,[_]}` 两种规则内，不扩。
+- **D5 adoptables 真实语义**：DS = `[:phoneme_timing, :curve]`（预测音素
+  时长 / 预测 pitch 是 OpenUtau 的一等可编辑数据）；UTAU = `[]`（v1 无
+  可采纳数据，adopt 全部 `{:not_adoptable, _}` 响亮拒绝）。
+- **D6 descriptor 够用**：UTAU 的 oto 条目进 `dictionary.aliases`、
+  oto.ini/prefix.map 进 `models`、子库表进 `capabilities.subbanks`；DS 的
+  模型路径进 `models`、音素表进 `dictionary.phonemes`。Voicebank VO 字段
+  未扩。
+
+Loader 约定：返回 `{:ok, {Adapter模块, config}}`，可直接进 `engines`
+注册表；UTAU id 取 character.txt 的 name（缺省目录名），DS 同（缺省目录名）。
+
+Follow-up（真实声库接入前要做）：oto.ini 的 Shift-JIS / `#Charset:` 解码
+（v1 UTF-8，需要时引 codepagex）；VCV/CVVC 多行同 alias；UTAU 的
+preutterance/overlap 用户编辑通道（`:phoneme_timing` 之于拼接引擎）；
+energy/breathiness 预测曲线的采纳语义（OpenUtau 无一手先例）。
