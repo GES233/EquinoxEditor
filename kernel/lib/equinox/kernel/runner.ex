@@ -227,7 +227,7 @@ defmodule Equinox.Kernel.Runner do
         Enum.reduce(patches, {[], %{}}, fn patch, {entries_acc, data_acc} ->
           case resolve_patch(spec, request, patch) do
             {:ok, payload} ->
-              {entries_acc, Map.merge(data_acc, fold_resolved(payload, spec.target))}
+              {entries_acc, Map.merge(data_acc, fold_resolved(payload, spec.target, request))}
 
             {:error, kind, reason} ->
               entry = %{
@@ -260,17 +260,23 @@ defmodule Equinox.Kernel.Runner do
   end
 
   # resolved payload 经 channel spec 的 target 绑定端口，折叠为 assemble_data
-  # 识别的 %{PortRef => %{input: value}} 形状：PortRef 直取，或一元函数
-  # fan-out；同端口后写覆盖先写（与 `Coconut.Render.Resolve` 同语义）
-  defp fold_resolved(payload, target) do
+  # 识别的 %{PortRef => %{input: value}} 形状：PortRef 直取，或函数
+  # fan-out；同端口后写覆盖先写（与 `Coconut.Render.Resolve` 同语义）。
+  # target 函数 arity-1 只收 payload；arity-2 追加窗口 RenderRequest
+  # （曲线光栅化等需要 tempo/tpqn 上下文的扇出）
+  defp fold_resolved(payload, target, request) do
     target
-    |> bind_payload(payload)
+    |> bind_payload(payload, request)
     |> Map.new(fn {port_ref, value} -> {port_ref, %{input: value}} end)
   end
 
-  defp bind_payload(target, payload) when is_function(target, 1), do: target.(payload)
+  defp bind_payload(target, payload, request) when is_function(target, 2),
+    do: target.(payload, request)
 
-  defp bind_payload({:port, _node, _port} = port_ref, payload), do: [{port_ref, payload}]
+  defp bind_payload(target, payload, _request) when is_function(target, 1), do: target.(payload)
+
+  defp bind_payload({:port, _node, _port} = port_ref, payload, _request),
+    do: [{port_ref, payload}]
 
   defp run_unit(session_id, {unit_id, graph, interventions, compiled}, board, conf) do
     data = assemble_data(unit_id, graph, interventions, board)

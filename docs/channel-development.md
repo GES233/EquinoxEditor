@@ -43,7 +43,7 @@
 本体——`Tamale.Patch.resolve/2` 只判 digest，通过则原样返回 payload。例如
 phoneme_timing 的 payload 是 `%{deltas: [%{identity, onset_delta_ms, duration_delta_ms}]}`，
 把 delta 施加到引擎新鲜投影上（换算成最终 onset/duration）是消费方（引擎 Hook）
-的职责；曲线通道（第二刀）将是 `%{param, start_tick, end_tick, stride, samples}`。
+的职责；曲线通道为 `%{param, start_tick, end_tick, stride, samples}`（见 §6）。
 
 ## 3. 通道定义方：三要素
 
@@ -168,10 +168,29 @@ digest）→ `History.run(Command.attach_patches(...))` 挂载。采纳的不是
 数据块，而是一条锚在音符上的 channel patch——结构死活归写时 transport，
 语义有效性归 check 时 digest resolve。
 
-## 6. 第二刀预告（曲线通道）
+## 6. 曲线通道（已落地 2026-08-15）
 
-- 通用曲线 Channel（连续数据原型：控制点 + 边界维护，覆盖 pitch/energy/… 全部
-  连续参数，新参数零 coconut/tamale 代码）；
-- 帧网格 `timing_spec` 声明机制（模型相关的 hop/frame rate 由插件侧声明，
-  Caller 光栅化时查询，Kernel 不硬编码）；
-- RasterCache + Douglas-Peucker（光栅缓存指纹含网格 spec；原始笔画先简化再进 History）。
+通用曲线 Channel：`EquinoxDomain.Port.Channels.Curve`（channel atom `:curve`）——
+单模块单 atom 覆盖 pitch/energy/… 全部连续参数，参数名在 payload 里，
+兑现「新参数零 coconut/tamale 代码」。
+
+- **锚纪律（v1）**：Ordinal（整音符）/ Relative（音符+偏移区间）；Metric 拒绝。
+- **base 形状**：锚区音符的 canonical 投影列表，逐音符委派
+  `PhonemeTiming.base_for/2`（单一实现纪律）；曲线数据完整性由 payload 携带
+  （coconut `Pitch` 先例：digest 只守音符本体 + span）。
+- **payload**：plain map（无 struct，Pickle 透传安全），构造收口在
+  `Curve.build_payload/3`：`%{param, adapter（字符串形模块名）, points}`
+  （points 绝对 tick、严格升序，handle 可 nil）。
+- **光栅化挂点**：kernel `Equinox.Kernel.CurveRaster`（帧网格 = Adapter
+  `timing_spec` 的 `frame_rate`/`hop` + 窗口 `tempo_segments` + `tpqn` →
+  tick 序列 → coconut `Curve.Adapter` `rasterize/2` → f32 binary）；由
+  Adapter 的 **arity-2 spec target** 闭包调用（`target` 契约扩展：
+  `(payload, RenderRequest) -> [{PortRef, value}]`，Runner `bind_payload`
+  分发，arity-1 兼容不变）。`RenderRequest` 为此新增 `tpqn` 字段。
+- **Hook payload**：`%{param, start_tick, end_tick, stride, samples}`
+  （stride=hop，samples=f32 binary），落点 `{:port, :synth, param}`。
+- **spec 共享构造**：`Equinox.Kernel.ChannelSpecs.build/3`（`:phoneme_timing` /
+  `:curve`），供 MCPAdapter 等 Adapter 复用；stub 刻意内联作零件展示。
+- **仍 deferred**：RasterCache、Douglas-Peucker（Phase 3 UI 有笔画来源再做）、
+  coconut `Curve.Chunk` 的 Pickle codec、param 级 capabilities 门控
+  （`supported_params` 的消费）、Metric 锚曲线。

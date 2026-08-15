@@ -11,7 +11,7 @@ defmodule Equinox.Kernel.EngineAdapterTest do
   alias Equinox.Session.{Context, Server}
   alias EquinoxDomain.Command.{AdoptRequest, RenderRequest}
   alias EquinoxDomain.Port.Channel
-  alias EquinoxDomain.Port.Channels.PhonemeTiming
+  alias EquinoxDomain.Port.Channels.{Curve, PhonemeTiming}
   alias EquinoxDomain.Score.{Project, TrackMeta}
 
   defmodule SynthStep do
@@ -21,6 +21,16 @@ defmodule Equinox.Kernel.EngineAdapterTest do
 
     routine phoneme_timing, _opts do
       ok(%{received: phoneme_timing})
+    end
+  end
+
+  defmodule CurveSynthStep do
+    use Oi.Step, name: :synth
+
+    manifest(inputs: [:pitch], outputs: [audio: :map])
+
+    routine pitch, _opts do
+      ok(%{received: pitch})
     end
   end
 
@@ -373,6 +383,71 @@ defmodule Equinox.Kernel.EngineAdapterTest do
     assert {:ok, _board} = Runner.run(dispatch, Blackboard.new())
   end
 
+  test "曲线 channel：adopt（盖戳）→ check 对拍 → render 收到光栅化 payload" do
+    session_id = "engine-adapter-curve-e2e"
+    assert {:ok, _pid} = Oi.Runtime.Session.ensure_started(session_id)
+
+    on_exit(fn ->
+      _ = Oi.Runtime.Session.stop(session_id)
+    end)
+
+    track_id = "track_curve"
+    unit_id = {track_id, 0}
+
+    # 声库描述符供给曲线能力 + 帧网格（hop 25 / frame_rate 100 → 帧周期 0.25s）
+    {:ok, vb} =
+      Voicebank.new(
+        id: "stub_vb",
+        engine: :stub,
+        engine_version: "0.0.1",
+        capabilities: %{supported_channels: [:curve]},
+        timing: %{frame_rate: 100, hop: 25}
+      )
+
+    config = %{voicebank: vb}
+
+    {:ok, project, note1} = project_with_notes("project_curve", track_id)
+    project = put_voicebank(project, track_id, "stub_vb")
+
+    # 锚 note1（span 0..240 = 0.25s @120bpm）：两控制点 60.0 → 61.0
+    {:ok, payload} =
+      Curve.build_payload(:pitch, Coconut.Curve.Adapter.CatmullRom, [
+        %{tick: 0, value: 60.0, handle_left: nil, handle_right: nil},
+        %{tick: 240, value: 61.0, handle_left: nil, handle_right: nil}
+      ])
+
+    {:ok, patch} =
+      AdoptRequest.build_patch(project.workspace, Curve, %{
+        track_id: track_id,
+        anchor: {:ordinal, [note1]},
+        payload: payload,
+        engine: StubEngineAdapter.engine_key(config)
+      })
+
+    {:ok, project, _mounted} = attach(project, patch)
+
+    ctx =
+      Context.new(session_id, project, engines: %{"stub_vb" => {StubEngineAdapter, config}})
+      |> then(fn ctx -> %{ctx | graphs: %{track_id => curve_graph()}} end)
+
+    {_ctx, dispatch} = Context.prepare_dispatch(ctx)
+
+    assert %{track_channels: %{^track_id => %{curve: _}}} = dispatch
+    assert {:ok, board} = Runner.run(dispatch, Blackboard.new())
+
+    unit_outputs = Blackboard.fetch_via_segment(board, unit_id)
+
+    # 光栅化 payload 落到 {:port, :synth, :pitch}（按 payload param 扇出）
+    assert %{param: :pitch, start_tick: 0, end_tick: 240, stride: 25, samples: samples} =
+             unit_outputs[{unit_id, "synth|pitch"}]
+
+    assert [v0, v1] = for(<<v::float-32-native <- samples>>, do: v)
+    assert_in_delta v0, 60.0, 0.01
+    assert_in_delta v1, 61.0, 0.01
+
+    assert %{received: _} = unit_outputs[{unit_id, "synth|audio"}]
+  end
+
   # ---- 夹具（风格同 OrchidFlowTest） ----
 
   # 挂载 + dispatch 组合夹具：两音符工程 + 声库选择 + 盖戳 patch + engines 注册，
@@ -408,6 +483,17 @@ defmodule Equinox.Kernel.EngineAdapterTest do
       id: :synth,
       container: SynthStep,
       inputs: [:phoneme_timing],
+      outputs: [:audio],
+      options: []
+    })
+  end
+
+  defp curve_graph do
+    Graph.new()
+    |> Graph.add_node(%Node{
+      id: :synth,
+      container: CurveSynthStep,
+      inputs: [:pitch],
       outputs: [:audio],
       options: []
     })

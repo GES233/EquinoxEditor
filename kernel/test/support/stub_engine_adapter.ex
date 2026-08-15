@@ -25,10 +25,10 @@ defmodule Equinox.Kernel.StubEngineAdapter do
 
   @behaviour Equinox.Kernel.EngineAdapter
 
-  alias Equinox.Kernel.Voicebank
+  alias Equinox.Kernel.{CurveRaster, Voicebank}
   alias EquinoxDomain.Command.RenderRequest
   alias EquinoxDomain.Port.Channel
-  alias EquinoxDomain.Port.Channels.PhonemeTiming
+  alias EquinoxDomain.Port.Channels.{Curve, PhonemeTiming}
 
   @impl true
   def engine_key(config) do
@@ -56,6 +56,28 @@ defmodule Equinox.Kernel.StubEngineAdapter do
              end
            end,
            target: PhonemeTiming.target()
+         }}
+
+      :curve ->
+        {:ok, timing} = timing_spec(config)
+
+        {:curve,
+         %{
+           projection: fn %RenderRequest{} = request, patch ->
+             with {:ok, note_ids} <- anchor_note_ids(patch.anchor),
+                  {:ok, notes} <- fetch_request_notes(request, note_ids),
+                  {:ok, base} <- Curve.base_for(notes) do
+               {:ok, Channel.stamp_base(base, key)}
+             end
+           end,
+           # arity-2 target：借窗口 RenderRequest 的 tempo/tpqn 上下文
+           # 光栅化，按 payload param 扇出落点（kernel 不感知参数名）
+           target: fn payload, %RenderRequest{} = request ->
+             {:ok, rasterized} =
+               CurveRaster.rasterize(payload, request.tempo_segments, request.tpqn, timing)
+
+             [{{:port, :synth, payload.param}, rasterized}]
+           end
          }}
     end)
   end
@@ -86,10 +108,29 @@ defmodule Equinox.Kernel.StubEngineAdapter do
   defp anchor_note_id(%Tamale.Anchor.Relative{ref: id}), do: {:ok, id}
   defp anchor_note_id(_other), do: {:error, :unsupported_anchor}
 
+  defp anchor_note_ids(%Tamale.Anchor.Ordinal{refs: refs}), do: {:ok, refs}
+  defp anchor_note_ids(%Tamale.Anchor.Relative{ref: ref}), do: {:ok, [ref]}
+  defp anchor_note_ids(_other), do: {:error, :unsupported_anchor}
+
   defp fetch_request_note(%RenderRequest{notes: notes}, note_id) do
     case Enum.find(notes, fn {id, _note, _span} -> id == note_id end) do
       {_id, note, span} -> {:ok, note, span}
       nil -> {:error, {:note_not_found, note_id}}
+    end
+  end
+
+  # 多音符形（曲线 channel 的锚区）：返回 `[{note, span}]`，序同 refs
+  defp fetch_request_notes(%RenderRequest{} = request, note_ids) do
+    note_ids
+    |> Enum.reduce_while({:ok, []}, fn note_id, {:ok, acc} ->
+      case fetch_request_note(request, note_id) do
+        {:ok, note, span} -> {:cont, {:ok, [{note, span} | acc]}}
+        {:error, _} = err -> {:halt, err}
+      end
+    end)
+    |> case do
+      {:ok, notes} -> {:ok, Enum.reverse(notes)}
+      {:error, _} = err -> err
     end
   end
 end

@@ -8,8 +8,8 @@ defmodule EquinoxDomain.Command.RenderRequest do
     并取回带 span 的音符视图；
   - 过滤轨道上**结构存活**的 patch：Ordinal / Relative 锚按
     refs ∩ `window.note_ids`，Metric 锚按 tick 区间相交（左闭右开）；
-  - 用 `Coconut.Score.TempoMap.slice/3` 切窗口内 tempo_segments
-    （coconut 编译图自带 tpqn，无需调用方再传）；
+  - 用 `Coconut.Score.TempoMap.slice/3` 切窗口内 tempo_segments，
+    并把编译图的 `tpqn` 带上（帧网格换算——kernel 曲线光栅化——需要它）；
   - 从 patch channel 集合 + 轨道 active preset 的 channel 注册表派生
     `channels`（`%{channel_atom => Coconut.Render.Channel 实现模块}`）；
     注册表缺失的 channel 不收录——kernel check 阶段会以
@@ -34,6 +34,7 @@ defmodule EquinoxDomain.Command.RenderRequest do
           notes: [{Note.note_id(), Note.t(), Track.span()}],
           time_range: {Tick.numeric_tick(), Tick.numeric_tick()},
           tempo_segments: [TempoMap.compiled_event()],
+          tpqn: pos_integer(),
           patches: [Patch.t()],
           channels: %{Channel.channel() => module()}
         }
@@ -44,6 +45,7 @@ defmodule EquinoxDomain.Command.RenderRequest do
     notes: [],
     time_range: {0, 0},
     tempo_segments: [],
+    tpqn: 480,
     patches: [],
     channels: %{}
   ]
@@ -94,6 +96,7 @@ defmodule EquinoxDomain.Command.RenderRequest do
         notes: notes,
         time_range: {t0, t1},
         tempo_segments: TempoMap.slice(tempo_map, t0, t1),
+        tpqn: tempo_map.tpqn,
         patches: patches,
         channels: derive_channels(project, track_id, patches)
       )
