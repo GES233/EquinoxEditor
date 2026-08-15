@@ -4,3 +4,5 @@
 /doc/
 *.ez
 erl_crash.dump
+/sidecar/.venv/
+/sidecar/out/

@@ -35,3 +35,10 @@ equinox*.tar
 npm-debug.log
 node_modules/
 /ui_shell/assets/node_modules/
+
+# Python 相关
+*.pyc
+__pycache__/
+
+# 音频相关
+*.wav

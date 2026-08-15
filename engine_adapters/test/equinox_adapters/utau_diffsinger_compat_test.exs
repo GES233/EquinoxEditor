@@ -62,13 +62,15 @@ defmodule EquinoxAdapters.UTAUDiffSingerCompatTest do
              speaker: {:enum, [:speaker_a, :speaker_b]}
            }
 
-    # channels：两个 spec，curve 是光栅化模态（arity-2 target 非透传）
+    # channels：两个 spec 都是 arity-2 target——phoneme_timing 走 DiffSinger
+    # 窗口打包扇出（Packaging），curve 是光栅化模态（非透传）
     assert %{
-             phoneme_timing: %{target: {:port, :synth, :phoneme_timing}},
+             phoneme_timing: %{target: pt_target},
              curve: %{target: target}
            } =
              DSCompat.channels(config)
 
+    assert is_function(pt_target, 2)
     assert is_function(target, 2)
   end
 

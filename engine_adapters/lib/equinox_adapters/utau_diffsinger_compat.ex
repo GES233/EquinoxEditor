@@ -4,7 +4,12 @@ defmodule EquinoxAdapters.UTAUDiffSingerCompat do
   密采样曲线域）。读取 OpenUtau 推理侧声库目录（`dsconfig.yaml` 优先、
   `dsconfig.json` 回退 + `phonemes.txt` + 可选 `character.txt`）。
 
-  契约级实现（loader + 五回调）；onnx 推理是 Hook/Step 领地，不在此层。
+  契约级实现（loader + 五回调）+ 推理打包：onnx 推理本体在
+  `EquinoxAdapters.DiffSinger.InferStep`（Python sidecar 经 MCP stdio）；
+  本模块的 `:phoneme_timing` spec target 是 DiffSinger 版 arity-2 扇出
+  （`DiffSinger.Packaging` 把整个窗口打包成 sidecar words 落
+  `{:port, :infer, :words}`），`:curve` spec 维持 kernel 共享实现
+  （光栅化落 `{:port, :synth, param}`，接推理节点是后续工作）。
 
   ## 关键映射
 
@@ -30,7 +35,7 @@ defmodule EquinoxAdapters.UTAUDiffSingerCompat do
   @behaviour Equinox.Kernel.EngineAdapter
 
   alias Equinox.Kernel.{ChannelSpecs, Voicebank}
-  alias EquinoxAdapters.Util
+  alias EquinoxAdapters.{DiffSinger.Packaging, Util}
 
   @default_sample_rate 44_100
   @default_hop_size 512
@@ -166,6 +171,11 @@ defmodule EquinoxAdapters.UTAUDiffSingerCompat do
 
     {:ok, phoneme_timing} = ChannelSpecs.build(:phoneme_timing, key)
     {:ok, curve} = ChannelSpecs.build(:curve, key, timing: voicebank.timing)
+
+    # DiffSinger 版 target：窗口打包（notes+spans+tempo → sidecar words）
+    # 扇出到推理节点 {:port, :infer, :words}（DiffSinger.InferStep）；patch
+    # payload 的 delta 施加尚未接入（v1 忽略，投影/对拍语义不变）
+    phoneme_timing = %{phoneme_timing | target: Packaging.target(voicebank.timing)}
 
     %{phoneme_timing: phoneme_timing, curve: curve}
   end

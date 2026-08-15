@@ -1,0 +1,14 @@
+[project]
+name = "ds-sidecar"
+version = "0.1.0"
+description = "DiffSinger 推理 sidecar——行分隔 JSON-RPC（MCP 形状）over stdio"
+requires-python = ">=3.11"
+dependencies = [
+    "onnxruntime",
+    "soundfile",
+    "pyyaml",
+    "numpy",
+]
+
+[tool.uv]
+package = false

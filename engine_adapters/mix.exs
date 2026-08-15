@@ -30,6 +30,9 @@ defmodule EquinoxEngineAdapters.MixProject do
     ]
   end
 
-  def application, do: []
+  def application do
+    [mod: {EquinoxAdapters.Application, []}, extra_applications: [:logger]]
+  end
+
   def cli, do: [preferred_envs: [precommit: :test]]
 end
