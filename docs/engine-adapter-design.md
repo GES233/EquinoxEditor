@@ -94,8 +94,10 @@ projection 供给的确定性按版本对齐。
 
 ## 5. 开放细节（设计阶段再钉）
 
-- **artifact 的具体形状**：目前只有「引擎产出默认 Artifact、不落领域事实」的
-  原则；形状与 `adoptables` 的对应关系待第一个真实引擎接入时定。
+- **artifact 的具体形状**：已定案（2026-08-15，随第一个真实引擎接入，
+  见下「DiffSinger 真模型闭环」）：`%{path, sample_rate, frames}`，wav
+  f32 由 sidecar 落盘，不落领域事实、不进 History，黑板是唯一传输
+  通道。
 - **globals 校验挂点**（已定案 2026-08-15，见下「globals 与 capabilities
   定案」）。
 - **curve channel**：已落地（2026-08-15，`EquinoxDomain.Port.Channels.Curve` +
@@ -303,3 +305,58 @@ Follow-up（真实声库接入前要做）：oto.ini 的 Shift-JIS / `#Charset:`
 （v1 UTF-8，需要时引 codepagex）；VCV/CVVC 多行同 alias；UTAU 的
 preutterance/overlap 用户编辑通道（`:phoneme_timing` 之于拼接引擎）；
 energy/breathiness 预测曲线的采纳语义（OpenUtau 无一手先例）。
+
+### DiffSinger 真模型闭环（2026-08-15 落地）
+
+契约级 adapter 推进到真实推理：**Python sidecar + MCP stdio**。选型理由：
+zongzi-svs（契约验证草稿）已用 onnxruntime Python 版跑通五段管线，
+Windows 零部署坑；kernel 已有手卷零依赖的 `MCP.StdioClient` 先例。
+ortex（Elixir 内推理）留作后续候选（用户另有轮子，暂缓）。
+
+**架构**（零 kernel 改动，全部 userland / engine_adapters）：
+
+```
+History 编辑 → prepare_dispatch → Runner check（patch resolve，纯）
+ → fold_resolved：UTAUDiffSingerCompat 的 :phoneme_timing spec target
+   （arity-2 覆盖，DiffSinger.Packaging）把窗口 notes+spans+tempo 打包成
+   sidecar words → {:port, :infer, :words}
+ → Oi.execute → DiffSinger.InferStep（task 内，I/O 合法）
+   → DiffSinger.Sidecar（GenServer 包装 StdioClient；按 model_root 去重，
+     python 子进程 8 个 ONNX session 常驻内存）
+   → tools/call "render" → wav 落盘 → artifact
+ → 黑板 {"infer|audio" => %{path, sample_rate, frames}}
+```
+
+钉死的点：
+
+- **sidecar 协议**：行分隔 JSON-RPC（MCP 形状子集）——`initialize` 握手
+  + `tools/list` + `tools/call`；工具 `predict`（确定性前向：
+  编码+dur+pitch）与 `render`（完整五段 → wav）。实现：
+  `engine_adapters/sidecar/`（`engine.py` 移植自 zongzi-svs 并扩展
+  `ph_dur_override` / `curves` 注入点；`server.py` 手卷 MCP server，
+  stdout 只过 JSON-RPC、日志走 stderr）。线上键是封闭集合（
+  `path/sample_rate/frames`、`ph_dur/pitch_pred_midi/total_frames`），
+  Elixir 侧 `Jason.decode(keys: :atoms!)` 解包。
+- **artifact 定案**（§5 开放项关闭）：`%{path, sample_rate, frames}`
+  （atom 键），wav f32 由 sidecar 落盘 `out_dir/{track_id}_
+  {window_start}.wav`；不落领域事实、不进 History、不参与 undo；
+  黑板（`{{track_id, window_start}, "infer|audio"}`）是唯一传输通道。
+- **触发语义**：窗口内存在 `:phoneme_timing` patch = 该窗要推理
+  （channel resolve 只在有 patch 时触发；无 patch 的窗口输入端口
+  `:void` 兜底）。patch payload 的 delta 施加 v1 未接（target 忽略
+  payload，投影/对拍语义不变）——`ph_dur_override` 线上形状已预留。
+- **音素来源**：`note.metadata["phonemes"]`（`[["zh","l"],...]` 形；
+  G2P 是独立的后续任务）。音符间隙由 Packaging 插 SP 休止词（语言
+  沿用前一音符首音素；sidecar 端把含 SP/AP 的词标成 note_rest）。
+- **时间链**：tick→秒在 Packaging 内用窗口 tempo 切片换算
+  （`start_sec + strategy` 局部换算，与 `CurveRaster` 同语义）；
+  帧数换算在 sidecar（`round(dur_sec * sample_rate / hop_size)`）。
+
+已知粗糙点 / follow-up：SP 语言归属是 best-effort；曲线 raster →
+sidecar `curves` 注入（pitch/breathiness/voicing + retake 翻转）线上
+形状已预留未接；`:curve` spec 仍落 kernel 共享实现的 `{:port, :synth,
+param}`（接推理节点待 kernel 参数化或自定义 spec）；speaker/key_shift
+globals 未进推理入参；UTAU 引擎侧（resampler 子进程）未动。
+验证：`engine_adapters/test/equinox_adapters/diff_singer_e2e_test.exs`
+（`@tag :real_engine`，默认排除；Qixuan v2.5.0 声库 + uv）——edit →
+adopt → dispatch → check → render → wav artifact 全链路绿。
