@@ -100,7 +100,11 @@ fn payload -> [{{:port, :vocoder, :f0_override}, payload}, ...] end
 
 ### 3.4 注册：Configurator.channels
 
-三要素经 `Configurator` 注入（Kernel 不感知任何具体 channel 名）：
+三要素经 `Configurator` 注入（Kernel 不感知任何具体 channel 名）。按 2026-08-15
+边界定案（`docs/engine-adapter-design.md`），channel spec 的单一来源将是
+`Equinox.Kernel.EngineAdapter` 实现（打包供给 channels + timing_spec + globals +
+adoptables），`Configurator` 从 Adapter 派生——下方手工注入示例展示的是 spec 的
+形状，不是推荐的注册路径：
 
 ```elixir
 Runner.run(dispatch, board,

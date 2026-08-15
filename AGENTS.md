@@ -5,8 +5,18 @@
 **Equinox** is a vocal synthesis editor (DAW-like) split into a standalone kernel and a UI shell.
 
 - **Backend**: Phoenix 1.8, LiveView 1.1, Bandit, Orchid ecosystem (DAG orchestration).
-- **Frontend**: Svelte 5 (Runes mode strictly), SvelteFlow, Tailwind CSS v4, TypeScript, Vite.
+- **Frontend**: Svelte 5 (Runes mode strictly), SvelteFlow (`@xyflow/svelte`), Tailwind CSS v4, TypeScript, Vite, Vitest.
 - **Banned Tech**: Kino, Livebook, LiteGraph, Svelte 4 syntax.
+
+### Repository Layout
+
+This is **not** a mix umbrella: the root `mix.exs` is a bare placeholder (`:equinox_repo`, no deps). The real projects are three sibling Elixir projects wired by path dependencies:
+
+- `domain/` — `:equinox_domain` (Elixir ~> 1.18)
+- `kernel/` — `:equinox_kernel` (Elixir ~> 1.15, OTP app `Equinox.Application`)
+- `ui_shell/` — `:equinox_ui_shell` (Phoenix app; Svelte frontend in `ui_shell/assets/`)
+
+Two further path dependencies live **outside this repo**, expected as siblings of the checkout: `../coconut` (`github:GES233/Coconut`) and `../tamale` (local path override). Build commands below fail without them.
 
 ### Layered Architecture
 
@@ -42,7 +52,7 @@ The `EquinoxDomain` module lives in `domain/` as a **separate Elixir project** (
 
 **Project location**: `domain/` (root-level, sibling to `kernel/` and `ui_shell/`)
 
-**Module map**:
+**Module map** (`domain/lib/equinox_domain/`):
 - `Score.Project` — `{id, workspace :: Coconut.Edit.Workspace.t(), tracks_meta :: %{track_id => TrackMeta.t()}, metadata}`. Pure query/meta aggregate: `new/1` (explicit `:id`), `add_track/2` → `{:ok, project, track}`, `remove_track/2`, `fetch_track/2`, `track_meta/2`, `put_track_meta/3`, `tempo_map/1`, `time_sig_map/1`, `view/2`, `dump/1` / `load/1` (composes `Coconut.Pickle.Workspace` + `Coconut.Pickle.Track.default_registry()` + own TrackMeta codec). **No note/tempo/patch writes here** — writes belong to the kernel's History path.
 - `Score.TrackMeta` — equinox-only per-track side table: `{mix_automation, gain, pan, mute, solo, presets, active_preset, ui_state, metadata}`. Lives outside coconut History (not undoable). Own dump/load.
 - `Score.Track` — **stateless query facade** over Project/workspace: `notes(project, track_id)` → `{:ok, [{id, Coconut.Score.Note.t(), {start_tick, end_tick}}]}`, `note/3`, `slice/3`.
@@ -50,6 +60,8 @@ The `EquinoxDomain` module lives in `domain/` as a **separate Elixir project** (
 - `Score.SliceFlag` — `:auto | :force_slice | :force_merge` over `Coconut.Score.Note.metadata`.
 - `Score.Phoneme` — pure identity VO (`symbol`, `type`). Timing lives in the engine projection layer; user timing edits are `:phoneme_timing` patches.
 - `Segment` — Caller-side rendering-context VO (acoustic boundaries + `phonemes`/`curves`, populated by the Kernel at compile time, not serialized). Distinct from `Windowing.Window`.
+- `Port` / `Command` — namespace marker modules (documentation only; responsibilities described in their moduledocs).
+- `Port.Channel` — data-channel identifier type (`atom()`), aligned with `Coconut.Edit.Patch.channel`.
 - `Port.Preset` — registry `channels :: %{channel_atom => Coconut.Render.Channel module}` + artifact/allow_adopt lists with cross-validation; own dump/load.
 - `Port.Channels.PhonemeTiming` — the first concrete `Coconut.Render.Channel` (`:phoneme_timing`): `projection/2` (canonical, float-free note+span base), `target/0` → `{:port, :synth, :phoneme_timing}`.
 - `Command.RenderRequest` — per-window compile request `{track_id, note_ids, notes (with spans), time_range, tempo_segments, patches, channels}`; `from_window(project, window, tempo_map)` filters structurally-survived patches by anchor ∩ window (Ordinal/Relative by refs, Metric by tick-range intersection).
@@ -82,6 +94,7 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 - **Rule**: Svelte components receive `bridge` as a prop. NEVER import from `phoenix_live_view` or access `window.liveSocket` in Svelte.
 - **Event Routing**: LiveComponents use `phx-target={@myself}`. Svelte 5 uses local `$state` for optimistic UI and `$effect` + `setTimeout` for debouncing network requests, instead of backend debouncing.
 - **Svelte 5 State**: Extract complex client-side state models into `.svelte.ts` files using exported functions or classes wrapping `$state`. Keep `.svelte` UI components focused on rendering and Bridge message dispatching.
+- **Frontend layout** (`ui_shell/assets/`): `js/app.js` (LiveSocket entry), `src/lib/bridge/` (bridge impls), `src/lib/components/` (`PianoRoll.svelte`, `Arranger.svelte`, `NodeEditor.svelte` + subfolders), `src/lib/stores/` (`viewport.svelte.ts`, `node_registry.ts`), `src/lib/editor_context.ts`.
 
 ## 4. Core Domain & Architecture Rules
 
@@ -107,14 +120,15 @@ The ONLY coupling between Svelte and Phoenix is the `EquinoxBridge` interface in
 - **Svelte 5**: Runes ONLY (`$state`, `$derived`, `$props`, `$effect`).
 - **Tailwind v4**: `!` modifier goes at the END (e.g., `bg-amber-500!`). Gradients use `bg-linear-to-b`.
 - **SvelteFlow**: NEVER use reserved node types like `input`/`output`. Use custom names (e.g., `custom_input`).
+- **Formatting**: root `.formatter.exs` covers `{domain,kernel,ui_shell}/{config,lib,test}`; each subproject also has its own `.formatter.exs`. Run `mix format` per subproject (part of `precommit`).
 - **Language**: AGENTS.md is pure English. Source code, comments, and documentation use Chinese. Project audience: AI assistants and Chinese-speaking developers.
 
 ## 6. Essential Commands
 
-- Domain (`cd domain`): `mix test`, `mix precommit`
-- Kernel (`cd kernel`): `mix deps.get`, `mix test`, `mix precommit`
-- UI Shell (`cd ui_shell`): `mix deps.get`, `iex -S mix phx.server`, `mix precommit`
-- Frontend (`cd ui_shell/assets`): `npm run dev`, `npm run build`, `npm run check`
+- Domain (`cd domain`): `mix test`, `mix precommit` (= `compile --warnings-as-errors` + `format` + `test`)
+- Kernel (`cd kernel`): `mix deps.get`, `mix test`, `mix precommit` (additionally runs `deps.unlock --unused`)
+- UI Shell (`cd ui_shell`): `mix setup` (= `deps.get` + assets `npm install`), `iex -S mix phx.server`, `mix precommit`; `mix assets.build` / `mix assets.deploy` for frontend builds via Vite
+- Frontend (`cd ui_shell/assets`): `npm run dev` (Vite watch build), `npm run build`, `npm run check` (`svelte-check && tsc --noEmit`), `npm run test:run` (Vitest, single run)
 - Commit Messages: Follow Conventional Commits (`feat:`, `fix:`, `refactor:`, `test:`, `chore:`).
   - Commit messages should be in English, but the internal code/documentation comments remain in Chinese until user's request.
 
@@ -125,6 +139,8 @@ The domain / intervention / rebase decisions that used to live in zongzi now liv
 - coconut: `../coconut/docs/` — `design-2026-07-editor-core.md` (the constitution: Workspace/Track/Element model, six ops, warp provider, step-only structural tempo, undo/redo via op tree + checkpoints), `design-2026-08-orchid-intervention.md` (render backend hookup, payload taxonomy, exactness spec), `design-2026-08-tempo-curve.md` (step-for-bones / curve-for-skin / bake-for-boundary).
 - tamale: `../tamale/docs/` — `zh/guide/caller-guide-zh.md` (Caller orchestration contract + self-check list), `spec/canonical-digest.md` (portable digest spec), `decisions/0001..0007` (edit-intent ops, identity conventions, warp-based Metric transport, clip/relative semantics, digest-as-adjudicator, chunked digests, exact rational coords).
 
+Equinox-side design docs in `docs/`: `coconut-migration.md` (migration record + mapping tables), `channel-development.md` (channel developer guide), `engine-adapter-design.md` (Engine Adapter boundary decision), `editor-mental-model.md`, `phase2-kernel-handoff.md`, `windows.md`. Note: `ui-interaction-model.md` is self-marked **outdated** post-migration — treat it as intent-level only.
+
 | coconut/tamale concern | Equinox concern |
 |---|---|
 | tamale `Transport` + write-time transport | Dead patches → per-track graveyard; `History.take_dead_patches/1` surfaces them |
@@ -132,6 +148,7 @@ The domain / intervention / rebase decisions that used to live in zongzi now liv
 | tamale exact rational `Coord` | No floats in anchors/spans/digests; normalize in adapters |
 | coconut `Operations.DragNote` | `[Move, Retime]` same-batch discipline |
 | coconut `Render.Channel` behaviour | Equinox channel impls (`Port.Channels.PhonemeTiming`) + `Preset` registry |
+| coconut `Render.Engine`/`Resolve`/`Encoder` stack (dormant — zero equinox callers, whole-workspace granularity) | Kernel owns the engine interface: `EngineAdapter` behaviour; Configurator derives channel specs from it (see `docs/engine-adapter-design.md`) |
 | coconut `Edit.Diff` | UI whole-window note replacement (`replace_window_notes`) |
 | coconut workspace write-time transport | No equinox-side rebase orchestration anymore |
 
@@ -143,7 +160,9 @@ These remain product / shell / Orchid concerns; they are **not** upstreamed:
 - **slice_flag semantics** — Caller-side windowing override (`Note.metadata` + `Score.SliceFlag` + `Windowing` fixup passes).
 - **TrackMeta side table** — mix/preset/ui_state per track, outside History (not undoable).
 - **synth_graph Session-side storage** — graph/cluster are Kernel compile-time concepts; they live in `Session.Context.graphs` (`%{track_id => Graph.t()}`).
-- **channel spec (projection/target) contract** — channel→port binding and projection supply are Host-side configuration (`Configurator.channels`, `projection` arity-2 `(request, patch)`), injected into the Runner check phase.
+- **channel spec (projection/target) contract** — channel→port binding and projection supply are Host-side configuration, injected into the Runner check phase. Single source: an `Equinox.Kernel.EngineAdapter` implementation packages channel specs + `timing_spec` + globals + adoptables; `Configurator` derives `channels` from the Adapter instead of hand-injected specs (`docs/engine-adapter-design.md`).
+- **Headless-editor placement** — session state (coconut History, synth graphs, compile cache, blackboard, render tasks) is kernel-owned (`Session.Server/Context`); coconut stays a pure edit core with no processes, no sessions, no orchestration.
+- **History persistence** — short term: History is session-scoped and not pickled (save/load round-trips only the present workspace; the undo tree restarts via `History.new/1`). Long term: `Pickle.Command` + `Pickle.History` on the coconut roadmap (`Pickle.Op` already exists); no equinox-side boundary change when it lands.
 - **Per-window render dispatch** — unit id `{track_id, window.start_tick}`; coconut's own render granularity is whole-workspace Snapshot, equinox keeps per-window `RenderRequest`s.
 - **Domain–Kernel–Session–UI layering** (`EquinoxDomain` vs Kernel import bans)
 - **Compiler / Orchid Hook** wiring (`param_name → port`)
@@ -188,9 +207,10 @@ The Kernel layer exists as a thin wrapper over Domain + runtime state management
 
 ## 9. Testing Guidelines
 
-- **Domain (Elixir)**: Focus on pure unit tests (`ExUnit`). Avoid mocking in the `domain/` project since everything is pure data/functions. Use table-driven tests (or `Enum.each`) for matrix logic like `Windowing` edge cases. Test fixtures write notes through `Coconut.Edit.History` + `Operations.*` (see `EquinoxDomain.TestFactory`) — do not re-test coconut/tamale internals.
-- **Kernel (Elixir)**: Test stateful boundaries (e.g., GenServers) and integration with Domain types.
-- **Frontend (Svelte)**: UI testing is deferred to Phase 3. For pure TS logic (e.g., math, formatting), use standard unit tests.
+- **Domain (Elixir)**: Focus on pure unit tests (`ExUnit`, one test file per module under `domain/test/equinox_domain/`). Avoid mocking in the `domain/` project since everything is pure data/functions. Use table-driven tests (or `Enum.each`) for matrix logic like `Windowing` edge cases. Test fixtures write notes through `Coconut.Edit.History` + `Operations.*` (see `EquinoxDomain.TestFactory`) — do not re-test coconut/tamale internals.
+- **Kernel (Elixir)**: Test stateful boundaries (e.g., GenServers) and integration with Domain types. Test support files compile from `kernel/test/support` in the `:test` env; kernel coverage ignores `*Step*` modules.
+- **UI Shell (Elixir)**: LiveView/presenter tests under `ui_shell/test/` (`lazy_html` available in test).
+- **Frontend (Svelte/TS)**: Vitest is wired in `ui_shell/assets` (`npm run test`, `npm run test:run`, `npm run test:ui`; jsdom + `@testing-library/svelte` + `setupTest.ts`). Full UI testing is deferred to Phase 3; for pure TS logic (e.g., math, formatting), use standard unit tests (see `src/basic.test.ts`).
 
 ## Current Milestones & Focus
 
@@ -209,7 +229,7 @@ Phase 3 ──── UI Shell (ui_shell/)
 
 > The following M0–M3 are early milestones that have been completed. Subsequent planning will uniformly use the Phase system.
 
-1. ~~**M0 — Skeleton**: Umbrella scaffolded, Vite ↔ Phoenix wiring verified on Windows, `MockBridge` + `LiveBridge` both render an empty PianoRoll.~~
+1. ~~**M0 — Skeleton**: Repo scaffolded (domain/kernel/ui_shell path-dep projects), Vite ↔ Phoenix wiring verified on Windows, `MockBridge` + `LiveBridge` both render an empty PianoRoll.~~
 2. ~~**M1 — Piano Roll parity**: Port notes/viewport/grid from KinoBayanroll.~~
 3. ~~**M2 — Node Editor parity**: SvelteFlow-based Synth editor, StepRegistry-driven palette, graph persistence via `Equinox.Project`.~~
 4. ~~**M3 — Kernel compile/runtime decoupling**: `Compiler`, `Planner`, `Session.Context`, and OrchidStratum-backed session storage are wired into the render path.~~
@@ -231,6 +251,8 @@ Phase 3 ──── UI Shell (ui_shell/)
 19. **Track API** — done: domain Project/TrackMeta + coconut Operations are wired through `Session.Server` named editing APIs (`add_track` / `remove_track` / `update_track_mix` / `update_track_ui_state` / `replace_window_notes` / `update_synth_graph` / `adopt_intervention`); synth graphs live in `Session.Context.graphs`.
 20. **RenderRequest + AdoptRequest** — main wiring done: `prepare_dispatch/1` builds one `RenderRequest` per window via `from_window/3`; `Runner.run/3` is two-phase (check-all → render-all), resolving patches per channel via `Tamale.Patch.resolve/2` against the Configurator `channels` contract (`projection` arity-2 + `target`, PortRef-keyed); check failures aggregate as `{:error, {:check_failed, entries}}`; `Server.adopt_intervention/3` wraps `AdoptRequest.build_patch/3` + `Command.attach_patches`. Channel developer guide: `docs/channel-development.md`. Deferred to the second cut: curve channel, frame-grid `timing_spec`, rasterization.
 21. **Editor / Session adaptation**: done — Session manages selection, clipboard, viewport, the coconut History, and the query-side Project. Only `Coconut.Render.Engine` remains as the engine contract naming (the legacy `Equinox.Kernel.Engine` runner was deleted in the oi migration).
+
+**Engine Adapter (2026-08-15 boundary decision, pre-implementation)**: the headless-editor role is kernel-owned; coconut's `Render.Engine`/`Resolve`/`Encoder` stack is dormant (marked, not deleted, not adopted). Kernel will define an `Equinox.Kernel.EngineAdapter` behaviour (`channels` / `timing_spec` / `globals` / `adoptables`) as the packaged supply source for `Configurator`; short-term goal is running the full edit → check → render → artifact → adopt loop with a stub adapter. Open details (artifact shape, globals validation placement) and the minimal action list: `docs/engine-adapter-design.md`. **Status check: no `EngineAdapter` module exists in `kernel/lib` yet.**
 
 ### Phase 3 — UI Shell (ui_shell/)
 22. **Arranger**: Second SvelteFlow canvas, multi-track mix, slice/utterance alignment, slice-aware editing affordances. Audio tracks: creation + presenter round-trip work; clip insertion needs a declared workspace `frame_rate` and frame-domain UI (not yet wired).
@@ -388,5 +410,5 @@ Ordered roughly by priority; do not fix opportunistically without a matching com
 Facts after the coconut migration (2026-08):
 
 - The kernel legacy JSON chain is gone — `Coconut.Pickle` codecs replace it (domain `Project.dump/load` composes `Coconut.Pickle.Workspace` with the default registry + the TrackMeta codec; registry includes vocal/tempo/audio element codecs). `Kernel.Graph.*` keeps its `@derive Jason.Encoder` (SvelteFlow graph persistence is used by ui_shell), and the `:jason` dependency stays.
-- `Equinox.PubSub` naming belongs to ui_shell; kernel has no PubSub code path.
+- `Equinox.PubSub` naming belongs to ui_shell (configured in `ui_shell/config/config.exs`); kernel has no PubSub code path.
 - Note ids are reminted by `Coconut.Edit.Diff` on whole-window replacement (exact span+content matches keep their ids); the frontend receives fresh ids via the `project_load` re-push — this is deliberate (visible death over optimistic survival).
