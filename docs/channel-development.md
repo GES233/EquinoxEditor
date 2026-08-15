@@ -41,9 +41,10 @@
 
 值的形状由 channel 自己定义（Opaque to Kernel）。resolved 产物即 patch payload
 本体——`Tamale.Patch.resolve/2` 只判 digest，通过则原样返回 payload。例如
-phoneme_timing 的 payload 是 `%{deltas: [%{identity, onset_delta_ms, duration_delta_ms}]}`，
-把 delta 施加到引擎新鲜投影上（换算成最终 onset/duration）是消费方（引擎 Hook）
-的职责；曲线通道为 `%{param, start_tick, end_tick, stride, samples}`（见 §6）。
+phoneme_timing 的 payload 是绝对边界
+`%{phonemes: [%{lang, symbol, start_frame, end_frame, note_index}], lead_in_sec}`
+（2026-08-15 定案，元音锚点；见 `phoneme-alignment-research.md`），换算成引擎
+输入（逐音素帧数序列）是消费方（引擎 Hook）的职责；曲线通道为 `%{param, start_tick, end_tick, stride, samples}`（见 §6）。
 
 ## 3. 通道定义方：三要素
 

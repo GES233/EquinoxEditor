@@ -331,16 +331,19 @@ History 编辑 → prepare_dispatch → Runner check（patch resolve，纯）
 
 - **sidecar 协议**：行分隔 JSON-RPC（MCP 形状子集）——`initialize` 握手
   + `tools/list` + `tools/call`；工具 `predict`（确定性前向：
-  编码+dur+pitch）与 `render`（完整五段 → wav）。实现：
+  编码+dur+pitch）、`align`（predict + 元音锚点对齐，返回绝对边界与
+  对齐后 ph_dur）与 `render`（完整五段 → wav）。实现：
   `engine_adapters/sidecar/`（`engine.py` 移植自 zongzi-svs 并扩展
   `ph_dur_override` / `curves` 注入点；`server.py` 手卷 MCP server，
   stdout 只过 JSON-RPC、日志走 stderr）。线上键是封闭集合（
-  `path/sample_rate/frames`、`ph_dur/pitch_pred_midi/total_frames`），
-  Elixir 侧 `Jason.decode(keys: :atoms!)` 解包。
-- **artifact 定案**（§5 开放项关闭）：`%{path, sample_rate, frames}`
-  （atom 键），wav f32 由 sidecar 落盘 `out_dir/{track_id}_
-  {window_start}.wav`；不落领域事实、不进 History、不参与 undo；
-  黑板（`{{track_id, window_start}, "infer|audio"}`）是唯一传输通道。
+  `path/sample_rate/frames/lead_in_sec`、`phonemes/ph_dur/total_frames`
+  等），Elixir 侧递归 atom 化解包（`String.to_atom`，封闭集合无泄漏）。
+- **artifact 定案**（§5 开放项关闭）：`%{path, sample_rate, frames,
+  lead_in_sec}`（atom 键；`lead_in_sec` = wav 第 0 帧早于窗口起点的
+  时长，2026-08-15 随 preutterance 落地增补），wav f32 由 sidecar
+  落盘 `out_dir/{track_id}_{window_start}.wav`；不落领域事实、不进
+  History、不参与 undo；黑板（`{{track_id, window_start},
+  "infer|audio"}`）是唯一传输通道。
 - **触发语义**：窗口内存在 `:phoneme_timing` patch = 该窗要推理
   （channel resolve 只在有 patch 时触发；无 patch 的窗口输入端口
   `:void` 兜底）。patch payload 的 delta 施加 v1 未接（target 忽略
@@ -351,17 +354,29 @@ History 编辑 → prepare_dispatch → Runner check（patch resolve，纯）
 - **时间链**：tick→秒在 Packaging 内用窗口 tempo 切片换算
   （`start_sec + strategy` 局部换算，与 `CurveRaster` 同语义）；
   帧数换算在 sidecar（`round(dur_sec * sample_rate / hop_size)`）。
+- **preutterance / 元音锚点对齐**（2026-08-15 落地，OpenUtau
+  `DiffSingerBasePhonemizer.cs` 移植）：dur 模型只输出 `ph_dur_pred`，
+  preutterance 由调用方派生——Packaging 句首插 SP padding 词（0.5s），
+  sidecar `align` 工具（predict + `_place` 纯函数）按 dsdict 符号类型
+  分组（元音开组 + CGV 例外），句首辅音组不拉伸、从音符起点倒推，
+  其余组按比例拉伸（**元音 onset = 音符起点**）；对齐后 `ph_dur` 经
+  render `ph_dur_override` 回放（对齐边界即渲染真相）；artifact 加
+  `lead_in_sec`。真声库冒烟：两只老虎首辅音 l 提前 35 帧（≈406ms），
+  元音 onset 精确锚 43 帧（= padding 帧数）。
 
 已知粗糙点 / follow-up：SP 语言归属是 best-effort；曲线 raster →
 sidecar `curves` 注入（pitch/breathiness/voicing + retake 翻转）线上
 形状已预留未接；`:curve` spec 仍落 kernel 共享实现的 `{:port, :synth,
 param}`（接推理节点待 kernel 参数化或自定义 spec）；speaker/key_shift
-globals 未进推理入参；UTAU 引擎侧（resampler 子进程）未动；
-**preutterance 缺口**：dur 模型只输出 `ph_dur_pred`，preutterance 是
-OpenUtau 调用方派生的（句首 SP + 500ms padding，首辅音组不拉伸、
-从音符起点倒推对齐——`DiffSingerBasePhonemizer.cs` `ProcessPart`）；
-sidecar v1 无此逻辑，辅音 onset 卡在音符起点，听感慢半拍。接入点：
-Packaging 句首插 SP 词 + engine 对齐段倒推。
+globals 未进推理入参；UTAU 引擎侧（resampler 子进程）未动。
+**性能 follow-up**（2026-08-15 记）：CPU-only + 高负载下冷启动与
+扩散推理都到分钟级，离 production 远。杠杆按优先级：① steps/depth
+暴露为 render 参数（现为 20/1.0 硬编码；预览降档 4-8 步 + 成品全步数
+两档）；② onnxruntime DirectML provider（非 N 卡机器的现实加速路径，
+sidecar 依赖换 onnxruntime-directml + providers 配置项）；③ 内容哈希
+tensor cache（OpenUtau DiffSingerTensorCache 对应物，与 phrase cache
+roadmap 合并）；④ 会话启动预热 sidecar。参考数据点：OpenVPI 社区
+有 3060 笔电整曲 3s 的优化案例（采样器/步数优化为主）。
 验证：`engine_adapters/test/equinox_adapters/diff_singer_e2e_test.exs`
 （`@tag :real_engine`，默认排除；Qixuan v2.5.0 声库 + uv）——edit →
 adopt → dispatch → check → render → wav artifact 全链路绿。

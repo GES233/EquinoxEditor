@@ -109,7 +109,9 @@ DiffSinger 原文（[arXiv 2105.02446](https://ar5iv.labs.arxiv.org/html/2105.02
    先例完全对应。
 3. **sidecar 的 preutterance 缺口**（已记入
    `docs/engine-adapter-design.md` follow-up）按 OpenUtau 模式补齐即可：
-   Packaging 句首插 SP 词 + 对齐段首辅音组不拉伸倒推。若未来要"方便
+   Packaging 句首插 SP 词 + 对齐段首辅音组不拉伸倒推。**（已于
+   2026-08-15 落地：sidecar `align` 工具 + artifact `lead_in_sec`；
+   `:phoneme_timing` payload 同步定案为绝对边界形状。）**若未来要"方便
    混音"的严格对齐模式（ByteSing 式），那是一个可选的渲染开关，不是
    默认。
 

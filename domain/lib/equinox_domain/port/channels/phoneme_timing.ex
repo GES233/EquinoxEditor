@@ -10,18 +10,29 @@ defmodule EquinoxDomain.Port.Channels.PhonemeTiming do
   identity 为 adapter 持有的不透明标识（原 ADR-012 语义）——
   Domain 不理解其内部结构，只做透传。
 
-  ## Payload 形状（delta 语义沿用旧 Declaration）
+  ## Payload 形状（绝对边界语义，2026-08-15 定案）
 
       %{
-        deltas: [
-          %{identity: term(), onset_delta_ms: integer(), duration_delta_ms: integer()}
-        ]
+        phonemes: [
+          %{lang: binary(), symbol: binary(),
+            start_frame: integer(), end_frame: integer(),
+            note_index: non_neg_integer() | nil}
+        ],
+        lead_in_sec: float()
       }
 
+  语义对齐业界标杆（SynthV V2 / ACE / CeVIO 收敛的形态，见
+  `docs/phoneme-alignment-research.md`）：**元音 onset = 音符起点**，
+  词首辅音前挪；边界是帧网格上的绝对位置（含 preutterance lead-in）。
+  默认值由引擎对齐投影派生（DiffSinger sidecar `align` 工具，producer
+  接线在 Phase 3），用户编辑 = patch 覆盖；渲染经 sidecar `render` 的
+  `ph_dur_override` 回放——**用户看到/编辑的边界就是渲染的边界**。
+  （2026-08-15 前的相对 delta 形状 `%{deltas: [...]}` 废止；无存量
+  pickle，干净替换。）
+
   resolve 成功的产物即 payload 本体（coconut 模型：`Tamale.Patch.resolve/2`
-  只判 digest 并原样返回 payload）；把 delta 施加到引擎新鲜投影上
-  （onset/duration 以秒为基准加毫秒偏移、duration 下限 1ms、round 4 位）
-  是消费方（kernel / 引擎 Hook）的职责，Domain 不再代算。
+  只判 digest 并原样返回 payload）；把边界换算成引擎输入（逐音素帧数
+  序列）是消费方（kernel / 引擎 Hook）的职责，Domain 不再代算。
 
   ## 投影形状（digest base）
 
