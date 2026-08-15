@@ -15,6 +15,7 @@ defmodule EquinoxDomain.Score.TrackMetaTest do
       assert meta.solo == false
       assert meta.presets == %{}
       assert meta.active_preset == nil
+      assert meta.voicebank_id == nil
       assert meta.ui_state == %{}
       assert meta.metadata == %{}
     end
@@ -24,6 +25,7 @@ defmodule EquinoxDomain.Score.TrackMetaTest do
       assert {:error, {:invalid_pan, _}} = TrackMeta.new(pan: :left)
       assert {:error, {:invalid_mute, _}} = TrackMeta.new(mute: 1)
       assert {:error, {:invalid_solo, _}} = TrackMeta.new(solo: "yes")
+      assert {:error, {:invalid_voicebank_id, _}} = TrackMeta.new(voicebank_id: 42)
     end
 
     test "presets 逐个校验" do
@@ -66,6 +68,7 @@ defmodule EquinoxDomain.Score.TrackMetaTest do
           solo: true,
           presets: %{"default" => preset},
           active_preset: "default",
+          voicebank_id: "qiyu_v2",
           ui_state: %{"collapsed" => false},
           metadata: %{"color" => "cyan"}
         )

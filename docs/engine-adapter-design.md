@@ -43,6 +43,9 @@ defmodule Equinox.Kernel.EngineAdapter do
   # 形状同现有 Configurator.channel_spec()）
   @callback channels(config :: term()) :: %{atom() => Configurator.channel_spec()}
 
+  # 引擎身份键（声库 id + 引擎版本），进 digest base 的版本戳
+  @callback engine_key(config :: term()) :: String.t()
+
   # 帧网格声明（hop / frame_rate，模型相关；第二刀光栅化时消费）
   @callback timing_spec(config :: term()) :: {:ok, map()} | {:error, term()}
 
@@ -79,12 +82,15 @@ projection 供给的确定性按版本对齐。
      → adopt（显式采纳为 patch，回挂 History）
 ```
 
-1. kernel 定义 `Equinox.Kernel.EngineAdapter` behaviour + Configurator 派生逻辑；
-2. 写一个 stub/mock adapter（只接 `PhonemeTiming` channel 的伪引擎）把上述闭环
-   端到端跑通；
+1. ~~kernel 定义 `Equinox.Kernel.EngineAdapter` behaviour + Configurator 派生逻辑~~
+   （已落地，含 `engine_key/1` 版本戳回调）；
+2. ~~写一个 stub/mock adapter（只接 `PhonemeTiming` channel 的伪引擎）把上述闭环
+   端到端跑通~~（已落地：`kernel/test/support/stub_engine_adapter.ex` +
+   `kernel/test/equinox/engine_adapter_test.exs`，per-track 派发 + 盖戳对拍 +
+   版本升级 conflict + capabilities 门控全绿）；
 3. coconut 侧给 `Render.Engine` / `Resolve` / `Encoder` 加 dormant 标注
-   （一句话 moduledoc，不删代码）；
-4. 全流程 green 以 `cd kernel && mix precommit` 为准。
+   （一句话 moduledoc，不删代码）——**未做**，归 coconut 仓库；
+4. 全流程 green 以 `cd kernel && mix precommit` 为准（已绿）。
 
 ## 5. 开放细节（设计阶段再钉）
 
@@ -98,9 +104,13 @@ projection 供给的确定性按版本对齐。
 
 ### 声库（voicebank）设计草案
 
-> 2026-08-15 讨论稿，未定案。核心判断：**声库是引擎侧的资产描述，不是领域
+> 2026-08-15 讨论稿。核心判断：**声库是引擎侧的资产描述，不是领域
 > 事实**——不进 Domain struct、不进 History、不参与 undo，与 TrackMeta 的
-> presets/ui_state 同级。
+> presets/ui_state 同级。落地状态：TrackMeta `voicebank_id` 字段、
+> per-track 解析（`Context.engine_for/2`）、digest 版本戳
+> （`Channel.stamp_base/2` + `AdoptRequest :engine` 选项 +
+> `EngineAdapter.engine_key/1`）已实现；声库描述符 VO 本体属 userland，
+> 下方形状为约定草案。
 
 三层拆分：
 

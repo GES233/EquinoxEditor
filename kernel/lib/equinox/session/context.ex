@@ -12,6 +12,10 @@ defmodule Equinox.Session.Context do
     graph 是 Kernel 编译期概念（不进 Domain struct），过渡期存于本字段。
   - `compile_cache` — `%{track_id => {graph, compiled}}`，按轨缓存编译产物，
     供编辑-渲染循环增量复用。
+  - `engines` — `%{voicebank_id => {EngineAdapter 模块, config}}` 声库注册表
+    （userland 注入，config 对 kernel 不透明）；`default_engine` 为
+    voicebank_id 缺省轨的回落。per-track 粒度：每轨经
+    `TrackMeta.voicebank_id` 解析自己的 `{adapter, config}`。
   """
 
   alias Coconut.Edit.History
@@ -29,28 +33,57 @@ defmodule Equinox.Session.Context do
           compile_cache: Compiler.compile_cache(),
           blackboard: Blackboard.t(),
           task_supervisor: GenServer.name(),
-          render_tasks: Task.t() | nil
+          render_tasks: Task.t() | nil,
+          engines: %{term() => {module(), term()}},
+          default_engine: nil | {module(), term()}
         }
   defstruct [
     :session_id,
     :project,
     :history,
     :task_supervisor,
+    :default_engine,
     graphs: %{},
     compile_cache: %{},
     blackboard: nil,
-    render_tasks: nil
+    render_tasks: nil,
+    engines: %{}
   ]
 
-  @spec new(atom() | String.t(), Project.t()) :: t()
-  def new(session_id, %Project{} = project) do
+  @spec new(atom() | String.t(), Project.t(), keyword()) :: t()
+  def new(session_id, %Project{} = project, opts \\ []) do
     %__MODULE__{
       session_id: session_id,
       project: project,
       history: History.new(project.workspace),
       task_supervisor: Session.task_sup(session_id),
-      blackboard: Blackboard.new()
+      blackboard: Blackboard.new(),
+      engines: opts |> Keyword.get(:engines, %{}) |> Map.new(),
+      default_engine: Keyword.get(opts, :default_engine)
     }
+  end
+
+  @doc """
+  按轨解析引擎适配器（per-track 粒度）：`TrackMeta.voicebank_id` →
+  `engines` 注册表；`voicebank_id` 缺省回落 `default_engine`（可为 nil，
+  表示该轨无 Adapter 供给，Runner 回落 `Configurator.channels`）。
+  未知声库 id 响亮报错。
+  """
+  @spec engine_for(t(), term()) ::
+          {:ok, {module(), term()} | nil} | {:error, {:unknown_voicebank, term()}}
+  def engine_for(%__MODULE__{} = ctx, track_id) do
+    with {:ok, meta} <- Project.track_meta(ctx.project, track_id) do
+      case meta.voicebank_id do
+        nil ->
+          {:ok, ctx.default_engine}
+
+        voicebank_id ->
+          case Map.fetch(ctx.engines, voicebank_id) do
+            {:ok, {mod, cfg}} when is_atom(mod) -> {:ok, {mod, cfg}}
+            :error -> {:error, {:unknown_voicebank, voicebank_id}}
+          end
+      end
+    end
   end
 
   @doc """
@@ -73,6 +106,12 @@ defmodule Equinox.Session.Context do
   `{{track_id, window_start_tick}, graph, render_request, compiled}`。
   units 按 `{track_id, window_start_tick}` 排序，保证确定性。
 
+  同时按轨解析引擎适配器（`engine_for/2`，per-track 粒度），把 Adapter
+  派生的 channel specs 挂进 dispatch 的 `track_channels`
+  （`%{track_id => %{channel => spec}}`）；无 Adapter 供给的轨不出条目，
+  Runner 回落 `Configurator.channels`。未知声库 id 整体报错
+  `{ctx, {:error, {:unknown_voicebank, _}}}`（响亮失败，ctx 不变）。
+
   空窗口轨不出单元；tempo 编译失败且全工程无窗口时仍产出正常空 dispatch，
   任一轨切出窗口则整体报错 `{ctx, {:error, tempo_reason}}`（响亮报错，不做
   静默兜底）；任一 slice/compile/from_window 失败同样 `{ctx, error}`，
@@ -84,8 +123,13 @@ defmodule Equinox.Session.Context do
     tempo = Project.tempo_map(ctx.project)
 
     case reduce_tracks(ctx, track_ids, tempo) do
-      {:ok, units, compile_cache} ->
-        dispatch = %{session_id: ctx.session_id, units: units}
+      {:ok, units, compile_cache, track_channels} ->
+        dispatch = %{
+          session_id: ctx.session_id,
+          units: units,
+          track_channels: track_channels
+        }
+
         {%{ctx | compile_cache: compile_cache}, dispatch}
 
       {:error, _reason} = error ->
@@ -93,20 +137,31 @@ defmodule Equinox.Session.Context do
     end
   end
 
-  # 逐轨 slice + compile，累积 units 与新 compile_cache；任一失败即中断。
+  # 逐轨解析引擎 + slice + compile，累积 units / 新 compile_cache /
+  # track_channels；任一失败即中断。
   # tempo 是 `{:ok, TempoMap.t()} | {:error, reason}`：编译失败时 slice 仍可
   # 进行（窗口只依赖 tick），真正有窗口产出时才强制要求它。
   defp reduce_tracks(ctx, track_ids, tempo) do
-    Enum.reduce_while(track_ids, {:ok, [], %{}}, fn track_id, {:ok, units_acc, cache_acc} ->
-      with {:ok, windows} <- slice_track(ctx.project, track_id),
+    Enum.reduce_while(track_ids, {:ok, [], %{}, %{}}, fn track_id,
+                                                         {:ok, units_acc, cache_acc, channels_acc} ->
+      with {:ok, engine} <- engine_for(ctx, track_id),
+           {:ok, windows} <- slice_track(ctx.project, track_id),
            {:ok, track_units, cache_acc} <-
              compile_units(ctx, track_id, windows, cache_acc, tempo) do
-        {:cont, {:ok, units_acc ++ track_units, cache_acc}}
+        {:cont,
+         {:ok, units_acc ++ track_units, cache_acc,
+          put_track_channels(channels_acc, track_id, engine)}}
       else
         {:error, _} = err -> {:halt, err}
       end
     end)
   end
+
+  # 无 Adapter 供给的轨不出 track_channels 条目（Runner 回落 conf.channels）
+  defp put_track_channels(acc, _track_id, nil), do: acc
+
+  defp put_track_channels(acc, track_id, {adapter, config}),
+    do: Map.put(acc, track_id, adapter.channels(config))
 
   # 分窗投影：tpqn 取自 workspace；`extra_spans` 由轨上 Metric 锚 patch 的
   # tick 区间推导（旧「干预 scope 撑窗」语义，Ordinal/Relative 锚挂在音符上

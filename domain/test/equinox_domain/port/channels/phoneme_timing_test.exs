@@ -57,6 +57,17 @@ defmodule EquinoxDomain.Port.Channels.PhonemeTimingTest do
     assert {:ok, %{"span" => [0, 480]}} = PhonemeTiming.projection(project.workspace, patch)
   end
 
+  test "base_for/2：与 projection/2 逐位一致（单一实现对拍）" do
+    {project, track_id, track} = setup()
+    {:ok, {"n1", note, span}} = EquinoxDomain.Score.Track.note(project, track_id, "n1")
+
+    patch =
+      shell_patch(track_id, %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: track.space.version})
+
+    assert {:ok, base} = PhonemeTiming.projection(project.workspace, patch)
+    assert {:ok, ^base} = PhonemeTiming.base_for(note, span)
+  end
+
   test "projection/2 错误路径" do
     {project, track_id, track} = setup()
 

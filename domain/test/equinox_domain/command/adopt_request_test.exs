@@ -95,6 +95,41 @@ defmodule EquinoxDomain.Command.AdoptRequestTest do
     assert {:conflict, :base_changed} = Tamale.Patch.resolve(patch.patch, fresh_base)
   end
 
+  test ":engine 版本戳进 digest base：同戳 resolve 成功，异戳 / 无戳判 :base_changed" do
+    {project, track_id} = setup()
+
+    {:ok, patch} =
+      AdoptRequest.build_patch(project.workspace, PhonemeTiming, %{
+        track_id: track_id,
+        anchor: {:ordinal, ["n1"]},
+        payload: @payload,
+        engine: "qiyu_v2@0.9.1"
+      })
+
+    {:ok, base} = PhonemeTiming.projection(project.workspace, patch)
+    alias EquinoxDomain.Port.Channel
+
+    # check 侧同戳（Adapter spec projection 的等价组合）→ resolve 回 payload
+    stamped = Channel.stamp_base(base, "qiyu_v2@0.9.1")
+    assert {:ok, @payload} = Tamale.Patch.resolve(patch.patch, stamped)
+
+    # 引擎 / 声库升级（异戳）→ conflict 风暴（显式接受的最坏情形）
+    upgraded = Channel.stamp_base(base, "qiyu_v3@0.9.1")
+    assert {:conflict, :base_changed} = Tamale.Patch.resolve(patch.patch, upgraded)
+
+    # 无戳 base 同样失配（盖戳是双向纪律）
+    assert {:conflict, :base_changed} = Tamale.Patch.resolve(patch.patch, base)
+
+    # 非法版本戳类型报错
+    assert {:error, {:invalid_engine_key, 42}} =
+             AdoptRequest.build_patch(project.workspace, PhonemeTiming, %{
+               track_id: track_id,
+               anchor: {:ordinal, ["n1"]},
+               payload: @payload,
+               engine: 42
+             })
+  end
+
   test "错误路径：缺字段 / 未知轨道 / 非法锚 / channel 不支持的锚" do
     {project, track_id} = setup()
 

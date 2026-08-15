@@ -23,8 +23,16 @@ defmodule Equinox.Kernel.Runner do
   @typedoc "单个窗口的执行单元（即 Compiler 的编译产物）：第三元素是窗口 RenderRequest，check 通过后派生 `Compiler.interventions_map()` 喂输入装配。"
   @type unit :: Compiler.compiled_unit()
 
-  @typedoc "一次渲染 dispatch：会话标识 + 全部窗口的执行单元。"
-  @type dispatch :: %{session_id: atom() | String.t(), units: [unit()]}
+  @typedoc """
+  一次渲染 dispatch：会话标识 + 全部窗口的执行单元 + 按轨派生的 channel
+  specs（`track_channels`，per-track EngineAdapter 粒度；缺条目的轨回落
+  `Configurator.channels`）。
+  """
+  @type dispatch :: %{
+          required(:session_id) => atom() | String.t(),
+          required(:units) => [unit()],
+          optional(:track_channels) => %{term() => %{atom() => Configurator.channel_spec()}}
+        }
 
   @typedoc "check 失败条目；`:conflict` 另带 `:intervention_id`（patch id）字段。"
   @type check_entry :: %{
@@ -54,8 +62,14 @@ defmodule Equinox.Kernel.Runner do
   def run(dispatch, %Blackboard{} = board, opts) when is_list(opts),
     do: run(dispatch, board, Configurator.new(opts))
 
-  def run(%{session_id: session_id, units: units}, %Blackboard{} = board, %Configurator{} = conf) do
-    with {:ok, runnable} <- resolve_units(units, conf.channels) do
+  def run(
+        %{session_id: session_id, units: units} = dispatch,
+        %Blackboard{} = board,
+        %Configurator{} = conf
+      ) do
+    track_channels = Map.get(dispatch, :track_channels, %{})
+
+    with {:ok, runnable} <- resolve_units(units, conf.channels, track_channels) do
       runnable
       |> Task.async_stream(
         fn unit -> run_unit(session_id, unit, board, conf) end,
@@ -81,13 +95,18 @@ defmodule Equinox.Kernel.Runner do
   # 逐 unit 把存活 patch 按 channel 分组 resolve；错误条目全量聚合（不放过
   # 任何一个 unit），全部通过才换形为 {unit_id, graph, interventions_map,
   # compiled}。空 patch 快路径零成本：group_by 得空 map，reduce 直接返回
-  # {[], %{}}。
-  @spec resolve_units([unit()], %{atom() => Configurator.channel_spec()}) ::
+  # {[], %{}}。channel specs 按 unit 所属轨解析（per-track Adapter 粒度），
+  # 缺条目回落 default（`Configurator.channels`）。
+  @spec resolve_units([unit()], %{atom() => Configurator.channel_spec()}, %{
+          term() => %{atom() => Configurator.channel_spec()}
+        }) ::
           {:ok, [{Compiler.unit_id(), Graph.t(), Compiler.interventions_map(), Oi.Compiled.t()}]}
           | {:error, {:check_failed, [check_entry()]}}
-  defp resolve_units(units, channels) do
+  defp resolve_units(units, default_channels, track_channels) do
     {runnable, entries} =
       Enum.map_reduce(units, [], fn {unit_id, graph, request, compiled}, entries_acc ->
+        {track_id, _window_start} = unit_id
+        channels = Map.get(track_channels, track_id, default_channels)
         {unit_entries, interventions_map} = resolve_unit(unit_id, request, channels)
         {{unit_id, graph, interventions_map, compiled}, entries_acc ++ unit_entries}
       end)

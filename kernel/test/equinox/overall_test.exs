@@ -182,9 +182,22 @@ defmodule Equinox.OverallTest do
              )
 
     assert :ok = GenServer.stop(server_pid)
-    # 这个断言偶尔会因为编译缓存的关系报错
-    assert {:error, :session_not_found} = Session.resolve(session_id)
+    # Registry 的注销经 monitor DOWN 异步生效（GenServer.stop 只保证进程死亡），
+    # 轮询等条目摘除；Oi 会话在 terminate/2 里同步销毁，直接断言即可
+    assert_eventually(fn -> Session.resolve(session_id) == {:error, :session_not_found} end)
     assert {:error, :session_not_found} = Oi.Runtime.Session.resolve(session_id)
+  end
+
+  # 异步条件的轮询断言（Registry 注销等 monitor DOWN 驱动的清理）
+  defp assert_eventually(fun, retries \\ 50)
+
+  defp assert_eventually(fun, 0), do: assert(fun.())
+
+  defp assert_eventually(fun, retries) do
+    unless fun.() do
+      Process.sleep(10)
+      assert_eventually(fun, retries - 1)
+    end
   end
 
   # 工程夹具：tempo 轨一个 120bpm 事件（经 History + InsertNote 写入）

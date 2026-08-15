@@ -1,6 +1,6 @@
 defmodule EquinoxDomain.Score.TrackMeta do
   @moduledoc """
-  轨道元数据侧表项——equinox 特有的轨道附加信息（混音、预设、UI 状态）。
+  轨道元数据侧表项——equinox 特有的轨道附加信息（混音、预设、声库选择、UI 状态）。
 
   与 coconut 的区分：`Coconut.Edit.Track` 承载音符/干预真相并进入
   History（可 undo）；TrackMeta 是宿主侧表，**不进 History、不可 undo**，
@@ -19,6 +19,7 @@ defmodule EquinoxDomain.Score.TrackMeta do
           pan: number(),
           mute: boolean(),
           solo: boolean(),
+          voicebank_id: nil | binary(),
           presets: %{binary() => Preset.t()},
           active_preset: nil | binary(),
           ui_state: map(),
@@ -31,6 +32,7 @@ defmodule EquinoxDomain.Score.TrackMeta do
     pan: 0.0,
     mute: false,
     solo: false,
+    voicebank_id: nil,
     presets: %{},
     active_preset: nil,
     ui_state: %{},
@@ -58,11 +60,23 @@ defmodule EquinoxDomain.Score.TrackMeta do
   @spec validate(t()) :: {:ok, t()} | {:error, term()}
   def validate(%__MODULE__{} = meta) do
     cond do
-      not is_number(meta.gain) -> {:error, {:invalid_gain, meta.gain}}
-      not is_number(meta.pan) -> {:error, {:invalid_pan, meta.pan}}
-      not is_boolean(meta.mute) -> {:error, {:invalid_mute, meta.mute}}
-      not is_boolean(meta.solo) -> {:error, {:invalid_solo, meta.solo}}
-      true -> validate_presets(meta)
+      not is_number(meta.gain) ->
+        {:error, {:invalid_gain, meta.gain}}
+
+      not is_number(meta.pan) ->
+        {:error, {:invalid_pan, meta.pan}}
+
+      not is_boolean(meta.mute) ->
+        {:error, {:invalid_mute, meta.mute}}
+
+      not is_boolean(meta.solo) ->
+        {:error, {:invalid_solo, meta.solo}}
+
+      not (is_nil(meta.voicebank_id) or is_binary(meta.voicebank_id)) ->
+        {:error, {:invalid_voicebank_id, meta.voicebank_id}}
+
+      true ->
+        validate_presets(meta)
     end
   end
 
@@ -95,6 +109,7 @@ defmodule EquinoxDomain.Score.TrackMeta do
        pan: meta.pan,
        mute: meta.mute,
        solo: meta.solo,
+       voicebank_id: meta.voicebank_id,
        presets: presets,
        active_preset: meta.active_preset,
        ui_state: meta.ui_state,
@@ -113,6 +128,7 @@ defmodule EquinoxDomain.Score.TrackMeta do
         :pan,
         :mute,
         :solo,
+        :voicebank_id,
         :active_preset,
         :ui_state,
         :metadata

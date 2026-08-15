@@ -2,6 +2,11 @@ defmodule Equinox.Kernel.Configurator do
   @moduledoc """
   不可变的渲染通道配置。
   在调度边界创建一次，向下传递到 Engine/Worker 和插件链。
+
+  channel spec 的**单一来源**是 `Equinox.Kernel.EngineAdapter` 实现：
+  `new(engine: {adapter, config})` 内部展开为 `adapter.channels(config)`。
+  `:channels` 手工注入保留为兼容 / 实验通道；同 key 冲突时 Adapter
+  派生者优先（单一来源纪律）。
   """
 
   alias Equinox.Kernel.Graph
@@ -20,7 +25,8 @@ defmodule Equinox.Kernel.Configurator do
           orchid_opts: keyword(),
           concurrency: pos_integer(),
           timeout: timeout(),
-          channels: %{atom() => channel_spec()}
+          channels: %{atom() => channel_spec()},
+          engine: nil | {module(), term()}
         }
 
   defstruct plugins: [],
@@ -28,19 +34,29 @@ defmodule Equinox.Kernel.Configurator do
             orchid_opts: [],
             concurrency: System.schedulers_online(),
             timeout: :infinity,
-            channels: %{}
+            channels: %{},
+            engine: nil
 
   @spec new(keyword()) :: t()
   def new(opts \\ []) do
+    engine = Keyword.get(opts, :engine)
+
     %__MODULE__{
       plugins: Keyword.get(opts, :plugins, []),
       orchid_baggage: opts |> Keyword.get(:orchid_baggage, []) |> Enum.into(%{}),
       orchid_opts: Keyword.get(opts, :orchid_opts, []),
       concurrency: Keyword.get(opts, :concurrency, System.schedulers_online()),
       timeout: Keyword.get(opts, :timeout, :infinity),
-      channels: opts |> Keyword.get(:channels, %{}) |> Map.new()
+      channels: derive_channels(engine, opts |> Keyword.get(:channels, %{}) |> Map.new()),
+      engine: engine
     }
   end
+
+  # Adapter 派生（单一来源）：同 key 冲突时派生者优先于手工注入
+  defp derive_channels({adapter, config}, manual) when is_atom(adapter),
+    do: Map.merge(manual, adapter.channels(config))
+
+  defp derive_channels(_no_engine, manual), do: manual
 
   @spec apply_plugins(t(), {Orchid.Recipe.t(), keyword()}) ::
           {Orchid.Recipe.t(), keyword()}

@@ -54,9 +54,23 @@ defmodule EquinoxDomain.Port.Channels.PhonemeTiming do
          {:ok, track} <- Workspace.fetch_track(ws, patch.track_id),
          {:ok, %Note{} = note} <- fetch_note(track, note_id),
          {:ok, {start_tick, end_tick}} <- fetch_span(track, note_id) do
-      %{"note" => Note.to_canonical(note), "span" => [start_tick, end_tick]}
-      |> canonicalize()
+      base_for(note, {start_tick, end_tick})
     end
+  end
+
+  @doc """
+  由音符 + span 直接构造 canonical base——digest base 的**单一实现**。
+
+  挂载侧（`projection/2`，workspace 粒度）与 check 侧（EngineAdapter
+  供给的 spec projection，RenderRequest 粒度）都必须汇聚到本函数，
+  不允许平行实现（见 `docs/engine-adapter-design.md` Channel 本体纪律）。
+  """
+  @spec base_for(Note.t(), {integer(), integer()}) ::
+          {:ok, Tamale.Digest.canonical()} | {:error, term()}
+  def base_for(%Note{} = note, {start_tick, end_tick})
+      when is_integer(start_tick) and is_integer(end_tick) do
+    %{"note" => Note.to_canonical(note), "span" => [start_tick, end_tick]}
+    |> canonicalize()
   end
 
   @impl true

@@ -61,6 +61,18 @@ defmodule Equinox.Session.Server do
     do: GenServer.call(server, {:update_track_ui_state, track_id, key, value})
 
   @doc """
+  选择轨道声库（`TrackMeta.voicebank_id`；侧表写，不进 History）。
+
+  `voicebank_id` 须命中启动时注入的 `:engines` 注册表（未命中不立即报错，
+  但 `prepare_dispatch` / `adopt_intervention` 会响亮报
+  `{:unknown_voicebank, _}`）；传 nil 清除选择（回落 `:default_engine`）。
+  """
+  @spec update_track_voicebank(GenServer.server(), term(), nil | binary()) ::
+          {:ok, TrackMeta.t()} | {:error, term()}
+  def update_track_voicebank(server, track_id, voicebank_id),
+    do: GenServer.call(server, {:update_track_voicebank, track_id, voicebank_id})
+
+  @doc """
   整体替换指定窗口内的音符（一条 History 边，可 undo）。
 
   流程：定位 `start_tick == window_start` 的窗口（不存在报
@@ -86,8 +98,9 @@ defmodule Equinox.Session.Server do
 
   @doc """
   采纳引擎产出为轨道 patch（`AdoptRequest` 流程：`build_patch/3` 纯构造
-  （base digest 由 channel 模块对当前 workspace 投影算出）→
-  `History.run(Command.attach_patches(...))` 挂载）。
+  （base digest 由 channel 模块对当前 workspace 投影算出，并按轨盖上
+  Adapter 的 `engine_key/1` 版本戳）→ `History.run(Command.attach_patches(...))`
+  挂载）。
 
   `attrs` 须含 `:channel`（`Coconut.Render.Channel` 实现模块）、`:payload`，
   锚二选一：`:anchor`（`AdoptRequest.anchor_spec()`）或 `:seq_id`
@@ -131,11 +144,19 @@ defmodule Equinox.Session.Server do
       {:ok, _pid} ->
         # trap_exit 使监督者 shutdown 也会触发 terminate/2，保证 Oi 会话被销毁
         Process.flag(:trap_exit, true)
-        {:ok, Context.new(session_id, resolve_project(opts))}
+        {:ok, Context.new(session_id, resolve_project(opts), engine_opts(opts))}
 
       other ->
         {:stop, {:oi_session_start_failed, other}}
     end
+  end
+
+  # 声库注册表 / 默认引擎注入（per-track Adapter 粒度，userland 供给）
+  defp engine_opts(opts) do
+    [
+      engines: Keyword.get(opts, :engines, %{}),
+      default_engine: Keyword.get(opts, :default_engine)
+    ]
   end
 
   @impl true
@@ -213,6 +234,16 @@ defmodule Equinox.Session.Server do
     end
   end
 
+  def handle_call({:update_track_voicebank, track_id, voicebank_id}, _from, state) do
+    with {:ok, meta} <- Project.track_meta(state.project, track_id),
+         {:ok, meta} <- TrackMeta.update(meta, voicebank_id: voicebank_id),
+         {:ok, project} <- Project.put_track_meta(state.project, track_id, meta) do
+      {:reply, {:ok, meta}, %{state | project: project}}
+    else
+      {:error, _} = err -> {:reply, err, state}
+    end
+  end
+
   def handle_call({:replace_window_notes, track_id, window_start, note_attrs_list}, _from, state) do
     with {:ok, track} <- Project.fetch_track(state.project, track_id),
          {:ok, windows} <- Track.slice(state.project, track_id),
@@ -238,8 +269,13 @@ defmodule Equinox.Session.Server do
 
   def handle_call({:adopt_intervention, track_id, attrs}, _from, state) do
     with {:ok, channel_module, patch_attrs} <- adopt_attrs(track_id, attrs),
+         {:ok, engine_key} <- engine_key_for(state, track_id),
          {:ok, patch} <-
-           AdoptRequest.build_patch(state.project.workspace, channel_module, patch_attrs),
+           AdoptRequest.build_patch(
+             state.project.workspace,
+             channel_module,
+             Map.put(patch_attrs, :engine, engine_key)
+           ),
          {:ok, state} <- run_history(state, Command.attach_patches([patch])),
          {:ok, track} <- Project.fetch_track(state.project, track_id),
          {:ok, mounted} <- fetch_mounted_patch(track, patch.id) do
@@ -390,6 +426,17 @@ defmodule Equinox.Session.Server do
 
   defp apply_window_ops(state, track_id, ops, side_changes) do
     run_history(state, Command.batch([{track_id, ops, side_changes}], "ReplaceWindowNotes"))
+  end
+
+  # 采纳时的引擎版本戳：按轨解析 Adapter（per-track 粒度），取
+  # `engine_key/1` 进 digest base（与 check 侧 spec projection 同一版本戳）；
+  # 无 Adapter 供给的轨不盖戳（nil → build_patch 跳过）
+  defp engine_key_for(%Context{} = state, track_id) do
+    case Context.engine_for(state, track_id) do
+      {:ok, nil} -> {:ok, nil}
+      {:ok, {adapter, config}} -> {:ok, adapter.engine_key(config)}
+      {:error, _} = err -> err
+    end
   end
 
   # adopt attrs 归一：`:channel` 模块必填；`:anchor` 直用，`:seq_id` 展开为
