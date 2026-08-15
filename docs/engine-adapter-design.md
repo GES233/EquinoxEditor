@@ -356,7 +356,12 @@ History 编辑 → prepare_dispatch → Runner check（patch resolve，纯）
 sidecar `curves` 注入（pitch/breathiness/voicing + retake 翻转）线上
 形状已预留未接；`:curve` spec 仍落 kernel 共享实现的 `{:port, :synth,
 param}`（接推理节点待 kernel 参数化或自定义 spec）；speaker/key_shift
-globals 未进推理入参；UTAU 引擎侧（resampler 子进程）未动。
+globals 未进推理入参；UTAU 引擎侧（resampler 子进程）未动；
+**preutterance 缺口**：dur 模型只输出 `ph_dur_pred`，preutterance 是
+OpenUtau 调用方派生的（句首 SP + 500ms padding，首辅音组不拉伸、
+从音符起点倒推对齐——`DiffSingerBasePhonemizer.cs` `ProcessPart`）；
+sidecar v1 无此逻辑，辅音 onset 卡在音符起点，听感慢半拍。接入点：
+Packaging 句首插 SP 词 + engine 对齐段倒推。
 验证：`engine_adapters/test/equinox_adapters/diff_singer_e2e_test.exs`
 （`@tag :real_engine`，默认排除；Qixuan v2.5.0 声库 + uv）——edit →
 adopt → dispatch → check → render → wav artifact 全链路绿。
