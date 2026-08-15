@@ -33,6 +33,7 @@ defmodule EquinoxAdapters.DiffSinger.PackagingTest do
 
     assert {:ok,
             [
+              [[["zh", "SP"]], 0.5, 0],
               [[["zh", "l"], ["zh", "iang"]], 0.25, 60.0],
               [[["zh", "zh"], ["zh", "i"]], 0.5, 62.0]
             ]} = Packaging.build_words(notes, @segments, @tpqn)
@@ -46,6 +47,7 @@ defmodule EquinoxAdapters.DiffSinger.PackagingTest do
 
     assert {:ok,
             [
+              [[["zh", "SP"]], 0.5, 0],
               [[["zh", "l"]], 0.25, 60.0],
               [[["zh", "SP"]], 0.25, 0],
               [[["zh", "h"], ["zh", "u"]], 0.25, 62.0]
@@ -58,7 +60,7 @@ defmodule EquinoxAdapters.DiffSinger.PackagingTest do
       {"n1", note("n1", 60, [["zh", "l"]]), {0, 240}}
     ]
 
-    assert {:ok, [[_, _, 60.0], [_, _, 62.0]]} =
+    assert {:ok, [[[["zh", "SP"]], 0.5, 0], [_, _, 60.0], [_, _, 62.0]]} =
              Packaging.build_words(notes, @segments, @tpqn)
   end
 
@@ -93,7 +95,7 @@ defmodule EquinoxAdapters.DiffSinger.PackagingTest do
     assert [
              {{:port, :infer, :words},
               %{
-                words: [[[["zh", "l"]], 0.25, 60.0]],
+                words: [[[["zh", "SP"]], 0.5, 0], [[["zh", "l"]], 0.25, 60.0]],
                 sample_rate: 44_100,
                 hop_size: 512,
                 track_id: "track_a",

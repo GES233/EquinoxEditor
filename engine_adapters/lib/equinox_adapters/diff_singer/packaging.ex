@@ -8,13 +8,17 @@ defmodule EquinoxAdapters.DiffSinger.Packaging do
   - tick→秒：窗口 tempo 切片内换算（`start_sec + strategy` 局部换算，
     与 `Equinox.Kernel.CurveRaster` 同一套切片语义）；
   - 音符间隙插 SP 休止词（语言沿用前一音符首音素的语言，midi 0——
-    sidecar 端把含 SP/AP 的词标成 `note_rest`；已知粗糙点）。
+    sidecar 端把含 SP/AP 的词标成 `note_rest`）；
+  - 句首插 SP padding 词（0.5s，OpenUtau 同值）——preutterance 倒推空间，
+    sidecar 对齐时句首辅音组从中倒推（见 `engine.py` `_place`）。
   """
 
   alias Coconut.Score.{Key, Note, Tempo, TempoMap}
   alias EquinoxDomain.Command.RenderRequest
 
   @rest_phoneme "SP"
+  # 句首 SP padding（秒）：preutterance 倒推空间（OpenUtau 同值 500ms）
+  @head_padding_sec 0.5
 
   @doc """
   `:phoneme_timing` spec 的 arity-2 target（DiffSinger 版）：忽略 patch
@@ -61,7 +65,8 @@ defmodule EquinoxAdapters.DiffSinger.Packaging do
     sorted = Enum.sort_by(notes, fn {_id, _note, {start, _end}} -> start end)
 
     with {:ok, entries} <- map_entries(sorted) do
-      {:ok, insert_rests(entries, segments, first, tpqn)}
+      words = insert_rests(entries, segments, first, tpqn)
+      {:ok, prepend_head_rest(words, entries)}
     end
   end
 
@@ -131,6 +136,15 @@ defmodule EquinoxAdapters.DiffSinger.Packaging do
 
     Enum.concat(acc)
   end
+
+  # 句首 SP 词（preutterance 倒推空间，OpenUtau 同值 500ms）：
+  # lang 取首音符首音素的语言；空音符列表不插
+  defp prepend_head_rest(words, [first_entry | _]) do
+    [[lang, _] | _] = first_entry.phonemes
+    [[[[lang, @rest_phoneme]], @head_padding_sec, 0] | words]
+  end
+
+  defp prepend_head_rest(words, []), do: words
 
   defp rest_word(prev, gap_sec) do
     [[lang, _] | _] = prev.phonemes

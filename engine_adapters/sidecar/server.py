@@ -10,8 +10,10 @@
 工具：
 
 - `predict(words)` → {ph_dur, pitch_pred_midi, total_frames}
-- `render(words, out_path, seed?, ph_dur_override?, curves?)`
-    → {path, sample_rate, frames}
+- `align(words)` → {phonemes, ph_dur, lead_in_sec, total_frames}
+  （元音锚点对齐；返回的 ph_dur 可经 render 的 ph_dur_override 回放）
+- `render(words, out_path, seed?, ph_dur_override?, curves?, lead_in_sec?)`
+    → {path, sample_rate, frames, lead_in_sec}
 
 words 线上形状：`[[phonemes, dur_sec, midi], ...]`，其中
 `phonemes = [[lang, ph], ...]`（如 `[["zh", "l"], ["zh", "iang"]]`）。
@@ -42,8 +44,17 @@ TOOLS = [
         },
     },
     {
+        "name": "align",
+        "description": "predict + 元音锚点对齐，返回绝对音素边界与对齐后 ph_dur（渲染真相）",
+        "inputSchema": {
+            "type": "object",
+            "properties": {"words": {"type": "array"}},
+            "required": ["words"],
+        },
+    },
+    {
         "name": "render",
-        "description": "完整五段管线 → wav 落盘，返回 {path, sample_rate, frames}",
+        "description": "完整五段管线 → wav 落盘，返回 {path, sample_rate, frames, lead_in_sec}",
         "inputSchema": {
             "type": "object",
             "properties": {
@@ -52,6 +63,7 @@ TOOLS = [
                 "seed": {"type": "integer"},
                 "ph_dur_override": {"type": "array"},
                 "curves": {"type": "object"},
+                "lead_in_sec": {"type": "number"},
             },
             "required": ["words", "out_path"],
         },
@@ -70,6 +82,8 @@ def result_text(payload):
 def call_tool(engine, name, arguments):
     if name == "predict":
         return result_text(engine.check(arguments["words"]))
+    if name == "align":
+        return result_text(engine.align(arguments["words"]))
     if name == "render":
         return result_text(engine.render(
             arguments["words"],
@@ -77,6 +91,7 @@ def call_tool(engine, name, arguments):
             seed=arguments.get("seed"),
             ph_dur_override=arguments.get("ph_dur_override"),
             curves=arguments.get("curves"),
+            lead_in_sec=arguments.get("lead_in_sec"),
         ))
     raise ValueError(f"未知工具：{name}")
 

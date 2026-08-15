@@ -18,8 +18,8 @@ defmodule EquinoxAdapters.DiffSinger.Sidecar do
 
   ## 超时
 
-  启动握手 120s（uv 首次依赖解析 + 8 session 加载是分钟级下限）；单次
-  工具调用 300s（CPU 扩散推理）。
+  启动握手 600s（uv 首次依赖解析 + 8 session 加载在负载高的 CPU-only
+  机器上可达数分钟）；单次工具调用 600s（CPU 扩散推理）。
   """
 
   use GenServer
@@ -28,8 +28,8 @@ defmodule EquinoxAdapters.DiffSinger.Sidecar do
 
   @sidecar_dir Path.expand("../../../sidecar", __DIR__)
   @protocol_version "2025-06-18"
-  @handshake_timeout 120_000
-  @tool_timeout 300_000
+  @handshake_timeout 600_000
+  @tool_timeout 600_000
 
   @registry EquinoxAdapters.SidecarRegistry
   @supervisor EquinoxAdapters.SidecarSupervisor
@@ -59,13 +59,18 @@ defmodule EquinoxAdapters.DiffSinger.Sidecar do
 
   @doc """
   完整五段管线渲染。`opts`：`:out_path`（必填，wav 落盘绝对路径）、
-  `:seed`（可选）。返回 `{:ok, %{path, sample_rate, frames}}`。
+  `:seed`（可选）、`:ph_dur_override`（可选，align 返回的对齐后逐音素
+  帧数）、`:lead_in_sec`（可选；有 override 时必须显式传 align 的
+  `lead_in_sec`，缺省由 sidecar 按句首 SP 词推导）。返回
+  `{:ok, %{path, sample_rate, frames, lead_in_sec}}`。
   """
   @spec render(t(), list(), keyword()) :: {:ok, map()} | {:error, term()}
   def render(pid, words, opts) do
     arguments =
       %{"words" => words, "out_path" => Keyword.fetch!(opts, :out_path)}
       |> maybe_put("seed", Keyword.get(opts, :seed))
+      |> maybe_put("ph_dur_override", Keyword.get(opts, :ph_dur_override))
+      |> maybe_put("lead_in_sec", Keyword.get(opts, :lead_in_sec))
 
     tool_call(pid, "render", arguments)
   end
@@ -76,9 +81,22 @@ defmodule EquinoxAdapters.DiffSinger.Sidecar do
     tool_call(pid, "predict", %{"words" => words})
   end
 
+  @doc """
+  元音锚点对齐（predict + 放置），返回
+  `{:ok, %{phonemes, ph_dur, lead_in_sec, total_frames}}`——绝对音素边界
+  即渲染真相（`ph_dur` 走 render 的 `:ph_dur_override` 回放）。
+  """
+  @spec align(t(), list()) :: {:ok, map()} | {:error, term()}
+  def align(pid, words) do
+    tool_call(pid, "align", %{"words" => words})
+  end
+
   @doc "sidecar 的产物落盘目录。"
   @spec out_dir(t()) :: Path.t()
-  def out_dir(pid), do: GenServer.call(pid, :out_dir)
+  def out_dir(pid) do
+    # 排队在启动握手（模型加载，分钟级下限）之后是预期路径，不能用 5s 缺省
+    GenServer.call(pid, :out_dir, @handshake_timeout + 5_000)
+  end
 
   defp tool_call(pid, name, arguments) do
     GenServer.call(pid, {:tool_call, name, arguments}, @tool_timeout + 5_000)
@@ -89,6 +107,13 @@ defmodule EquinoxAdapters.DiffSinger.Sidecar do
 
   defp maybe_put(map, _key, nil), do: map
   defp maybe_put(map, key, value), do: Map.put(map, key, value)
+
+  # 线上 JSON → atom 键（递归；嵌套的 phonemes 列表项也要转）
+  defp atomize_keys(%{} = map),
+    do: Map.new(map, fn {key, value} -> {String.to_atom(key), atomize_keys(value)} end)
+
+  defp atomize_keys(list) when is_list(list), do: Enum.map(list, &atomize_keys/1)
+  defp atomize_keys(other), do: other
 
   # ---- GenServer ----
 
@@ -139,9 +164,9 @@ defmodule EquinoxAdapters.DiffSinger.Sidecar do
           {:error, {:tool_error, text}}
 
         {:ok, %{"content" => [%{"text" => text} | _]}} ->
-          # 键集合封闭、对端是我们自己的 sidecar，to_atom 无泄漏风险
+          # 键集合封闭（自家 sidecar 线上形状），递归 atom 化无泄漏风险
           with {:ok, payload} <- Jason.decode(text) do
-            {:ok, Map.new(payload, fn {key, value} -> {String.to_atom(key), value} end)}
+            {:ok, atomize_keys(payload)}
           end
 
         {:ok, other} ->

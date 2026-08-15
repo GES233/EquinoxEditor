@@ -10,7 +10,45 @@ handle_tool = fn
     out_path = args["out_path"]
     File.mkdir_p!(Path.dirname(out_path))
     File.write!(out_path, "fake-wav")
-    %{"path" => out_path, "sample_rate" => 44_100, "frames" => 100}
+
+    %{
+      "path" => out_path,
+      "sample_rate" => 44_100,
+      "frames" => 100,
+      "lead_in_sec" => Map.get(args, "lead_in_sec", 0.5)
+    }
+
+  "align", _args ->
+    %{
+      "phonemes" => [
+        %{
+          "lang" => "zh",
+          "symbol" => "SP",
+          "start_frame" => 0,
+          "end_frame" => 40,
+          "note_index" => nil
+        },
+        %{
+          "lang" => "zh",
+          "symbol" => "l",
+          "start_frame" => 40,
+          "end_frame" => 50,
+          "note_index" => 0
+        },
+        %{
+          "lang" => "zh",
+          "symbol" => "iang",
+          "start_frame" => 50,
+          "end_frame" => 92,
+          "note_index" => 0
+        }
+      ],
+      # 注意：纯可打印 ASCII 的 int 列表会被 Jason 当 charlist 编成字符串，
+      # 放个 >126 的值保住数组形状
+      "ph_dur" => [40, 10, 420],
+      "lead_in_sec" => 0.5,
+      "total_frames" => 92
+    }
 
   "fail", _args ->
     :tool_error

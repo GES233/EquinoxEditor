@@ -10,6 +10,10 @@ defmodule EquinoxAdapters.DiffSingerE2ETest do
 
   use ExUnit.Case, async: false
 
+  # 真引擎用例含 sidecar 冷启动（uv 依赖解析 + 8 session 加载）与 CPU 扩散
+  # 推理，远超 60s 默认上限
+  @moduletag timeout: 900_000
+
   alias Coconut.Edit.{Command, History, Operations.InsertNote}
   alias Coconut.Score.Key.TwelveET
   alias Coconut.Util.ID
@@ -17,7 +21,7 @@ defmodule EquinoxAdapters.DiffSingerE2ETest do
   alias Equinox.Kernel.{Blackboard, Graph, Runner}
   alias Equinox.Kernel.Graph.Node
   alias Equinox.Session.Context
-  alias EquinoxAdapters.DiffSinger.InferStep
+  alias EquinoxAdapters.DiffSinger.{InferStep, Sidecar}
   alias EquinoxAdapters.UTAUDiffSingerCompat
   alias EquinoxDomain.Command.AdoptRequest
   alias EquinoxDomain.Port.Channels.PhonemeTiming
@@ -80,7 +84,13 @@ defmodule EquinoxAdapters.DiffSingerE2ETest do
     project = put_voicebank(project, track_id, "qixuan")
 
     # 3. adopt：:phoneme_timing patch（盖引擎版本戳）→ History 挂载
-    payload = %{deltas: [%{identity: "ph_l", onset_delta_ms: 0, duration_delta_ms: 0}]}
+    payload = %{
+      phonemes: [
+        %{lang: "zh", symbol: "l", start_frame: 40, end_frame: 50, note_index: 0},
+        %{lang: "zh", symbol: "iang", start_frame: 50, end_frame: 92, note_index: 0}
+      ],
+      lead_in_sec: 0.5
+    }
 
     {:ok, patch} =
       AdoptRequest.build_patch(project.workspace, PhonemeTiming, %{
@@ -106,12 +116,76 @@ defmodule EquinoxAdapters.DiffSingerE2ETest do
 
     unit_outputs = Blackboard.fetch_via_segment(board, unit_id)
 
-    assert %{path: path, sample_rate: 44_100, frames: frames} =
+    assert %{path: path, sample_rate: 44_100, frames: frames, lead_in_sec: 0.5} =
              unit_outputs[{unit_id, "infer|audio"}]
 
     assert frames > 0
     assert File.exists?(path)
     assert Path.basename(path) == "track_ds_0.wav"
+  end
+
+  @tag :real_engine
+  test "align：元音锚点 + 首辅音提前 + 对齐回放渲染" do
+    model_root = System.get_env("EQUINOX_DS_VB") || @default_vb
+
+    unless File.dir?(model_root) do
+      raise "DiffSinger 声库目录不存在：#{model_root}（用 EQUINOX_DS_VB 指定）"
+    end
+
+    out_dir = Path.join(System.tmp_dir!(), "ds_align_#{System.unique_integer([:positive])}")
+    {:ok, sidecar} = Sidecar.ensure_started(model_root, out_dir: out_dir)
+
+    # 120bpm 三音符（同主 e2e 夹具）：词槽 0.5/0.25/0.25/0.5s
+    words = [
+      [[["zh", "SP"]], 0.5, 0],
+      [[["zh", "l"], ["zh", "iang"]], 0.25, 60.0],
+      [[["zh", "zh"], ["zh", "i"]], 0.25, 62.0],
+      [[["zh", "l"], ["zh", "ao"]], 0.5, 64.0]
+    ]
+
+    frame_rate = 44_100 / 512
+    anchor0 = round(0.5 * frame_rate)
+
+    assert {:ok, aligned} = Sidecar.align(sidecar, words)
+
+    assert %{phonemes: phonemes, ph_dur: ph_dur, lead_in_sec: lead_in, total_frames: total} =
+             aligned
+
+    # lead_in = padding；total = 全部词槽
+    assert_in_delta lead_in, 0.5, 0.01
+    assert_in_delta total, 1.5 * frame_rate, 1.0
+    assert Enum.sum(ph_dur) == total
+
+    # 边界单调连续
+    Enum.reduce(phonemes, 0, fn ph, prev ->
+      assert ph.start_frame == prev
+      assert ph.end_frame > ph.start_frame or ph.symbol == "SP"
+      ph.end_frame
+    end)
+
+    # 句首 SP 无 note_index；首辅音 l 提前到音符起点之前
+    assert hd(phonemes).symbol == "SP" and hd(phonemes).note_index == nil
+    first_l = Enum.find(phonemes, &(&1.symbol == "l"))
+    first_iang = Enum.find(phonemes, &(&1.symbol == "iang"))
+    assert first_l.end_frame == first_iang.start_frame
+    assert first_l.start_frame < anchor0
+    # 元音 onset = 音符起点（±1 帧）
+    assert_in_delta first_iang.start_frame, anchor0, 1
+
+    # 对齐回放：aligned ph_dur 走 override，artifact 与 align 一致
+    out_path = Path.join(out_dir, "aligned.wav")
+
+    assert {:ok, artifact} =
+             Sidecar.render(sidecar, words,
+               out_path: out_path,
+               seed: 42,
+               ph_dur_override: ph_dur,
+               lead_in_sec: lead_in
+             )
+
+    assert artifact.lead_in_sec == lead_in
+    assert artifact.frames == total
+    assert File.exists?(out_path)
   end
 
   # ---- 夹具（风格同 kernel EngineAdapterTest） ----

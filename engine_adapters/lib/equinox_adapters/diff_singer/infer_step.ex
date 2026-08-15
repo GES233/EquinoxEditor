@@ -2,8 +2,10 @@ defmodule EquinoxAdapters.DiffSinger.InferStep do
   @moduledoc """
   DiffSinger 推理 Step——窗口 words（`Packaging` 经 `:phoneme_timing`
   spec target 打包扇出）交给 Python sidecar 跑完整五段管线，wav 落盘，
-  artifact `%{path, sample_rate, frames}` 上 `:audio` 端口（最终进
-  Blackboard，addr `{{track_id, window_start}, "infer|audio"}`）。
+  artifact `%{path, sample_rate, frames, lead_in_sec}` 上 `:audio` 端口
+  （最终进 Blackboard，addr `{{track_id, window_start}, "infer|audio"}`）。
+  `lead_in_sec` = wav 第 0 帧早于窗口起点的时长（preutterance/SP
+  padding），播放/混音按它回挪。
 
   `Node.options`：
 
