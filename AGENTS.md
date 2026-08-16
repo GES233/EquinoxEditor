@@ -66,8 +66,8 @@ The `EquinoxDomain` module lives in `domain/` as a **separate Elixir project** (
 - `Port.Preset` — registry `channels :: %{channel_atom => Coconut.Render.Channel module}` + artifact/allow_adopt lists with cross-validation; own dump/load.
 - `Port.Channels.PhonemeTiming` — the first concrete `Coconut.Render.Channel` (`:phoneme_timing`): `projection/2` (canonical, float-free note+span base), `target/0` → `{:port, :synth, :phoneme_timing}`.
 - `Port.Channels.Curve` — the generic curve channel (`:curve`, landed 2026-08-15): one module one atom covering all continuous params (param name lives in the payload — new param = zero coconut/tamale code). Anchors: Ordinal/Relative (Metric rejected). Base = anchored notes' canonical projections via `PhonemeTiming.base_for/2` (single-implementation discipline); payload = plain map `%{param, adapter (string module name), points}` via `build_payload/3` (ascending absolute ticks, handles nullable). Rasterization is kernel-side (`CurveRaster`) via the adapter's arity-2 spec target; `target/0` is only the contract fallback.
-- `Command.RenderRequest` — per-window compile request `{track_id, note_ids, notes (with spans), time_range, tempo_segments, patches, channels}`; `from_window(project, window, tempo_map)` filters structurally-survived patches by anchor ∩ window (Ordinal/Relative by refs, Metric by tick-range intersection).
-- `Command.AdoptRequest` — `build_patch(workspace, channel_module, %{track_id, anchor, payload})` → `{:ok, Coconut.Edit.Patch.t()}` (pure; the kernel mounts it via History).
+- `Command.RenderRequest` — per-window compile request `{track_id, note_ids, notes (with spans), time_range, tempo_segments, tpqn, patches, channels}`; `from_window(project, window, tempo_map)` filters structurally-survived patches by anchor ∩ window (Ordinal/Relative by refs, Metric by tick-range intersection).
+- `Command.AdoptRequest` — `build_patch(workspace, channel_module, attrs)` → `{:ok, Coconut.Edit.Patch.t()}` (pure; the kernel mounts it via History). `attrs` must contain `:track_id`, `:anchor`, and `:payload`; optional `:channel` (defaults to `channel_module.channel/0`), `:id`, and `:engine` (version stamp for digest base) are accepted.
 
 **Key design decisions**:
 - Base types come from coconut: `Coconut.Score.{Note, Tick, Tempo, TempoMap, TimeSig, TimeSigMap, Record, RecordMap, Grid}`, `Coconut.Score.Key.*`, `Coconut.Curve.*`, `Coconut.Util.*`. EquinoxDomain does not redefine them.
@@ -142,7 +142,7 @@ The domain / intervention / rebase decisions that used to live in zongzi now liv
 - coconut: `../coconut/docs/` — `design-2026-07-editor-core.md` (the constitution: Workspace/Track/Element model, six ops, warp provider, step-only structural tempo, undo/redo via op tree + checkpoints), `design-2026-08-orchid-intervention.md` (render backend hookup, payload taxonomy, exactness spec), `design-2026-08-tempo-curve.md` (step-for-bones / curve-for-skin / bake-for-boundary).
 - tamale: `../tamale/docs/` — `zh/guide/caller-guide-zh.md` (Caller orchestration contract + self-check list), `spec/canonical-digest.md` (portable digest spec), `decisions/0001..0007` (edit-intent ops, identity conventions, warp-based Metric transport, clip/relative semantics, digest-as-adjudicator, chunked digests, exact rational coords).
 
-Equinox-side design docs in `docs/`: `coconut-migration.md` (migration record + mapping tables), `channel-development.md` (channel developer guide), `engine-adapter-design.md` (Engine Adapter boundary decision), `phoneme-alignment-research.md` (note onset = vowel onset; preutterance sourcing quadrants; `:phoneme_timing` semantics benchmark), `editor-mental-model.md`, `phase2-kernel-handoff.md`, `windows.md`. Note: `ui-interaction-model.md` is self-marked **outdated** post-migration — treat it as intent-level only.
+Equinox-side design docs in `docs/`: `coconut-migration.md` (migration record + mapping tables), `channel-development.md` (channel developer guide), `engine-adapter-design.md` (Engine Adapter boundary decision), `phoneme-alignment-research.md` (note onset = vowel onset; preutterance sourcing quadrants; `:phoneme_timing` semantics benchmark), `editor-mental-model.md`, `phase2-kernel-handoff.md`, `windows-os.md` (Windows OS build notes). Note: `ui-interaction-model.md` is self-marked **outdated** post-migration — treat it as intent-level only.
 
 | coconut/tamale concern | Equinox concern |
 |---|---|
@@ -244,8 +244,8 @@ Phase 3 ──── UI Shell (ui_shell/)
 - Editing aggregate (from coconut): `Edit.Workspace`, `Edit.Track.{Vocal, Tempo, Audio}`, `Edit.Operations.*`, `Edit.History`, `Edit.Command`, `Edit.Diff`, `Edit.Patch`
 - Rebase kernel (from tamale): `Space`, `Op.*`, `Anchor.{Ordinal, Metric, Relative}`, `Transport`, `Warp`, `Patch`, `Digest`, `Coord`
 - Serialization (from coconut): `Pickle.*` + `Pickle.File` envelope (registry-driven)
-- Equinox domain: `Score.Project` (+ `TrackMeta`), `Score.Track` facade, `Windowing` + `Window`, `Score.SliceFlag`, `Phoneme`, `Segment` (rendering-context VO), `Port.Preset`, `Port.Channels.PhonemeTiming`, `Command.RenderRequest`, `Command.AdoptRequest`
-- Deferred: curves rasterization/simplification, curve channel (see Curves section)
+- Equinox domain: `Score.Project` (+ `TrackMeta`), `Score.Track` facade, `Windowing` + `Window`, `Score.SliceFlag`, `Phoneme`, `Segment` (rendering-context VO), `Port.Preset`, `Port.Channels.PhonemeTiming`, `Port.Channels.Curve`, `Command.RenderRequest`, `Command.AdoptRequest`
+- Deferred: curve rasterization cache (`RasterCache`), Douglas-Peucker simplification, `Curve.Chunk` pickle codec (coconut-side), per-param capability gating.
 
 ### Phase 2 — Domain-Kernel Integration (kernel/)
 
@@ -340,13 +340,13 @@ Split into Phase 1 (domain) and Phase 2 (kernel integration). Status: the generi
 - `Coconut.Curve.Chunk`: `{id, adapter, container, start_tick, rasterized | nil, extra}` (adapter/container pattern; `end_tick` is computed via the adapter, not stored). Control points carry `(tick, value, handle_left, handle_right)`.
 - `Coconut.Edit.Patch` (curve channels): `{anchor, patch :: Tamale.Patch{base_digest, payload}, channel}` — curve payloads are control-point chunks; the base digest covers the canonical projected values. Anchors: Metric for tick ranges (transported by warps), Ordinal/Relative for note-anchored data.
 - RasterCache (deferred): `{stride, samples :: binary, fingerprint}`. Rebuildable from control points; never serialized.
-- `EquinoxDomain.Command.RenderRequest`: `{track_id, note_ids, notes, time_range, tempo_segments, patches, channels}`. The only struct passed into the dispatch. Constructed via `from_window/3`.
+- `EquinoxDomain.Command.RenderRequest`: `{track_id, note_ids, notes, time_range, tempo_segments, tpqn, patches, channels}`. The only struct passed into the dispatch. Constructed via `from_window/3`.
 
 ### Curve Facade API (Phase 2/3 Editor concern)
 
 - A completed stroke becomes a curve patch, mounted via `AdoptRequest.build_patch/3` + `Command.attach_patches` through History. Facade helpers (`apply_curve_stroke`, `erase_curve_range`, `clear_curve_layer`) are Editor-level conveniences built on patch attach/remove.
 - Strokes are assumed already-simplified control-point chunks (see ADR-003). The Editor does **not** accept raw sample arrays.
-- A curve `Coconut.Render.Channel` (projection + target for continuous data, with canonical digest normalization) is still to be defined — `Port.Channels.PhonemeTiming` is the reference implementation.
+- A curve `Coconut.Render.Channel` is implemented by `EquinoxDomain.Port.Channels.Curve` (generic `:curve` atom covering all continuous params; param name lives in payload). `Port.Channels.PhonemeTiming` remains the reference implementation for discrete note-anchored channels.
 
 ### Compiler Integration
 

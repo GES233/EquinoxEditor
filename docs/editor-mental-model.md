@@ -2,13 +2,7 @@
 
 ## Status
 
-> **Outdated (post-coconut migration)**: This document describes the pre-zongzi M3 model
-> (`Track` + legacy `Segment` + tick-anchored data). The domain now runs on coconut
-> (+tamale): `EquinoxDomain.Score.Project` wrapping `Coconut.Edit.Workspace` plus a
-> `tracks_meta` side table, transient `EquinoxDomain.Windowing.Window` projections, and
-> `Coconut.Edit.Patch` + `Coconut.Render.Channel` for user/engine edits. Read
-> `AGENTS.md` §7 and `docs/coconut-migration.md` as the current source of truth;
-> a full rewrite is scheduled for Phase 2.
+> **Outdated object model, still relevant intent**: This document describes the pre-coconut migration object model where `Segment` was a persistent render container. The current implementation runs on coconut + tamale: `EquinoxDomain.Score.Project` wraps `Coconut.Edit.Workspace` plus a `tracks_meta` side table, phrase windows are transient `EquinoxDomain.Windowing.Window` projections, and user/engine edits are `Coconut.Edit.Patch` anchored by tamale anchors. The sections below retain the *interaction intent* (Track-centered, per-window focus, graph-configurable synthesis), but the concrete object ownership should be read through `AGENTS.md` §7 and `docs/coconut-migration.md`.
 
 This document defines the default object model and interaction model for Equinox during the M3 stage.
 It is intended to constrain future implementation, not to describe every possible advanced workflow.
@@ -18,7 +12,8 @@ It is intended to constrain future implementation, not to describe every possibl
 Equinox is a track-centered vocal synthesis editor.
 
 - `Track` is the default user-facing object.
-- `Segment` is the incremental render unit inside a `Track`.
+- `Window` is a transient per-track phrase projection used for incremental render dispatch; it is not a persisted domain object.
+- `Segment` (in the current code) is a rendering-context value object populated by the Kernel at compile time; it carries acoustic boundaries and resolved phonemes/curves for one window, but is not a container that owns notes.
 - An Arranger entry node is the Arranger-side projection of a `Track`, not a separate domain object.
 - Node graphs are configuration surfaces for synthesis and routing, not the primary timeline object model.
 
@@ -47,25 +42,21 @@ Responsibilities:
 - identity, label, color, type
 - mixer parameters such as mute, solo, gain, pan
 - default synthesis configuration
-- ordered collection of `Segment`s
+- ordered collection of notes (spans live in the coconut workspace, not on a `Segment` container)
 - view metadata for Track projections, such as arranger node position
 
 `Track` is the object selected from TrackList, represented in Arranger, and configured in the default Node Editor view.
 
-### Segment
+### Window / Segment
 
-`Segment` is a time-bounded unit of symbolic content and the smallest unit of incremental synthesis.
+`Window` is a transient phrase projection derived from a Track's notes + spans + `slice_flag` metadata. It is computed from scratch after every edit and is used only to batch notes for render dispatch. See `EquinoxDomain.Windowing`.
 
-Responsibilities:
+`Segment` (current code) is a rendering-context value object produced by the Kernel for one window at compile time. It carries:
 
-- placement within its parent `Track`
-- notes
-- lyrics and phonetic data
-- curves and control data
-- optional local synthesis override
+- acoustic boundaries (`start_tick`, `end_tick`)
+- resolved phonemes and curves for that window
 
-`Segment` is not the default global selection anchor for the whole editor.
-It is the focused content unit inside the selected `Track`.
+It is **not** a container for notes, nor a persisted identity. Notes live in the coconut workspace; windows are recomputed; segments are runtime output.
 
 ### Arranger Entry Node
 
@@ -88,18 +79,19 @@ Track audio should be understood in two stages.
 This stage converts symbolic musical data into track-local audio.
 
 ```text
-Segment notes / lyrics / curves
-  -> segment synthesis
-  -> segment audio
+Track notes / lyrics / curves / patches
+  -> windowing (transient Window projection)
+  -> per-window synthesis
+  -> window audio
   -> track assembly
   -> track dry audio
 ```
 
 Primary ownership:
 
-- `Segment` owns symbolic inputs
-- `Track` owns the default synth graph or synth provider configuration
-- `Segment` may supply a local override only when required
+- The coconut workspace owns symbolic inputs (notes + spans + patches).
+- `Track` owns the default synth graph or synth provider configuration.
+- A window may carry a local synthesis override only when required.
 
 ### Stage 2: Mixing and Routing
 
@@ -127,12 +119,12 @@ At minimum, the editor model should distinguish between:
 
 Purpose:
 
-- transform symbolic segment data into audio
+- transform symbolic track/window data into audio
 
 Typical scope:
 
 - default scope is `Track`
-- optional override scope is `Segment`
+- optional override scope is a per-window render context (not a persisted Segment identity)
 
 Examples:
 
@@ -166,8 +158,8 @@ The editor should behave as if selection always has a current Track context.
 
 - selecting a Track in TrackList sets the global editing context
 - selecting an Arranger entry node selects that same `Track`
-- selecting a Segment refines focus within the selected `Track`
-- Piano Roll edits the active `Segment` of the selected `Track`
+- focusing a window/phrase refines focus within the selected `Track`
+- Piano Roll edits the notes of the selected `Track` (scoped to the focused window for convenience)
 - Node Editor defaults to editing the selected `Track`'s synth configuration
 
 ### Consequence
@@ -188,15 +180,15 @@ By default, a `Track` provides:
 - track-level mixer parameters
 - track-level insert FX
 
-### Segment Overrides
+### Window Overrides
 
-A `Segment` may override:
+A window-level render context may override:
 
 - selected synthesis parameters
 - selected synthesis nodes
 - limited intervention data for incremental generation
 
-A `Segment` should not casually replace the entire track mix context.
+A window override should not casually replace the entire track mix context.
 
 ### Project Overrides
 
@@ -212,19 +204,19 @@ A `Segment` should not casually replace the entire track mix context.
 
 Incremental execution should follow user intent.
 
-### Segment-Scope Changes
+### Window-Scope Changes
 
 Examples:
 
-- note move
+- note move inside a window
 - lyric edit
 - phoneme edit
 - curve edit
 
 Expected invalidation:
 
-- dirty only the affected `Segment`
-- rerun that segment's synthesis path
+- dirty only the affected transient window
+- rerun that window's synthesis path
 - rebuild downstream Track assembly as needed
 - rerun downstream mix stages that consume the updated Track output
 
@@ -238,8 +230,8 @@ Examples:
 
 Expected invalidation:
 
-- dirty relevant `Segment`s in that `Track`
-- rerun synthesis for affected segments
+- dirty relevant windows in that `Track`
+- rerun synthesis for affected windows
 - preserve unrelated Tracks
 
 ### Track Mix Changes
@@ -254,7 +246,7 @@ Examples:
 
 Expected invalidation:
 
-- do not rerun segment synthesis
+- do not rerun per-window synthesis
 - rerun Track mix stage and downstream routing only
 
 ### Project Routing Changes
@@ -267,7 +259,7 @@ Examples:
 
 Expected invalidation:
 
-- do not rerun segment synthesis
+- do not rerun per-window synthesis
 - do not rebuild unrelated Track dry renders
 - rerun affected bus and master stages only
 
@@ -296,7 +288,7 @@ Primary role:
 
 Responsibilities:
 
-- segment placement in timeline context
+- window/phrase placement in timeline context
 - track ordering in song structure
 - Track entry nodes as mix inputs
 - bus and output routing
@@ -307,14 +299,14 @@ Arranger is not the canonical owner of Track identity.
 
 Primary role:
 
-- edit symbolic content of the active `Segment`
+- edit symbolic content of the selected `Track` (often scoped to a focused window for convenience)
 
 Responsibilities:
 
 - note editing
 - lyric editing
 - pitch and control curves
-- segment-local musical manipulation
+- window-scoped musical manipulation
 
 ### Node Editor
 
@@ -328,7 +320,7 @@ Default scope:
 
 Advanced scope:
 
-- selected `Segment` override
+- per-window synthesis override
 - project-level routing or bus graph if explicitly switched
 
 ## Practical Data Direction
@@ -337,29 +329,32 @@ The current codebase should gradually converge toward a shape like this:
 
 ```text
 Project
-  tracks: %{track_id => Track}
+  workspace :: Coconut.Edit.Workspace   # notes, spans, tempo, patches
+  tracks_meta: %{track_id => TrackMeta}  # mix, voicebank, globals, ui_state
   arranger_graph: track and bus routing
 
-Track
+Track (user-facing + meta side table)
   id
   name
   type
   mix_params
   insert_fx_chain
   synth_graph or synth_ref
-  segments: %{segment_id => Segment}
   ui_state: arranger projection metadata
 
-Segment
-  id
-  track_id
-  offset_tick
-  notes
+Window (transient projection)
+  start_tick
+  end_tick
+  note_ids
+
+Segment (runtime rendering-context VO, populated by Kernel)
+  start_tick
+  end_tick
+  phonemes
   curves
-  synth_override?
 ```
 
-This is a target shape, not a mandatory immediate refactor.
+This is a target shape, not a mandatory immediate refactor. Notes are not owned by `Segment`; they live in the coconut workspace and are projected into windows on demand.
 
 ## Non-Goals
 
@@ -367,7 +362,7 @@ The following should not become the default model:
 
 - every view inventing its own object identity
 - Arranger nodes and Tracks drifting into duplicated state
-- Segment becoming the primary editor object for all workflows
+- `Segment` (or `Window`) becoming the primary editor object for all workflows
 - one generic graph type owning synthesis, mixing, routing, and timeline semantics at once
 
 ## Working Summary
@@ -375,7 +370,7 @@ The following should not become the default model:
 Equinox should behave like a DAW-shaped vocal editor:
 
 - Track-centered at the interaction level
-- Segment-granular at the synthesis and cache level
+- Window-granular at the synthesis and cache level
 - graph-configurable at the synthesis and routing level
 
 This keeps the user model stable while still allowing Orchid-based incremental execution under the hood.

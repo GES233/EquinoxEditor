@@ -43,7 +43,7 @@
 | `Zongzi.Util.Model` / `Util.Object` 宏 | 消亡;手写 `new/1` + `update/2`(coconut 风格,`Coconut.Util.Helpers`) |
 | `Zongzi.Util.ID` | `Coconut.Util.ID` |
 | `Zongzi.Score.{Note, Tick, Tempo*, TimeSig*, Record*, Grid, Key.*}` | `Coconut.Score.*` 同名(注意:Note 不带 tick,时序在 spans 表) |
-| `Zongzi.Curve.*` | `Coconut.Curve.*`(仍 deferred,不在本次迁移范围) |
+| `Zongzi.Curve.*` | `Coconut.Curve.*`（2026-08-15 已接入 `:curve` channel + `CurveRaster`；`RasterCache`/`Douglas-Peucker`/`Curve.Chunk` pickle 仍 deferred） |
 | `EquinoxDomain.Pickle.*` | `Coconut.Pickle.*`(Registry + Workspace/Track/Project codec) |
 
 ### coconut 与 zongzi 的硬差异(实施时注意)
@@ -82,7 +82,8 @@
   - **Project 是纯数据查询层**;一切音符/干预/tempo 写操作不在此层
     (kernel 经 History + Operations/Command 写)。
 - **`EquinoxDomain.Score.TrackMeta`** — 新。`{mix_automation, gain, pan, mute, solo,
-  presets, active_preset, ui_state, metadata}`;手写 new/update/validate + dump/load。
+  voicebank_id, globals, presets, active_preset, ui_state, metadata}`;手写 new/update/validate + dump/load。
+  `voicebank_id` 用于按轨选择 `Session.Context` 中的引擎适配器；`globals` 存放引擎级旋钮值（写时不校验，Runner check 阶段按适配器规则门控）。
 - **`EquinoxDomain.Score.Track`** — 重写为**无状态门面**(对 workspace 的查询函数):
   `notes(project, track_id) :: [{id, Note.t(), span}]`、`note/3`、`slice/3`(见 §4)。
 - **`EquinoxDomain.Score.SliceFlag`** — 保留语义,改在 `Coconut.Score.Note.metadata` 上。
@@ -123,7 +124,7 @@
 patches, channels}`。
 
 - `notes :: [{note_id, Coconut.Score.Note.t(), span}]`(**带 span**,coconut Note 无 tick)。
-- `tempo_segments`:`Coconut.Score.TempoMap.slice/2`(coconut 版编译图自带 tpqn,注意签名变化)。
+- `tempo_segments`:`Coconut.Score.TempoMap.slice/3`(coconut 版编译图自带 tpqn,注意签名变化)。
 - `patches`:窗口过滤——Ordinal/Relative 锚按 refs ∈ window.note_ids;Metric 锚按
   区间相交。只含**结构存活**的 patch;语义判定在 kernel check 阶段。
 - `channels :: %{channel_atom => module}`(从 patches 派生 + Preset 注册表)。
@@ -144,7 +145,7 @@ patches, channels}`。
     优先评估 `Coconut.Edit.Diff`(before/after 反推 op)能否直接承接 UI 的整窗替换;
   - `update_track_mix` / `update_track_ui_state` → 纯侧表更新,不进 History;
   - `adopt_intervention` → `AdoptRequest.build_patch` + `History.run(Command.attach_patches)`;
-  - 死 patch 墓地排水 `History.take_dead_patches/1` 上浮给 UI。
+  - 死 patch 墓地排水 `History.take_dead_patches/1` **当前仅记录到日志**，UI 暴露推迟到 Phase 3。
 - `Runner` check 阶段:`Zongzi.Intervention.Declaration.resolve_within` →
   逐 patch `Tamale.Patch.resolve(patch, projection.(request))`,产出形状维持
   `%{port_ref => %{input: value}}`(与 `Coconut.Render.Resolve` 同构);

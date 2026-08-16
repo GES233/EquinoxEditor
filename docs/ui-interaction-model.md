@@ -2,13 +2,7 @@
 
 ## Status
 
-> **Outdated (post-coconut migration)**: The interaction loops here still describe the intent,
-> but all object-model references (`Segment` as render unit, tick-anchored edits) predate the
-> zongzi/coconut migrations. The domain now runs on coconut (`Coconut.Edit.Workspace` +
-> `Track` + patches, transient `EquinoxDomain.Windowing` windows, tamale anchor/digest
-> conflict surfacing via `History.take_dead_patches/1`). Read `AGENTS.md` §7 and
-> `docs/coconut-migration.md` as the current source of truth; a full rewrite is scheduled
-> for Phase 2.
+> **Outdated object references, still relevant interaction intent**: The interaction loops below describe the *intent* (Track-centered, debounced commits, explicit empty states), but object-model references (`Segment` as render unit, `current_segment_id`, tick-anchored edits) predate the zongzi/coconut migrations. The domain now runs on coconut (`Coconut.Edit.Workspace` + `Track` + patches, transient `EquinoxDomain.Windowing` windows, tamale anchor/digest conflict surfacing via `History.take_dead_patches/1`). Read `AGENTS.md` §7 and `docs/coconut-migration.md` as the current source of truth. Replace `Segment` / `current_segment_id` in this document with `Window` / `current_window_id` (or simply "focused phrase inside the current Track") when reading.
 
 This document defines the intended interaction model for Equinox as a track-centered editor.
 It complements `docs/editor-mental-model.md` and focuses on user-facing behavior rather than data ownership.
@@ -21,7 +15,7 @@ The primary user loop is:
 
 ```text
 select Track
-  -> focus Segment
+  -> focus window/phrase
   -> edit notes and curves
   -> adjust Track synth or mix settings
   -> render current Track or Project
@@ -35,14 +29,14 @@ Minimum fields:
 
 ```text
 current_track_id
-current_segment_id
+current_window_id / current_phrase_id
 current_scope
 ```
 
 Where `current_scope` is one of:
 
 - `:track`
-- `:segment`
+- `:window` / `:phrase`
 - `:track_synth`
 - `:project_mix`
 
@@ -63,14 +57,14 @@ Effects of selecting a Track:
 - Node Editor switches to that Track's synth graph
 - Inspector panels should show Track-level data by default
 
-### Segment Focus
+### Window / Phrase Focus
 
-`Segment` is a focused child of the selected Track.
+`Window` is a focused transient child of the selected Track.
 
-Effects of focusing a Segment:
+Effects of focusing a window:
 
-- Piano Roll edits that Segment
-- timeline highlights that Segment
+- Piano Roll edits notes within that window (when the UI chooses to scope)
+- timeline highlights that window
 - Node Editor does not automatically switch away from Track-level synth editing unless the user explicitly enters override mode
 
 ### Graph Scope
@@ -114,7 +108,7 @@ Arranger is the global song and routing view.
 
 Responsibilities:
 
-- show Segments in musical time
+- show windows/phrases in musical time
 - show Track participation in song structure
 - show Track routing into output or buses
 - allow Track selection through Track entry nodes
@@ -123,20 +117,20 @@ Single click on a Track node:
 
 - selects the Track
 
-Single click on a Segment block:
+Single click on a window/phrase block:
 
 - selects the Track
-- focuses the Segment
+- focuses the window
 
-Double click on a Segment block:
+Double click on a window/phrase block:
 
 - selects the Track
-- focuses the Segment
+- focuses the window
 - moves user attention to Piano Roll editing
 
-Dragging a Segment block:
+Dragging a window/phrase block:
 
-- updates segment placement in time
+- updates window placement in time (slice_flag / note move, depending on implementation)
 - should be optimistic in UI
 - commits after drag end
 
@@ -155,15 +149,15 @@ Responsibilities:
 - pitch
 - lyric editing
 - phoneme display or editing
-- curves inside the active Segment
+- curves inside the focused window/phrase
 
-If no Segment is focused:
+If no window/phrase is focused:
 
-- Piano Roll should show an empty state, not silently edit the first Segment in the project
+- Piano Roll should show an empty state, not silently edit the first window in the project
 
 Creating notes:
 
-- attaches notes to the active Segment only
+- attaches notes to the selected Track (within the focused window when the UI scopes)
 
 Dragging notes:
 
@@ -185,14 +179,14 @@ Default behavior:
 
 Optional behavior:
 
-- show a Segment-level override graph only when user explicitly enters override mode
+- show a window/phrase-level override graph only when user explicitly enters override mode
 
 The header should always make current graph scope obvious.
 
 Examples:
 
 - `Track Synth · Main Vocal`
-- `Segment Override · Chorus 1`
+- `Window Override · Chorus 1`
 
 ### Inspector
 
@@ -202,9 +196,9 @@ When `current_scope == :track`:
 
 - show Track name, color, mute, solo, gain, pan
 
-When `current_scope == :segment`:
+When `current_scope == :window` / `:phrase`:
 
-- show Segment name, offset, local metadata
+- show window/phrase start, end, and local metadata
 
 When `current_scope == :track_synth`:
 
@@ -217,19 +211,19 @@ When `current_scope == :track_synth`:
 The UI should always show:
 
 - which Track is selected
-- which Segment is focused
+- which window/phrase is focused
 - which editor scope is active
 
 No view should operate on hidden implicit context.
 
 ### Rule 2: Selection Changes Are Cheap
 
-Changing Track or Segment selection should be immediate and local.
+Changing Track or window/phrase selection should be immediate and local.
 It should not require render or graph recompilation.
 
 ### Rule 3: Editing Follows Focus
 
-Only the focused Segment is editable in Piano Roll.
+Only the focused window/phrase is editable in Piano Roll.
 Only the selected Track is editable in default Node Editor mode.
 
 ### Rule 4: Views Coordinate Through Context
@@ -289,9 +283,9 @@ If there is no Track:
 
 - show create-first-track empty state
 
-If there is a Track but no Segment:
+If there is a Track but no window/phrase focused:
 
-- show create-first-segment empty state in Piano Roll
+- show create-first-window/phrase empty state in Piano Roll
 
 If there is no graph:
 
@@ -303,7 +297,7 @@ Render actions should be scoped and named clearly.
 
 Recommended commands:
 
-- `Render Segment`
+- `Render Window/Phrase`
 - `Render Track`
 - `Render Project`
 
@@ -318,8 +312,8 @@ It should only make the core interaction loop coherent.
 
 - explicit editor context store or LiveView assigns
 - Track selection from Arranger and TrackList
-- Segment focus from Arranger
-- Piano Roll bound to focused Segment
+- window/phrase focus from Arranger
+- Piano Roll bound to focused window/phrase
 - Node Editor bound to selected Track
 
 ### Pass 2
@@ -330,7 +324,7 @@ It should only make the core interaction loop coherent.
 
 ### Pass 3
 
-- Segment override mode
+- window/phrase override mode
 - inspector panel
 - render scope commands
 
@@ -339,7 +333,7 @@ It should only make the core interaction loop coherent.
 The intended behavior is simple:
 
 - user thinks in Tracks
-- user edits one Segment at a time
+- user edits one window/phrase at a time
 - user configures synthesis at Track scope by default
 - all panels stay synchronized through explicit shared context
 

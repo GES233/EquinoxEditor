@@ -95,7 +95,7 @@ projection 供给的确定性按版本对齐。
 ## 5. 开放细节（设计阶段再钉）
 
 - **artifact 的具体形状**：已定案（2026-08-15，随第一个真实引擎接入，
-  见下「DiffSinger 真模型闭环」）：`%{path, sample_rate, frames}`，wav
+  见下「DiffSinger 真模型闭环」）：`%{path, sample_rate, frames, lead_in_sec}`，wav
   f32 由 sidecar 落盘，不落领域事实、不进 History，黑板是唯一传输
   通道。
 - **globals 校验挂点**（已定案 2026-08-15，见下「globals 与 capabilities
@@ -165,15 +165,16 @@ projection 供给的确定性按版本对齐。
        supported_channels: [:phoneme_timing],   # 将来扩 curve channel
        supported_params: [:pitch, :energy]      # Adapter 据此派生 channel specs
      },
-     timing: %{frame_rate: 100, hop: 512}       # 喂给 timing_spec
+     timing: %{frame_rate: 100, hop: 512}       # 喂给 timing_spec；frame_rate 可为 float，hop 为正整数
    }
    ```
 
    VO 校验纪律（`Voicebank.new/1`）：三元组 `id` / `engine` /
    `engine_version` 必填；`capabilities.supported_channels` /
-   `supported_params` 若存在须为 atom 列表；`timing.frame_rate` / `hop`
-   若存在须为正整数；`models` / `dictionary` 对 kernel 不透明（只校验
-   是 map）。dump/load 为 plain map codec（与 Coconut.Pickle 约定一致）。
+   `supported_params` 若存在须为 atom 列表；`timing.frame_rate` 若存在须为
+   正数（float 或 int，如 `44100/512`）、`timing.hop` 若存在须为正整数；
+   `models` / `dictionary` 对 kernel 不透明（只校验是 map）。dump/load 为 plain
+   map codec（与 Coconut.Pickle 约定一致）。
 
 2. **挂载点：Adapter config**。声库不进 kernel 状态机，作为
    `Configurator.new(engine: {MyAdapter, %{voicebank: vb}})` 的 config 一部分。

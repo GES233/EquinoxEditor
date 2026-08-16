@@ -58,8 +58,9 @@ phoneme_timing 的 payload 是绝对边界
   参考 `PhonemeTiming.canonicalize/1`）。check 时 `Tamale.Patch.resolve/2` 对它取
   digest，与挂载时记录的 base_digest **零容差**比对：失配即 conflict（如
   `:base_changed`），通过则原样返回 payload。
-- `target/0` 或 `target/1`（至少实现其一）— resolved payload 的落点（见 §3.3）。
-  `target/1` 额外收 patch，用于锚派生端口（如 per-note `{:port, note_id, :pitch}`）。
+- `target/0` — resolved payload 的静态落点（`{:port, node_id, port}`）。
+  Per-note / per-window fan-out 和 arity-2 targets 属于 Kernel-side `EngineAdapter` /
+  `ChannelSpecs` 的职责，不在 Channel 模块内实现 `target/1`。
 
 锚不再需要三元组匹配猜测：挂载时按意图显式构造 `Tamale.Anchor.Ordinal` /
 `Relative` / `Metric`（见 §5）；结构死活由写时 transport 判定，死 patch 进

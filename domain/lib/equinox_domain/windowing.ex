@@ -2,7 +2,7 @@ defmodule EquinoxDomain.Windowing do
   @moduledoc """
   分窗（Windowing）——`[{note_id, Note, span}]` → 瞬态 `[Window]` 的单向纯投影。
 
-  基准规则移植自旧版（z 库）`RestSplit3Beats` 策略：
+  基准规则移植自旧版（legacy zongzi）`RestSplit3Beats` 策略：
 
   1. content span = 音符 span ∪ `opts[:extra_spans]`（外部 content 区间，
      如 Metric 锚 patch 的 tick 区间——对应旧版「scope 撑窗」语义，
