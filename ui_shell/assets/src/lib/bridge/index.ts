@@ -47,6 +47,7 @@ export interface TrackData {
   insert_fx_chain: Record<string, any>[];
   ui_state: Record<string, any>;
   parameters: Record<string, any>;
+  patches: PatchData[];
   segments: Record<string, SegmentData>;
   extra: Record<string, any>;
 }
@@ -60,6 +61,20 @@ export interface SegmentData {
   curves: Record<string, any>;
   synth_override?: Record<string, any> | null;
   extra: Record<string, any>;
+}
+
+// 干预实体（存活 patch；结构死亡的经 patch_conflicts 事件上浮，不在此列）
+export interface PatchData {
+  id: string;
+  channel: string;
+  anchor: { kind: string; refs?: string[]; ref?: string };
+  payload: Record<string, any>;
+}
+
+export interface PatchConflictEntry {
+  kind: string;
+  patches?: { id: string; channel: string; reason: string | null }[];
+  summary?: string;
 }
 
 export interface NoteData {

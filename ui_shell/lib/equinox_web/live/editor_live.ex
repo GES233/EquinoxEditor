@@ -3,10 +3,12 @@ defmodule EquinoxWeb.EditorLive do
 
   require Logger
 
-  alias Coconut.Edit.{History, Operations.InsertNote}
+  alias Coconut.Edit.{Command, History, Operations.InsertNote}
   alias Coconut.Score.Key.TwelveET
   alias Coconut.Util.ID
   alias Equinox.Session.Server
+  alias EquinoxDomain.Command.AdoptRequest
+  alias EquinoxDomain.Port.Channels.Curve
   alias EquinoxDomain.Score.{Project, Track, TrackMeta}
   alias EquinoxUIShell.{ProjectPresenter, SessionHost}
 
@@ -109,6 +111,13 @@ defmodule EquinoxWeb.EditorLive do
       |> push_editor_context(context)
 
     {:noreply, socket}
+  end
+
+  # kernel 通知队列上浮（死 patch / 采纳失败等）→ 推前端冲突 banner；
+  # 条目在边界处投影为 JSON 安全 plain map（tamale struct 不透传）
+  def handle_info({:push_notifications, notifications}, socket) do
+    entries = Enum.map(notifications, &notification_to_frontend/1)
+    {:noreply, push_event(socket, "patch_conflicts", %{entries: entries})}
   end
 
   def handle_info(:project_updated, socket) do
@@ -218,6 +227,26 @@ defmodule EquinoxWeb.EditorLive do
 
   defp server(socket), do: Equinox.Session.server(socket.assigns.session_id)
 
+  # kernel 通知 → 前端 patch_conflicts 条目（plain map，可 Jason 编码）
+  defp notification_to_frontend({:dead_patches, dead}) do
+    %{
+      kind: "dead_patches",
+      patches:
+        Enum.map(dead, fn
+          {patch, reason} ->
+            %{id: patch.id, channel: patch.channel, reason: inspect(reason)}
+
+          %Coconut.Edit.Patch{} = patch ->
+            %{id: patch.id, channel: patch.channel, reason: nil}
+        end)
+    }
+  end
+
+  defp notification_to_frontend({:adopt_failed, reason}),
+    do: %{kind: "adopt_failed", summary: inspect(reason)}
+
+  defp notification_to_frontend(other), do: %{kind: "unknown", summary: inspect(other)}
+
   defp push_project_state(socket, view) do
     push_event(socket, "project_load", ProjectPresenter.to_frontend(view))
   end
@@ -312,7 +341,36 @@ defmodule EquinoxWeb.EditorLive do
       TrackMeta.new(gain: 0.8, ui_state: %{arranger_position: %{x: 50, y: 30}})
 
     {:ok, project} = Project.put_track_meta(project, "track_1", meta)
+
+    # 播种一条演示曲线 patch（锚在两个音符上），加载即可在 PianoRoll 看到干预实体
+    {:ok, project} = seed_demo_curve(project, [note1_id, note2_id])
     project
+  end
+
+  # 演示曲线：3 个控制点横跨两个音符（绝对 tick 0..720，value 为 midi pitch），
+  # 走与 kernel 同源的 AdoptRequest 构造 + History.run(Command.attach_patches) 挂载
+  defp seed_demo_curve(%Project{} = project, note_ids) do
+    points = [
+      %{tick: 0, value: 62.0, handle_left: nil, handle_right: nil},
+      %{tick: 360, value: 65.0, handle_left: nil, handle_right: nil},
+      %{tick: 700, value: 60.0, handle_left: nil, handle_right: nil}
+    ]
+
+    with {:ok, payload} <-
+           Curve.build_payload(:pitch, Coconut.Curve.Adapter.Bezier, points),
+         {:ok, patch} <-
+           AdoptRequest.build_patch(project.workspace, Curve, %{
+             track_id: "track_1",
+             anchor: {:ordinal, note_ids},
+             payload: payload
+           }) do
+      hist = History.new(project.workspace)
+
+      case History.run(hist, Command.attach_patches([patch])) do
+        {:ok, hist} -> {:ok, %{project | workspace: History.current(hist).workspace}}
+        {:error, _} = err -> err
+      end
+    end
   end
 
   # 经 coconut History 逐条 apply InsertNote 手势，返回 workspace 已推进的 project

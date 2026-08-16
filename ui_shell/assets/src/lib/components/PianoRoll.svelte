@@ -7,11 +7,13 @@
     SegmentData,
     TempoPoint,
     EditorScope,
+    PatchConflictEntry,
   } from "$lib/bridge";
   import {
     requestEditorContextChange,
     subscribeBeforeEditorContextChange,
   } from "$lib/editor_context";
+  import { curvesForSegment } from "$lib/curve_projection";
   import PianoRollInner from "./pianoroll/PianoRoll.svelte";
   import { onMount } from "svelte";
 
@@ -21,6 +23,7 @@
   let editorContext = $state<EditorContextData | null>(null);
   let notes = $state<any[]>([]);
   let tempos = $state<TempoPoint[]>([{ tick: 0, bpm: 120 }]);
+  let conflicts = $state<PatchConflictEntry[]>([]);
   let hydratingNotes = false;
   let pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingSavePayload:
@@ -48,6 +51,8 @@
     );
   });
   let scopeLabel = $derived(scopeToLabel(editorContext?.scope ?? "track"));
+  let activePatches = $derived(activeTrack?.patches ?? []);
+  let segmentCurves = $derived(curvesForSegment(activeTrack?.patches, activeSegment));
 
   onMount(() => {
     const unsubProject = bridge.handleEvent<ProjectData>("project_load", (payload) => {
@@ -56,6 +61,12 @@
     const unsubContext = bridge.handleEvent<EditorContextData>("editor_context", (payload) => {
       editorContext = payload;
     });
+    const unsubConflicts = bridge.handleEvent<{ entries: PatchConflictEntry[] }>(
+      "patch_conflicts",
+      (payload) => {
+        conflicts = payload.entries;
+      }
+    );
     const unsubBeforeContextChange = subscribeBeforeEditorContextChange(() => {
       flushPendingSave();
     });
@@ -64,6 +75,7 @@
       flushPendingSave();
       unsubProject();
       unsubContext();
+      unsubConflicts();
       unsubBeforeContextChange();
     };
   });
@@ -165,6 +177,40 @@
     }
   }
 
+  // 演示曲线：锚定当前 segment 全部音符，3 个控制点横跨 segment（绝对 tick，
+  // value 取首音符 key ±2）；走真实 adopt_intervention 链路
+  function adoptDemoCurve() {
+    if (!activeTrack || !activeSegment || activeSegment.notes.length === 0) return;
+
+    flushPendingSave();
+
+    const offset = activeSegment.offset_tick ?? 0;
+    const baseKey = activeSegment.notes[0]?.key ?? 60;
+    const lastNote = activeSegment.notes[activeSegment.notes.length - 1];
+    const endTick = offset + lastNote.start_tick + lastNote.duration_tick;
+    const midTick = Math.floor((offset + endTick) / 2);
+
+    bridge.pushEvent("adopt_demo_curve", {
+      track_id: activeTrack.id,
+      note_ids: activeSegment.notes.map((note) => note.id),
+      points: [
+        { tick: offset, value: baseKey + 2 },
+        { tick: midTick, value: baseKey + 5 },
+        { tick: Math.max(offset + 1, endTick - 20), value: baseKey },
+      ],
+    });
+  }
+
+  function conflictSummary(entry: PatchConflictEntry): string {
+    if (entry.kind === "dead_patches") {
+      const patches = entry.patches ?? [];
+      return `${patches.length} 条干预被编辑杀死：${patches
+        .map((p) => `${p.id} (${p.channel})`)
+        .join(", ")}`;
+    }
+    return entry.summary ?? entry.kind;
+  }
+
 </script>
 
 <div class="h-full w-full">
@@ -188,9 +234,44 @@
             {/each}
           </div>
         {/if}
+        <div class="flex flex-wrap items-center gap-2 mt-2">
+          <button
+            class="px-2 py-1 rounded text-[11px] cursor-pointer border border-emerald-700 bg-emerald-900/60 text-emerald-200 hover:bg-emerald-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
+            disabled={!activeSegment || activeSegment.notes.length === 0}
+            onclick={adoptDemoCurve}
+          >
+            ＋演示曲线
+          </button>
+          {#each activePatches as patch}
+            <span
+              class="px-2 py-1 rounded text-[11px] border border-zinc-700 bg-zinc-900 text-zinc-400"
+              title={patch.id}
+            >
+              {patch.channel}
+              {patch.anchor.kind === "ordinal" ? `[${(patch.anchor.refs ?? []).length} notes]` : `(${patch.anchor.kind})`}
+              {patch.payload?.param ? `· ${patch.payload.param}` : ""}
+              {Array.isArray(patch.payload?.points) ? `· ${patch.payload.points.length} pts` : ""}
+            </span>
+          {/each}
+        </div>
       </div>
+      {#if conflicts.length > 0}
+        <div class="px-3 py-2 border-b border-amber-700 bg-amber-950/80 text-amber-200 shrink-0 flex items-start gap-3">
+          <div class="flex-1 text-[12px]">
+            {#each conflicts as entry}
+              <div>{conflictSummary(entry)}</div>
+            {/each}
+          </div>
+          <button
+            class="px-2 py-0.5 rounded text-[11px] cursor-pointer border border-amber-700 hover:bg-amber-900 transition-colors"
+            onclick={() => (conflicts = [])}
+          >
+            知道了
+          </button>
+        </div>
+      {/if}
       <div class="flex-1 min-h-0">
-        <PianoRollInner bind:notes bind:tempos />
+        <PianoRollInner bind:notes bind:tempos curves={segmentCurves} />
       </div>
     </div>
   {:else}

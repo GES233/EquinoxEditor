@@ -16,6 +16,9 @@ defmodule Equinox.Session.Context do
     （userland 注入，config 对 kernel 不透明）；`default_engine` 为
     voicebank_id 缺省轨的回落。per-track 粒度：每轨经
     `TrackMeta.voicebank_id` 解析自己的 `{adapter, config}`。
+  - `notifications` — 会话内易失的上浮通知队列（如 `{:dead_patches, [...]}`），
+    由 Host/UI 经 `Server.take_notifications/1` 取走（取出即清空）；不落盘，
+    与 History 的会话级语义一致。
   """
 
   alias Coconut.Edit.History
@@ -35,7 +38,8 @@ defmodule Equinox.Session.Context do
           task_supervisor: GenServer.name(),
           render_tasks: Task.t() | nil,
           engines: %{term() => {module(), term()}},
-          default_engine: nil | {module(), term()}
+          default_engine: nil | {module(), term()},
+          notifications: [term()]
         }
   defstruct [
     :session_id,
@@ -47,7 +51,8 @@ defmodule Equinox.Session.Context do
     compile_cache: %{},
     blackboard: nil,
     render_tasks: nil,
-    engines: %{}
+    engines: %{},
+    notifications: []
   ]
 
   @spec new(atom() | String.t(), Project.t(), keyword()) :: t()
@@ -94,6 +99,16 @@ defmodule Equinox.Session.Context do
   def sync_workspace(%__MODULE__{history: hist, project: project} = ctx) do
     %{ctx | project: %{project | workspace: History.current(hist).workspace}}
   end
+
+  @doc "追加上浮通知（如写时 transport 杀死的 patch）到会话通知队列。"
+  @spec append_notifications(t(), [term()]) :: t()
+  def append_notifications(%__MODULE__{} = ctx, list) when is_list(list),
+    do: %{ctx | notifications: ctx.notifications ++ list}
+
+  @doc "取出全部上浮通知并清空队列（Host/UI 轮询出口）。"
+  @spec take_notifications(t()) :: {[term()], t()}
+  def take_notifications(%__MODULE__{} = ctx),
+    do: {ctx.notifications, %{ctx | notifications: []}}
 
   @doc """
   编译全部轨道并组装一次渲染 dispatch（`Runner.dispatch()`）。

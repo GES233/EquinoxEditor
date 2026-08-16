@@ -82,7 +82,13 @@ defmodule Equinox.Kernel.EngineAdapterTest do
     {:ok, project, note1} = project_with_notes("project_stub", track_id)
     project = put_voicebank(project, track_id, "stub_vb")
 
-    payload = %{phonemes: [%{lang: "zh", symbol: "l", start_frame: 40, end_frame: 50, note_index: 0}, %{lang: "zh", symbol: "iang", start_frame: 50, end_frame: 92, note_index: 0}], lead_in_sec: 0.5}
+    payload = %{
+      phonemes: [
+        %{lang: "zh", symbol: "l", start_frame: 40, end_frame: 50, note_index: 0},
+        %{lang: "zh", symbol: "iang", start_frame: 50, end_frame: 92, note_index: 0}
+      ],
+      lead_in_sec: 0.5
+    }
 
     # 挂载：带引擎版本戳（Server.adopt_intervention 盖戳路径的纯构造部分）
     {:ok, patch} =
@@ -179,7 +185,13 @@ defmodule Equinox.Kernel.EngineAdapterTest do
     assert {:ok, meta} = Server.update_track_voicebank(server, track_id, "stub_vb")
     assert meta.voicebank_id == "stub_vb"
 
-    payload = %{phonemes: [%{lang: "zh", symbol: "l", start_frame: 40, end_frame: 50, note_index: 0}, %{lang: "zh", symbol: "iang", start_frame: 50, end_frame: 92, note_index: 0}], lead_in_sec: 0.5}
+    payload = %{
+      phonemes: [
+        %{lang: "zh", symbol: "l", start_frame: 40, end_frame: 50, note_index: 0},
+        %{lang: "zh", symbol: "iang", start_frame: 50, end_frame: 92, note_index: 0}
+      ],
+      lead_in_sec: 0.5
+    }
 
     assert {:ok, _track, patch} =
              Server.adopt_intervention(server, track_id,
@@ -328,7 +340,13 @@ defmodule Equinox.Kernel.EngineAdapterTest do
     assert {:ok, meta} = Server.update_track_globals(server, track_id, gender: nil, depth: 1.0)
     assert meta.globals == %{depth: 1.0, phoneme_mode: :auto}
 
-    payload = %{phonemes: [%{lang: "zh", symbol: "l", start_frame: 40, end_frame: 50, note_index: 0}, %{lang: "zh", symbol: "iang", start_frame: 50, end_frame: 92, note_index: 0}], lead_in_sec: 0.5}
+    payload = %{
+      phonemes: [
+        %{lang: "zh", symbol: "l", start_frame: 40, end_frame: 50, note_index: 0},
+        %{lang: "zh", symbol: "iang", start_frame: 50, end_frame: 92, note_index: 0}
+      ],
+      lead_in_sec: 0.5
+    }
 
     # adoptables 命中的声库：adopt 正常
     assert {:ok, _} = Server.update_track_voicebank(server, track_id, "stub_vb")
@@ -457,7 +475,13 @@ defmodule Equinox.Kernel.EngineAdapterTest do
     {:ok, project, note1} = project_with_notes("project_#{track_id}", track_id)
     project = put_voicebank(project, track_id, "stub_vb")
 
-    payload = %{phonemes: [%{lang: "zh", symbol: "l", start_frame: 40, end_frame: 50, note_index: 0}, %{lang: "zh", symbol: "iang", start_frame: 50, end_frame: 92, note_index: 0}], lead_in_sec: 0.5}
+    payload = %{
+      phonemes: [
+        %{lang: "zh", symbol: "l", start_frame: 40, end_frame: 50, note_index: 0},
+        %{lang: "zh", symbol: "iang", start_frame: 50, end_frame: 92, note_index: 0}
+      ],
+      lead_in_sec: 0.5
+    }
 
     {:ok, patch} =
       AdoptRequest.build_patch(project.workspace, PhonemeTiming, %{

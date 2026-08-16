@@ -26,6 +26,10 @@ defmodule EquinoxUIShell.ProjectPresenter do
   - **tempo**：tempo 是一条全局轨（`workspace.globals["global:tempo"]`，
     `Coconut.Edit.Track.Tempo`），经 `tempo_events/1` 投影为 `%{tick, bpm}`
     列表；tpqn 恒 480。
+  - **patches**：轨道存活 patch（`Coconut.Edit.Track.patches`）投影为
+    `TrackData.patches` 列表——`%{id, channel, anchor: %{kind, ...}, payload}`；
+    anchor 只投影 kind + 关键字段（Ordinal 给 `refs`），payload 原样透传。
+    结构死亡的 patch 不进此列表（经 kernel 通知通道上浮）。
   """
 
   alias Coconut.Edit.Track, as: CoconutTrack
@@ -135,10 +139,34 @@ defmodule EquinoxUIShell.ProjectPresenter do
       insert_fx_chain: [],
       ui_state: meta.ui_state,
       parameters: %{},
+      patches: patches_to_frontend(track),
       segments: windows_to_segments(project, track.id),
       extra: %{}
     }
   end
+
+  # 存活 patch（干预实体）投影：anchor 只投影 kind + 关键字段（Ordinal 给 refs，
+  # Relative 给 ref，Metric 只给 kind），payload 原样透传（plain map，atom 键
+  # 由 Jason 编码为字符串）。结构死亡的 patch 不在此列（走通知通道上浮）。
+  defp patches_to_frontend(%CoconutTrack{} = track) do
+    Enum.map(track.patches, fn patch ->
+      %{
+        id: patch.id,
+        channel: patch.channel,
+        anchor: anchor_to_frontend(patch.anchor),
+        payload: patch.patch.payload
+      }
+    end)
+  end
+
+  defp anchor_to_frontend(%Tamale.Anchor.Ordinal{refs: refs}),
+    do: %{kind: "ordinal", refs: refs}
+
+  defp anchor_to_frontend(%Tamale.Anchor.Relative{ref: ref}),
+    do: %{kind: "relative", ref: ref}
+
+  defp anchor_to_frontend(%Tamale.Anchor.Metric{}), do: %{kind: "metric"}
+  defp anchor_to_frontend(_other), do: %{kind: "unknown"}
 
   # 侧表缺项（如直接构造 workspace 未经 Server.add_track）按缺省 meta 投影
   defp track_meta_or_default(%Project{} = project, track_id) do

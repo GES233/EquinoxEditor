@@ -243,4 +243,55 @@ defmodule Equinox.OverallTest do
     {:ok, key} = TwelveET.new(midi)
     key
   end
+
+  test "take_notifications surfaces dead patches killed by edits, then drains" do
+    project = build_project("Notifications")
+    {:ok, project, _track} = Project.add_track(project, id: ID.generate_id("Track_"))
+    [track_id] = Map.keys(project.tracks_meta)
+    note_id = ID.generate_id("Note_")
+
+    {:ok, project} =
+      insert_notes(project, [
+        {track_id, note_id, :head, {0, 480}, %{pitch: twelve_et(60), lyric: "la"}}
+      ])
+
+    session_id = "notifications-session"
+
+    start_supervised!(
+      Server.child_spec(
+        session_id: session_id,
+        name: Session.server(session_id),
+        project: project
+      )
+    )
+
+    server = Session.server(session_id)
+
+    # 初始无通知
+    assert [] = Server.take_notifications(server)
+
+    # 锚在音符上的 patch 挂载本身不产生死 patch
+    assert {:ok, _track, patch} =
+             Server.adopt_intervention(
+               server,
+               track_id,
+               channel: PhonemeTiming,
+               seq_id: note_id,
+               payload: %{
+                 deltas: [%{identity: "ph_a", onset_delta_ms: 10, duration_delta_ms: 20}]
+               }
+             )
+
+    assert [] = Server.take_notifications(server)
+
+    # 整窗替换清空窗口 → 原音符 id 消亡，锚其上的 patch 判死
+    assert {:ok, _updated} = Server.replace_window_notes(server, track_id, 0, [])
+
+    assert [{:dead_patches, dead}] = Server.take_notifications(server)
+    assert [{%Coconut.Edit.Patch{id: patch_id}, {:undefined, {:deleted, _note_id}}}] = dead
+    assert patch_id == patch.id
+
+    # 取出即清空
+    assert [] = Server.take_notifications(server)
+  end
 end

@@ -1,11 +1,17 @@
 <script lang="ts">
   import { Viewport } from "../../stores/viewport.svelte.js";
+  import type { SegmentCurve } from "../../curve_projection.js";
   import GridLayer from "./GridLayer.svelte";
   import NotesLayer from "./NotesLayer.svelte";
+  import CurveLayer from "./CurveLayer.svelte";
   import TimelineRuler from "./TimelineRuler.svelte";
   import PianoKeys from "./PianoKeys.svelte";
 
-  let { notes = $bindable([]), tempos = $bindable([{tick: 0, bpm: 120}]) } = $props();
+  let {
+    notes = $bindable([]),
+    tempos = $bindable([{tick: 0, bpm: 120}]),
+    curves = [],
+  }: { notes: any[]; tempos: { tick: number; bpm: number }[]; curves?: SegmentCurve[] } = $props();
 
   let viewport = new Viewport();
 
@@ -92,5 +98,6 @@
   >
     <GridLayer {viewport} />
     <NotesLayer {viewport} bind:notes />
+    <CurveLayer {viewport} {curves} />
   </div>
 </div>

@@ -132,6 +132,16 @@ defmodule Equinox.Session.Server do
   @spec dispatch(GenServer.server(), keyword()) :: :ok
   def dispatch(server, opts \\ []), do: GenServer.cast(server, {:dispatch, opts})
 
+  @doc """
+  取出会话内累积的上浮通知并清空（Host/UI 轮询出口）。
+
+  目前唯一的通知形是 `{:dead_patches, [Coconut.Edit.Patch.t()]}`——写时
+  transport 判死的 patch（tamale 教义：不确定性流向冲突，永不沉默；
+  日志之外在此排队等 UI 取走）。
+  """
+  @spec take_notifications(GenServer.server()) :: [term()]
+  def take_notifications(server), do: GenServer.call(server, :take_notifications)
+
   # ---- 启动与生命周期 ----
 
   def start_link(opts) do
@@ -199,6 +209,11 @@ defmodule Equinox.Session.Server do
   @impl true
   def handle_call(:get_view, _from, state) do
     {:reply, %{project: state.project, graphs: state.graphs}, state}
+  end
+
+  def handle_call(:take_notifications, _from, state) do
+    {notifications, state} = Context.take_notifications(state)
+    {:reply, notifications, state}
   end
 
   def handle_call({:add_track, attrs}, _from, state) do
@@ -372,14 +387,22 @@ defmodule Equinox.Session.Server do
   defp track_module(type) when type in [:external_audio, "external_audio"], do: Audio
   defp track_module(_other), do: Vocal
 
-  # History 写入口统一收尾：写入 → 排干死 patch 墓地（日志上浮，等价旧
-  # rebase 冲突上浮通道；当前无 UI 订阅方，先记录不丢弃）→ workspace 回挂
-  # project（tracks_meta 侧表不动）。
+  # History 写入口统一收尾：写入 → 排干死 patch 墓地（日志 + 通知队列双通道
+  # 上浮，等价旧 rebase 冲突上浮通道；UI 经 `take_notifications/1` 取走）→
+  # workspace 回挂 project（tracks_meta 侧表不动）。
   defp run_history(%Context{} = state, %Command{} = command) do
     with {:ok, hist} <- History.run(state.history, command) do
       {dead, hist} = History.take_dead_patches(hist)
       log_dead_patches(dead)
-      {:ok, Context.sync_workspace(%{state | history: hist})}
+
+      state = %{state | history: hist}
+
+      state =
+        if dead == [],
+          do: state,
+          else: Context.append_notifications(state, [{:dead_patches, dead}])
+
+      {:ok, Context.sync_workspace(state)}
     end
   end
 

@@ -4,6 +4,7 @@ defmodule EquinoxWeb.EditorLive.PianoRollComponent do
   require Logger
 
   alias Equinox.Session.Server
+  alias EquinoxDomain.Port.Channels.Curve
   alias EquinoxUIShell.ProjectPresenter
 
   def render(assigns) do
@@ -35,6 +36,12 @@ defmodule EquinoxWeb.EditorLive.PianoRollComponent do
     with {:ok, window_start} <- ProjectPresenter.parse_window_id(seg_id),
          {:ok, note_attrs} <- ui_notes_to_attrs(note_params, window_start),
          {:ok, _track} <- Server.replace_window_notes(server, track_id, window_start, note_attrs) do
+      # 写时 transport 可能杀死 patch（如锚定音符被删）——排干 kernel 通知队列上浮
+      case Server.take_notifications(server) do
+        [] -> :ok
+        notifications -> send(self(), {:push_notifications, notifications})
+      end
+
       send(self(), :project_updated)
       {:noreply, socket}
     else
@@ -46,6 +53,47 @@ defmodule EquinoxWeb.EditorLive.PianoRollComponent do
 
         {:noreply, socket}
     end
+  end
+
+  # 演示曲线采纳：前端给锚定音符 id 列表 + 绝对 tick 控制点（string 键），
+  # 在此收口为 Curve.build_payload 的 atom 键形状后走真实 adopt 链路
+  def handle_event(
+        "adopt_demo_curve",
+        %{"track_id" => track_id, "note_ids" => note_ids, "points" => points},
+        socket
+      )
+      when is_list(note_ids) and is_list(points) do
+    server = Equinox.Session.server(socket.assigns.session_id)
+
+    with {:ok, payload} <- demo_curve_payload(points),
+         {:ok, _track, _patch} <-
+           Server.adopt_intervention(server, track_id,
+             channel: Curve,
+             anchor: {:ordinal, note_ids},
+             payload: payload
+           ) do
+      send(self(), :project_updated)
+      {:noreply, socket}
+    else
+      {:error, reason} ->
+        Logger.warning("adopt_demo_curve failed (track #{inspect(track_id)}): #{inspect(reason)}")
+        send(self(), {:push_notifications, [{:adopt_failed, reason}]})
+        {:noreply, socket}
+    end
+  end
+
+  defp demo_curve_payload(points) do
+    normalized =
+      Enum.map(points, fn point ->
+        %{
+          tick: point["tick"],
+          value: point["value"],
+          handle_left: nil,
+          handle_right: nil
+        }
+      end)
+
+    Curve.build_payload(:pitch, Coconut.Curve.Adapter.Bezier, normalized)
   end
 
   defp ui_notes_to_attrs(note_params, window_start) do

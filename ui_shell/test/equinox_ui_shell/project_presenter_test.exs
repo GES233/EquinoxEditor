@@ -1,9 +1,11 @@
 defmodule EquinoxUIShell.ProjectPresenterTest do
   use ExUnit.Case, async: true
 
-  alias Coconut.Edit.{History, Operations.InsertNote, Workspace}
+  alias Coconut.Edit.{Command, History, Operations.InsertNote, Workspace}
   alias Coconut.Score.Key.TwelveET
   alias Equinox.Kernel.Graph
+  alias EquinoxDomain.Command.AdoptRequest
+  alias EquinoxDomain.Port.Channels.PhonemeTiming
   alias EquinoxDomain.Score.{Project, TrackMeta}
   alias EquinoxUIShell.ProjectPresenter
 
@@ -171,6 +173,34 @@ defmodule EquinoxUIShell.ProjectPresenterTest do
       data = ProjectPresenter.to_frontend(%{project: project, graphs: graphs})
       assert json = Jason.encode!(data)
       assert is_binary(json)
+    end
+
+    test "存活 patch 投影为 TrackData.patches（anchor 只给 kind + 关键字段）",
+         %{project: project, graphs: graphs} do
+      payload = %{deltas: [%{identity: "ph_a", onset_delta_ms: 10, duration_delta_ms: 20}]}
+
+      {:ok, patch} =
+        AdoptRequest.build_patch(project.workspace, PhonemeTiming, %{
+          track_id: "Track_1",
+          anchor: {:ordinal, ["Note_1"]},
+          payload: payload
+        })
+
+      hist = History.new(project.workspace)
+      {:ok, hist} = History.run(hist, Command.attach_patches([patch]))
+      project = %{project | workspace: History.current(hist).workspace}
+
+      data = ProjectPresenter.to_frontend(%{project: project, graphs: graphs})
+
+      assert [projected] = data.tracks["Track_1"].patches
+      assert is_binary(projected.id)
+      assert projected.channel == :phoneme_timing
+      assert projected.anchor == %{kind: "ordinal", refs: ["Note_1"]}
+      assert projected.payload == payload
+
+      # 无 patch 轨投影空列表；整体仍可 Jason 编码
+      assert data.tracks["Track_empty"].patches == []
+      assert Jason.encode!(data)
     end
   end
 
