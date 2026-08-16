@@ -3,12 +3,10 @@ defmodule EquinoxWeb.EditorLive do
 
   require Logger
 
-  alias Coconut.Edit.{Command, History, Operations.InsertNote}
+  alias Coconut.Edit.{History, Operations.InsertNote}
   alias Coconut.Score.Key.TwelveET
   alias Coconut.Util.ID
   alias Equinox.Session.Server
-  alias EquinoxDomain.Command.AdoptRequest
-  alias EquinoxDomain.Port.Channels.Curve
   alias EquinoxDomain.Score.{Project, Track, TrackMeta}
   alias EquinoxUIShell.{ProjectPresenter, SessionHost}
 
@@ -21,9 +19,23 @@ defmodule EquinoxWeb.EditorLive do
   def mount(_params, _session, socket) do
     if connected?(socket) do
       # 握手时初始化一个 Session；demo 工程经 child_spec 的 project opt 注入
-      # （重复连接时 Session 已存在，start_session 返回 already_started，幂等）
+      # （重复连接时 Session 已存在，start_session 返回 already_started，幂等）。
+      # default_engine 注入 Stub 适配器：未选声库的轨全部解析到它——版本戳 /
+      # adoptables 门控 / check 阶段 spec resolve 全链路真实生效。
       session_id = "default_session"
-      SessionHost.start_session(session_id, project: build_default_proj())
+
+      SessionHost.start_session(session_id,
+        project: build_default_proj(),
+        default_engine:
+          {EquinoxAdapters.Stub,
+           %{
+             voicebank_id: "ui_stub",
+             engine_version: "0.1.0",
+             channels: [:phoneme_timing, :curve],
+             adoptables: [:phoneme_timing, :curve]
+           }}
+      )
+
       # 这里可以按需 subscribe 等待 engine 的事件
 
       send(self(), :push_initial_state)
@@ -341,36 +353,7 @@ defmodule EquinoxWeb.EditorLive do
       TrackMeta.new(gain: 0.8, ui_state: %{arranger_position: %{x: 50, y: 30}})
 
     {:ok, project} = Project.put_track_meta(project, "track_1", meta)
-
-    # 播种一条演示曲线 patch（锚在两个音符上），加载即可在 PianoRoll 看到干预实体
-    {:ok, project} = seed_demo_curve(project, [note1_id, note2_id])
     project
-  end
-
-  # 演示曲线：3 个控制点横跨两个音符（绝对 tick 0..720，value 为 midi pitch），
-  # 走与 kernel 同源的 AdoptRequest 构造 + History.run(Command.attach_patches) 挂载
-  defp seed_demo_curve(%Project{} = project, note_ids) do
-    points = [
-      %{tick: 0, value: 62.0, handle_left: nil, handle_right: nil},
-      %{tick: 360, value: 65.0, handle_left: nil, handle_right: nil},
-      %{tick: 700, value: 60.0, handle_left: nil, handle_right: nil}
-    ]
-
-    with {:ok, payload} <-
-           Curve.build_payload(:pitch, Coconut.Curve.Adapter.Bezier, points),
-         {:ok, patch} <-
-           AdoptRequest.build_patch(project.workspace, Curve, %{
-             track_id: "track_1",
-             anchor: {:ordinal, note_ids},
-             payload: payload
-           }) do
-      hist = History.new(project.workspace)
-
-      case History.run(hist, Command.attach_patches([patch])) do
-        {:ok, hist} -> {:ok, %{project | workspace: History.current(hist).workspace}}
-        {:error, _} = err -> err
-      end
-    end
   end
 
   # 经 coconut History 逐条 apply InsertNote 手势，返回 workspace 已推进的 project

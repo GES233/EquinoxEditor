@@ -1,5 +1,7 @@
 <script lang="ts">
-  let { viewport, notes = $bindable() } = $props();
+  import { snapTick } from "../../grid.js";
+
+  let { viewport, grid, notes = $bindable() } = $props();
 
   let visibleNotes = $derived(
     notes.filter((note: any) => {
@@ -46,7 +48,8 @@
       const dt = dx / viewport.zoomX;
       const dpitch = Math.round(-dy / viewport.zoomY); // invert y for pitch
 
-      const newStartTick = Math.max(0, initialNoteState.start_tick + dt);
+      // Grid 吸附仅作用于修改路径（不回溯量化既有音符）；关闭时仍取整
+      const newStartTick = snapTick(initialNoteState.start_tick + dt, grid.quantum, grid.enabled);
       const newPitch = Math.max(0, Math.min(127, initialNoteState.pitch + dpitch));
 
       updateNote(activeNoteId, {
@@ -55,7 +58,11 @@
       });
     } else if (dragMode === 'resize') {
       const dt = dx / viewport.zoomX;
-      const newDuration = Math.max(10, initialNoteState.length_tick + dt); // min 10 ticks
+      const minDuration = grid.enabled ? grid.quantum : 1;
+      const newDuration = Math.max(
+        minDuration,
+        snapTick(initialNoteState.length_tick + dt, grid.quantum, grid.enabled)
+      );
 
       updateNote(activeNoteId, {
         length_tick: newDuration

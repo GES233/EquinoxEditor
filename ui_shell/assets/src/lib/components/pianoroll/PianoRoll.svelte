@@ -1,6 +1,9 @@
 <script lang="ts">
   import { Viewport } from "../../stores/viewport.svelte.js";
+  import type { GridSettings } from "../../stores/grid.svelte.js";
+  import { snapTick } from "../../grid.js";
   import type { SegmentCurve } from "../../curve_projection.js";
+  import type { StrokeSample } from "../../stroke.js";
   import GridLayer from "./GridLayer.svelte";
   import NotesLayer from "./NotesLayer.svelte";
   import CurveLayer from "./CurveLayer.svelte";
@@ -11,7 +14,17 @@
     notes = $bindable([]),
     tempos = $bindable([{tick: 0, bpm: 120}]),
     curves = [],
-  }: { notes: any[]; tempos: { tick: number; bpm: number }[]; curves?: SegmentCurve[] } = $props();
+    drawing = false,
+    onStroke = (_samples: StrokeSample[]) => {},
+    grid,
+  }: {
+    notes: any[];
+    tempos: { tick: number; bpm: number }[];
+    curves?: SegmentCurve[];
+    drawing?: boolean;
+    onStroke?: (samples: StrokeSample[]) => void;
+    grid: GridSettings;
+  } = $props();
 
   let viewport = new Viewport();
 
@@ -61,8 +74,8 @@
 
     const newNote = {
       id: crypto.randomUUID ? crypto.randomUUID() : Math.random().toString(36).substring(2, 15),
-      start_tick: Math.max(0, timeTicks),
-      length_tick: 480, // Default duration (1 quarter note)
+      start_tick: snapTick(timeTicks, grid.quantum, grid.enabled),
+      length_tick: grid.enabled ? grid.quantum : 480, // Grid 开启时默认时值对齐最小单位
       pitch: pitch,
       lyric: "la",
       phonemes: {}
@@ -96,8 +109,8 @@
     tabindex="-1"
     aria-label="Piano Roll Canvas"
   >
-    <GridLayer {viewport} />
-    <NotesLayer {viewport} bind:notes />
-    <CurveLayer {viewport} {curves} />
+    <GridLayer {viewport} {grid} />
+    <NotesLayer {viewport} {grid} bind:notes />
+    <CurveLayer {viewport} {curves} {drawing} {onStroke} />
   </div>
 </div>

@@ -16,6 +16,8 @@ defmodule Equinox.Session do
         id: {:session_server, session_id},
         name: Equinox.Session.server(session_id),
         project: Keyword.get(opts, :project),
+        engines: Keyword.get(opts, :engines, %{}),
+        default_engine: Keyword.get(opts, :default_engine),
         orchid_symbiont_strict: Keyword.get(opts, :orchid_symbiont_strict, false)
       )
     ]

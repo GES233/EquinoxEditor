@@ -14,6 +14,9 @@
     subscribeBeforeEditorContextChange,
   } from "$lib/editor_context";
   import { curvesForSegment } from "$lib/curve_projection";
+  import { strokeToPoints, noteIdsInRange, type StrokeSample } from "$lib/stroke";
+  import { GridSettings } from "$lib/stores/grid.svelte";
+  import { GRID_OPTIONS } from "$lib/grid";
   import PianoRollInner from "./pianoroll/PianoRoll.svelte";
   import { onMount } from "svelte";
 
@@ -24,6 +27,8 @@
   let notes = $state<any[]>([]);
   let tempos = $state<TempoPoint[]>([{ tick: 0, bpm: 120 }]);
   let conflicts = $state<PatchConflictEntry[]>([]);
+  let drawing = $state(false);
+  const grid = new GridSettings();
   let hydratingNotes = false;
   let pendingSaveTimer: ReturnType<typeof setTimeout> | null = null;
   let pendingSavePayload:
@@ -124,6 +129,8 @@
     if (!activeTrack) return;
     if (editorContext?.segment_id === segmentId) return;
 
+    drawing = false; // 切换 segment 时退出绘制模式
+
     requestEditorContextChange({
       track_id: activeTrack.id,
       segment_id: segmentId,
@@ -177,27 +184,28 @@
     }
   }
 
-  // 演示曲线：锚定当前 segment 全部音符，3 个控制点横跨 segment（绝对 tick，
-  // value 取首音符 key ±2）；走真实 adopt_intervention 链路
-  function adoptDemoCurve() {
-    if (!activeTrack || !activeSegment || activeSegment.notes.length === 0) return;
-
-    flushPendingSave();
+  // 手绘笔画 → 真实 adopt：抽稀成控制点、锚定相交音符，走 adopt_intervention 链路；
+  // 空锚（笔画没碰到任何音符）静默丢弃
+  function handleStroke(samples: StrokeSample[]) {
+    if (!activeTrack || !activeSegment) return;
 
     const offset = activeSegment.offset_tick ?? 0;
-    const baseKey = activeSegment.notes[0]?.key ?? 60;
-    const lastNote = activeSegment.notes[activeSegment.notes.length - 1];
-    const endTick = offset + lastNote.start_tick + lastNote.duration_tick;
-    const midTick = Math.floor((offset + endTick) / 2);
+    const absolute = samples.map((s) => ({ tick: s.tick + offset, value: s.value }));
+    const points = strokeToPoints(absolute);
+    if (points.length < 2) return;
 
-    bridge.pushEvent("adopt_demo_curve", {
+    const noteIds = noteIdsInRange(
+      activeSegment.notes,
+      offset,
+      points[0].tick,
+      points[points.length - 1].tick
+    );
+    if (noteIds.length === 0) return;
+
+    bridge.pushEvent("adopt_curve", {
       track_id: activeTrack.id,
-      note_ids: activeSegment.notes.map((note) => note.id),
-      points: [
-        { tick: offset, value: baseKey + 2 },
-        { tick: midTick, value: baseKey + 5 },
-        { tick: Math.max(offset + 1, endTick - 20), value: baseKey },
-      ],
+      note_ids: noteIds,
+      points,
     });
   }
 
@@ -236,12 +244,26 @@
         {/if}
         <div class="flex flex-wrap items-center gap-2 mt-2">
           <button
-            class="px-2 py-1 rounded text-[11px] cursor-pointer border border-emerald-700 bg-emerald-900/60 text-emerald-200 hover:bg-emerald-800 transition-colors disabled:opacity-40 disabled:cursor-not-allowed"
-            disabled={!activeSegment || activeSegment.notes.length === 0}
-            onclick={adoptDemoCurve}
+            class="px-2 py-1 rounded text-[11px] cursor-pointer border transition-colors {drawing
+              ? 'border-emerald-500 bg-emerald-700 text-white'
+              : 'border-zinc-700 bg-zinc-900 text-zinc-400 hover:bg-zinc-800'}"
+            onclick={() => (drawing = !drawing)}
           >
-            ＋演示曲线
+            {drawing ? "✏️ 绘制中…" : "✏️ 画曲线"}
           </button>
+          <label class="flex items-center gap-1 text-[11px] text-zinc-400 cursor-pointer">
+            <input type="checkbox" class="accent-amber-500" bind:checked={grid.enabled} />
+            Grid
+          </label>
+          <select
+            class="px-1 py-1 rounded text-[11px] border border-zinc-700 bg-zinc-900 text-zinc-400 cursor-pointer disabled:opacity-40"
+            bind:value={grid.quantum}
+            disabled={!grid.enabled}
+          >
+            {#each GRID_OPTIONS as option}
+              <option value={option.tick}>{option.label}</option>
+            {/each}
+          </select>
           {#each activePatches as patch}
             <span
               class="px-2 py-1 rounded text-[11px] border border-zinc-700 bg-zinc-900 text-zinc-400"
@@ -271,7 +293,7 @@
         </div>
       {/if}
       <div class="flex-1 min-h-0">
-        <PianoRollInner bind:notes bind:tempos curves={segmentCurves} />
+        <PianoRollInner bind:notes bind:tempos curves={segmentCurves} {drawing} onStroke={handleStroke} {grid} />
       </div>
     </div>
   {:else}

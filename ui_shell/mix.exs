@@ -34,6 +34,7 @@ defmodule EquinoxUIShell.MixProject do
   defp deps do
     [
       {:equinox_kernel, path: "../kernel"},
+      {:equinox_engine_adapters, path: "../engine_adapters"},
       {:coconut, path: "../../coconut"},
       {:tamale, path: "../../tamale", override: true},
       {:phoenix, "~> 1.8.5"},
