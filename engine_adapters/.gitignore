@@ -1,8 +1,0 @@
-/_build/
-/cover/
-/deps/
-/doc/
-*.ez
-erl_crash.dump
-/sidecar/.venv/
-/sidecar/out/

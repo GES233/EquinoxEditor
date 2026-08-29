@@ -3,9 +3,14 @@ defmodule EquinoxRepo.MixProject do
 
   def project do
     [
-      app: :equinox_repo,
+      apps_path: "apps",
+      config_path: "config/config.exs",
       version: "0.1.0",
-      deps: []
+      deps: [
+        {:ex_doc, "~> 0.34", only: :dev, runtime: false, warn_if_outdated: true},
+        {:dialyxir, "~> 1.4", only: [:dev, :test], runtime: false},
+        {:credo, "~> 1.7", only: [:dev, :test], runtime: false}
+      ]
     ]
   end
 end

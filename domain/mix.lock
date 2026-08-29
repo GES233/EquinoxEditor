@@ -1,3 +1,0 @@
-%{
-  "tamale": {:hex, :tamale, "0.1.0", "017a7de9e414f0e5312d57fc701ce09d35ccd82491e00125e1e4c635bee99819", [:mix], [], "hexpm", "6f27f4bdb97c6a729ab7deaa52ebf8e7d09343c5cd39adc513b15603c577e656"},
-}

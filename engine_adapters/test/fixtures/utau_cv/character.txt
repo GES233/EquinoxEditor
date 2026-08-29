@@ -1,2 +1,0 @@
-name=Test CV Voicebank
-author=Equinox

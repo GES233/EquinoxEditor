@@ -1,9 +1,0 @@
-{
-  "phonemes": "phonemes.txt",
-  "acoustic": "acoustic.onnx",
-  "vocoder": "nsf_hifigan",
-  "sample_rate": 48000,
-  "hop_size": 480,
-  "predict_energy": false,
-  "predict_breathiness": false
-}
