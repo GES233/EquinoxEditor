@@ -24,7 +24,7 @@ defmodule EquinoxEngineAdapters.MixProject do
       {:equinox_domain, path: "../domain"},
       {:equinox_kernel, path: "../kernel"},
       {:coconut, path: "../../coconut"},
-      {:tamale, path: "../../tamale", override: true},
+      {:tamale, "~> 0.1"},
       {:yaml_elixir, "~> 2.9"},
       {:jason, "~> 1.2"}
     ]

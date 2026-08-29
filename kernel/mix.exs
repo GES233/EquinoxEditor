@@ -39,7 +39,7 @@ defmodule EquinoxKernel.MixProject do
       ## 领域模型
       {:equinox_domain, path: "../domain"},
       {:coconut, path: "../../coconut"},
-      {:tamale, path: "../../tamale", override: true},
+      {:tamale, "~> 0.1"},
       ## Orchid 生态
       {:orchid, "~> 0.6"},
       {:orchid_symbiont, "~> 0.2"},
