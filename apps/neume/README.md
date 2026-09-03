@@ -52,5 +52,5 @@ globals + 窗内音符 + pins」失效，编辑后只重推内容变化的窗口
 
 ## TODO
 
-- [ ] duration/pitch pin 换 output base（钉模型输出；coconut
-  `design-2026-08-orchid-intervention.md` §6.6），冲突三手势裁决界面。
+- [ ] duration/pitch pin 换身份底料（钉 probe 期音素序列；coconut
+  `design-2026-08-orchid-intervention.md` §6.6）+ re-patch 批量重挂手势。

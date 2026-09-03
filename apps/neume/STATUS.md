@@ -101,10 +101,12 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 下一步
 
-1. duration/pitch pin 换 **output base**（钉模型输出而非 score 内容；
-   coconut `design-2026-08-orchid-intervention.md` §6.6 拍板）——melisma
-   晋升/断组的 pin 语义漂移由 digest 自动 veto，冲突三手势
-   （re-extract 重挂 / 修改后重挂 / 丢弃）共用一个裁决界面。
+1. duration/pitch pin 换**身份底料**（钉 probe 期词内音素序列而非 score
+   内容；coconut `design-2026-08-orchid-intervention.md` §6.6 三档分类）——
+   melisma 晋升/断组的 pin 语义漂移由 digest 自动 veto，邻居编辑的预测
+   数值漂移不误伤；re-patch 批量重挂手势
+   （`(Patch(old, diff), new) -> Patch(new, diff')"`）共用一个冲突裁决界面。
+   output base（钉 stage 输出数值）留给将来的增量型曲线干预。
 2. 扩展 energy、breathiness、voicing 等曲线 channel，并保持参数语义位于
    adapter，不硬编码进 CoconutOi。
 3. 增加声库发现/注册表、多轨调度、播放和导出管理。
