@@ -12,20 +12,23 @@ defmodule Neume.Editor do
   alias Coconut.Pickle.File
   alias Coconut.Pickle.Track, as: PickleTrack
   alias Coconut.Project
-  alias Coconut.Render.Channels.Pitch
+  alias Coconut.Render.Channels.{Duration, Pitch}
   alias Coconut.Util.ID
+  alias Neume.Engine.DiffSingerPipeline
   alias Neume.Engine.MockPipeline
+  alias Neume.Voicebank.DiffSinger
 
   @default_track_id "vocal"
   @default_ticks_per_frame 10
 
-  @enforce_keys [:session, :registry, :track_id]
-  defstruct [:session, :registry, :track_id]
+  @enforce_keys [:session, :registry, :track_id, :pipeline]
+  defstruct [:session, :registry, :track_id, :pipeline]
 
   @type t :: %__MODULE__{
           session: Coconut.Session.t(),
           registry: Coconut.Pickle.Registry.t(),
-          track_id: Track.track_id()
+          track_id: Track.track_id(),
+          pipeline: module()
         }
 
   @doc "新建一个带单条人声轨的工程，并打开编辑会话。"
@@ -33,7 +36,8 @@ defmodule Neume.Editor do
   def new(opts \\ []) when is_list(opts) do
     track_id = Keyword.get(opts, :track_id, @default_track_id)
 
-    with {:ok, track} <- Track.new(%{id: track_id, module: Track.Vocal}),
+    with {:ok, voicebank, opts} <- prepare_new_voicebank(opts),
+         {:ok, track} <- Track.new(%{id: track_id, module: Track.Vocal}),
          {:ok, workspace} <-
            Workspace.new(%{
              id: Keyword.get(opts, :workspace_id, ID.generate_id("WSpc_")),
@@ -43,7 +47,7 @@ defmodule Neume.Editor do
            Project.new(%{
              id: Keyword.get(opts, :project_id, ID.generate_id("Proj_")),
              workspace: workspace,
-             voicebank: Keyword.get(opts, :voicebank),
+             voicebank: voicebank,
              metadata: Keyword.get(opts, :metadata, %{})
            }) do
       open(project, opts)
@@ -57,16 +61,23 @@ defmodule Neume.Editor do
     ticks_per_frame = Keyword.get(opts, :ticks_per_frame, @default_ticks_per_frame)
     registry = Keyword.get(opts, :registry, PickleTrack.default_registry())
 
-    with :ok <- validate_ticks_per_frame(ticks_per_frame),
+    with {:ok, project, manifest} <- prepare_open_voicebank(project, opts),
+         :ok <- validate_ticks_per_frame(ticks_per_frame),
          {:ok, %Track{module: Track.Vocal}} <- Workspace.fetch_track(project.workspace, track_id),
-         {:ok, compiled} <- MockPipeline.compile(ticks_per_frame: ticks_per_frame),
-         engine_config <- MockPipeline.engine_config(compiled, track_id),
+         {:ok, pipeline, compiled} <- compile_pipeline(manifest, track_id, ticks_per_frame, opts),
+         engine_config <- pipeline.engine_config(compiled, track_id),
          {:ok, session} <-
            Coconut.new(project,
-             channels: %{pitch: Pitch},
+             channels: %{duration: Duration, pitch: Pitch},
              engine: {CoconutOi.OrchidAdapter, engine_config}
            ) do
-      {:ok, %__MODULE__{session: session, registry: registry, track_id: track_id}}
+      {:ok,
+       %__MODULE__{
+         session: session,
+         registry: registry,
+         track_id: track_id,
+         pipeline: pipeline
+       }}
     else
       {:ok, %Track{module: module}} -> {:error, {:not_vocal_track, track_id, module}}
       {:error, _} = error -> error
@@ -153,6 +164,16 @@ defmodule Neume.Editor do
     end
   end
 
+  @doc "在音符上挂载逐音素的稀疏时长 pin：`[[音素下标, tick 时长], ...]`。"
+  @spec mount_phoneme_duration(t(), term(), [[non_neg_integer()]]) ::
+          {:ok, t()} | {:error, term()}
+  def mount_phoneme_duration(%__MODULE__{} = editor, note_id, durations) do
+    case Coconut.mount(editor.session, editor.track_id, note_id, :duration, durations) do
+      {:ok, session, _patch} -> {:ok, %{editor | session: session}}
+      {:error, _} = error -> error
+    end
+  end
+
   @doc "撤销一步编辑。"
   @spec undo(t()) :: {:ok, t()} | {:error, term()}
   def undo(%__MODULE__{} = editor), do: move_history(editor, &Coconut.undo/1)
@@ -161,11 +182,11 @@ defmodule Neume.Editor do
   @spec redo(t()) :: {:ok, t()} | {:error, term()}
   def redo(%__MODULE__{} = editor), do: move_history(editor, &Coconut.redo/1)
 
-  @doc "完成 resolve/check/render，并返回不暴露 Oi 内部内存的 mock 制品。"
+  @doc "完成 resolve/check/render，并返回不暴露 Oi 内部内存的渲染制品。"
   @spec render(t()) :: {:ok, t(), Neume.RenderArtifact.t()} | {:error, term()}
   def render(%__MODULE__{} = editor) do
     with {:ok, session, result} <- Coconut.render(editor.session),
-         {:ok, artifact} <- MockPipeline.fetch_artifact(result) do
+         {:ok, artifact} <- editor.pipeline.fetch_artifact(result) do
       {:ok, %{editor | session: session}, artifact}
     end
   end
@@ -199,4 +220,97 @@ defmodule Neume.Editor do
 
   defp validate_ticks_per_frame(value) when is_integer(value) and value > 0, do: :ok
   defp validate_ticks_per_frame(value), do: {:error, {:invalid_ticks_per_frame, value}}
+
+  defp prepare_new_voicebank(opts) do
+    case Keyword.get(opts, :voicebank_path) do
+      nil ->
+        {:ok, Keyword.get(opts, :voicebank), opts}
+
+      path ->
+        with {:ok, manifest} <- DiffSinger.scan(path),
+             signature = DiffSinger.signature(manifest),
+             :ok <- compare_signature(Keyword.get(opts, :voicebank), signature) do
+          {:ok, signature, Keyword.put(opts, :voicebank_manifest, manifest)}
+        end
+    end
+  end
+
+  defp prepare_open_voicebank(project, opts) do
+    case Keyword.get(opts, :voicebank_manifest) do
+      %DiffSinger{} = manifest ->
+        with {:ok, project} <- bind_voicebank(project, DiffSinger.signature(manifest)) do
+          {:ok, project, manifest}
+        end
+
+      nil ->
+        scan_open_voicebank(project.voicebank, Keyword.get(opts, :voicebank_path), project)
+
+      other ->
+        {:error, {:invalid_voicebank_manifest, other}}
+    end
+  end
+
+  defp scan_open_voicebank(nil, nil, project), do: {:ok, project, nil}
+
+  defp scan_open_voicebank(signature, nil, _project),
+    do: {:error, {:voicebank_path_required, signature}}
+
+  defp scan_open_voicebank(_signature, path, project) do
+    with {:ok, manifest} <- DiffSinger.scan(path),
+         {:ok, project} <- bind_voicebank(project, DiffSinger.signature(manifest)) do
+      {:ok, project, manifest}
+    end
+  end
+
+  defp bind_voicebank(%Project{voicebank: nil} = project, signature) do
+    Project.new(%{
+      id: project.id,
+      workspace: project.workspace,
+      voicebank: signature,
+      metadata: project.metadata
+    })
+  end
+
+  defp bind_voicebank(%Project{voicebank: signature} = project, signature), do: {:ok, project}
+
+  defp bind_voicebank(%Project{voicebank: expected}, actual),
+    do: {:error, {:voicebank_mismatch, expected, actual}}
+
+  defp compare_signature(nil, _actual), do: :ok
+  defp compare_signature(signature, signature), do: :ok
+
+  defp compare_signature(expected, actual),
+    do: {:error, {:voicebank_mismatch, expected, actual}}
+
+  defp compile_pipeline(nil, _track_id, ticks_per_frame, _opts) do
+    with {:ok, compiled} <- MockPipeline.compile(ticks_per_frame: ticks_per_frame) do
+      {:ok, MockPipeline, compiled}
+    end
+  end
+
+  defp compile_pipeline(%DiffSinger{} = manifest, track_id, _ticks_per_frame, opts) do
+    pipeline_opts =
+      [manifest: manifest, track_id: track_id]
+      |> put_option(:output_dir, opts, :output_dir)
+      |> put_option(:python, opts, :python)
+      |> put_option(:worker, opts, :diffsinger_worker)
+      |> put_option(:client, opts, :diffsinger_client)
+      |> put_option(:client_config, opts, :diffsinger_client_config)
+      |> put_option(:speaker, opts, :speaker)
+      |> put_option(:gender, opts, :gender)
+      |> put_option(:velocity, opts, :velocity)
+      |> put_option(:depth, opts, :depth)
+      |> put_option(:steps, opts, :steps)
+
+    with {:ok, compiled} <- DiffSingerPipeline.compile(pipeline_opts) do
+      {:ok, DiffSingerPipeline, compiled}
+    end
+  end
+
+  defp put_option(target, target_key, source, source_key) do
+    case Keyword.fetch(source, source_key) do
+      {:ok, value} -> Keyword.put(target, target_key, value)
+      :error -> target
+    end
+  end
 end
