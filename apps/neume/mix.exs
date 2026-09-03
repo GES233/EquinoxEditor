@@ -23,7 +23,10 @@ defmodule Neume.MixProject do
 
   defp deps do
     [
-      {:coconut, github: "GES233/Coconut"}
+      {:coconut, "~> 0.2.0", path: "../../../coconut", override: true},
+      {:coconut_oi, "~> 0.1.0", path: "../../../coconut_oi"},
+      # coconut_oi 0.1 仍声明 Oi 0.7；Neume 统一使用已验证兼容的本地 Oi 0.8。
+      {:oi, "~> 0.8.0", path: "../../../ElixirOrchid/oi", override: true}
     ]
   end
 end
