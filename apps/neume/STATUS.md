@@ -93,13 +93,34 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 下一步
 
-1. 实现跨音符 syllable group：使用显式相邻音符组身份，定义音素到成员音符
-   的归属、延音歌词约定，以及成员移动、拆分、删除后的 patch 存活和冲突
-   语义。
-2. 扩展 energy、breathiness、voicing 等曲线 channel，并保持参数语义位于
+1. 跨音符 syllable group / melisma（设计已定稿 2026-09-03）：
+   - **身份**：逐音符显式旗标 `note.metadata["melisma"] == "continue"`，仅
+     续音音符携带；不引入组对象、组 id。worker 只消费旗标，不做启发式
+     猜测（不变量不变）。
+   - **派生**（ScorePlan 纯函数）：`continue` 生效 ⟺ 与前一音符贴接
+     （`prev.end_tick == start_tick`），生效则并入前音符所在组；否则旗标
+     静默失效、该音符成为新组的头——这条免费实现"删头自动晋升"与
+     "移动出缝自动断组"。组音素 = 头音素 + 每成员一个延续元音（头无元音
+     报错 `{:melisma_head_without_vowel, id}`）；生效续音不进 G2P。
+   - **编辑**：拆续音零成本（Split 复制 metadata）；拆头需新增
+     `Editor.split_note/4` facade（Split + 同批 EditNote 给次子补旗标）；
+     删/移全靠派生失效语义兜底。组内贴接 → 组永不跨窗；缓存 key 已含
+     metadata，两者均零改动。
+   - **worker**：words 升级为 `[phonemes, duration_sec, midis, slots]`——
+     `midis` 逐音素（延续元音带各自成员音高），`slots` 逐成员时长；
+     `_encode` 逐音素取 midi，`align_phonemes` 锚点泛化为头音素锚 slot[0]、
+     第 k 个延续元音锚 slot[k]，`_fit_durations` 不动。duration pin 保持
+     per-note 挂载（Ordinal 锚），Analysis 在 `fill_phonemes` 后做词内下标
+     映射（延续元音下标 = `len(头音素) + (k-1)`）与组级预算校验。
+2. duration/pitch pin 的 base 换 **output base**（钉模型输出而非 score
+   内容；coconut `design-2026-08-orchid-intervention.md` §6.6 拍板）——
+   melisma 落地后的加固项，届时晋升/断组的 pin 语义漂移由 digest 自动
+   veto，冲突三手势（re-extract 重挂 / 修改后重挂 / 丢弃）共用一个裁决
+   界面。
+3. 扩展 energy、breathiness、voicing 等曲线 channel，并保持参数语义位于
    adapter，不硬编码进 CoconutOi。
-3. 增加声库发现/注册表、多轨调度、播放和导出管理。
-4. 在 headless API 稳定后接最小钢琴卷帘、音素边界编辑和播放 UI。
+4. 增加声库发现/注册表、多轨调度、播放和导出管理。
+5. 在 headless API 稳定后接最小钢琴卷帘、音素边界编辑和播放 UI。
 
 ## 不变量
 
