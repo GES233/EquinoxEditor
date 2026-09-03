@@ -94,6 +94,45 @@ defmodule Neume.EditorTest do
     assert Enum.at(artifact.midi, 12) == 72.0
   end
 
+  test "analyze 不产出音频，返回确定性音素边界", %{editor: editor} do
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    assert {:ok, _editor, analysis} = Editor.analyze(editor)
+    assert analysis.total_frames == 48
+    assert analysis.frame_rate == 48.0
+    assert [%{id: "n1", phonemes: [["zh", "l"], ["zh", "a"]]}] = analysis.notes
+
+    assert [
+             %{symbol: "l", start_frame: 0, end_frame: 24, note_id: "n1", phoneme_index: 0},
+             %{symbol: "a", start_frame: 24, end_frame: 48, note_id: "n1", phoneme_index: 1}
+           ] = analysis.phonemes
+
+    assert analysis.phoneme_durations == [24, 24]
+  end
+
+  test "check 通过时携带 analysis，模型错误聚合为 check_failed", %{editor: editor} do
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    assert {:ok, _editor, %{analysis: analysis}} = Editor.check(editor)
+    assert analysis.total_frames == 48
+
+    assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: nil})
+
+    assert {:error, {:check_failed, [%{kind: :model, reason: {:missing_lyric, "n1"}}]}} =
+             Editor.check(editor)
+  end
+
+  test "check 直通静态 patch 冲突", %{editor: editor} do
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[120, 72]])
+    assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
+    assert {:error, {:check_failed, [%{kind: :conflict}]}} = Editor.check(editor)
+  end
+
   defp notes(editor) do
     {:ok, notes} = Editor.notes(editor)
     notes

@@ -6,13 +6,20 @@ defmodule Neume.Engine.MockPipeline do
   规划成帧，`Pitch` 合并按音符挂载的稀疏控制点，`Acoustic` 产出稳定的
   `Neume.RenderArtifact`。将来替换真实 DiffSinger worker 时，Editor 和
   Coconut 的会话边界无需改变。
+
+  `analyze/3` 不经过 Oi 图：按 `ticks_per_frame` 直接把音符投影成确定性
+  帧边界（lyric 拆字当音素），让无声库环境也能跑通 `Editor.analyze/1`
+  与 `Editor.check/1`。
   """
 
   alias Coconut.Render.Engine.Snapshot
+  alias Neume.Analysis
   alias Neume.Engine.MockPipeline.Steps.{Acoustic, Pitch, ScorePlan}
   alias Oi.Flowgraph
 
-  @spec compile(keyword()) :: {:ok, Oi.Compiled.t()} | {:error, term()}
+  @type state :: %{compiled: Oi.Compiled.t(), ticks_per_frame: pos_integer()}
+
+  @spec compile(keyword()) :: {:ok, state()} | {:error, term()}
   def compile(opts) when is_list(opts) do
     with {:ok, ticks_per_frame} <- fetch_ticks_per_frame(opts) do
       graph =
@@ -24,12 +31,14 @@ defmodule Neume.Engine.MockPipeline do
         |> Flowgraph.connect({:score_plan, :plan}, {:acoustic, :plan})
         |> Flowgraph.connect({:pitch, :f0_midi}, {:acoustic, :f0_midi})
 
-      Oi.compile(graph)
+      with {:ok, compiled} <- Oi.compile(graph) do
+        {:ok, %{compiled: compiled, ticks_per_frame: ticks_per_frame}}
+      end
     end
   end
 
-  @spec engine_config(Oi.Compiled.t(), term()) :: map()
-  def engine_config(%Oi.Compiled{} = compiled, track_id) do
+  @spec engine_config(state(), term()) :: map()
+  def engine_config(%{compiled: compiled}, track_id) do
     %{
       compiled: compiled,
       port_map: %{pitch: {:input, :pitch, :pins}},
@@ -49,10 +58,125 @@ defmodule Neume.Engine.MockPipeline do
     %{score_plan: %{notes: notes}, pitch: %{pins: %{}}}
   end
 
+  @doc "无声库环境的确定性 analyze：音符按 ticks_per_frame 投影成帧边界。"
+  @spec analyze(state(), Snapshot.t(), map(), term()) :: {:ok, Analysis.t()} | {:error, term()}
+  def analyze(%{ticks_per_frame: ticks_per_frame}, %Snapshot{} = snapshot, _pins, track_id) do
+    with {:ok, view} <- Map.fetch(snapshot.tracks, track_id),
+         :ok <- ensure_vocal(view) do
+      build_analysis(view.elements, ticks_per_frame)
+    else
+      :error -> {:error, {:unknown_track, track_id}}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc "整轨执行 mock 图并取出制品（mock 不做分窗与缓存）。"
+  @spec render(state(), Snapshot.t(), map(), term()) ::
+          {:ok, Neume.RenderArtifact.t()} | {:error, term()}
+  def render(%{compiled: compiled}, %Snapshot{} = snapshot, pins, track_id) do
+    data =
+      snapshot
+      |> base_data(track_id)
+      |> put_in([:pitch, :pins], Map.get(pins, :pitch, %{}))
+
+    with {:ok, result} <- Oi.execute(compiled, data: data) do
+      fetch_artifact(result)
+    end
+  end
+
   @spec fetch_artifact(Oi.Result.t()) ::
           {:ok, Neume.RenderArtifact.t()} | {:error, term()}
   def fetch_artifact(%Oi.Result{} = result) do
     Oi.Result.reify(result, {:acoustic, :artifact})
+  end
+
+  defp ensure_vocal(%{module: Coconut.Edit.Track.Vocal}), do: :ok
+  defp ensure_vocal(%{module: module}), do: {:error, {:not_vocal_track, module}}
+
+  defp build_analysis(elements, ticks_per_frame) do
+    elements
+    |> Enum.sort_by(fn {id, _note, {start_tick, _end_tick}} -> {start_tick, id} end)
+    |> Enum.reduce_while({:ok, [], [], [], 0}, fn {id, note, {start_tick, end_tick}},
+                                                  {:ok, notes, boundaries, durations, cursor} ->
+      case mock_phonemes(note, id) do
+        {:ok, phonemes} ->
+          frames = div(end_tick - start_tick + ticks_per_frame - 1, ticks_per_frame)
+          count = length(phonemes)
+          base = div(frames, count)
+          rest = rem(frames, count)
+
+          {note_boundaries, note_durations, cursor} =
+            phonemes
+            |> Enum.with_index()
+            |> Enum.reduce({[], [], cursor}, fn {[language, symbol], index},
+                                                {boundaries, durations, cursor} ->
+              duration = base + if index < rest, do: 1, else: 0
+
+              boundary = %{
+                language: language,
+                symbol: symbol,
+                type: nil,
+                start_frame: cursor,
+                end_frame: cursor + duration,
+                note_id: id,
+                phoneme_index: index
+              }
+
+              {[boundary | boundaries], [duration | durations], cursor + duration}
+            end)
+
+          entry = %{
+            id: id,
+            lyric: note.lyric,
+            language: Map.get(note.metadata, "language", "zh"),
+            phonemes: phonemes
+          }
+
+          {:cont,
+           {:ok, [entry | notes], boundaries ++ Enum.reverse(note_boundaries),
+            durations ++ Enum.reverse(note_durations), cursor}}
+
+        {:error, _} = error ->
+          {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, notes, boundaries, durations, total_frames} ->
+        {:ok,
+         %Analysis{
+           notes: Enum.reverse(notes),
+           phonemes: boundaries,
+           phoneme_durations: durations,
+           pitch_pred_midi: [],
+           lead_in_sec: 0.0,
+           origin_sec: 0.0,
+           total_frames: total_frames,
+           frame_rate: 480.0 / ticks_per_frame
+         }}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp mock_phonemes(note, id) do
+    case Map.get(note.metadata, "phonemes") do
+      nil ->
+        case note.lyric do
+          nil ->
+            {:error, {:missing_lyric, id}}
+
+          lyric ->
+            language = Map.get(note.metadata, "language", "zh")
+            {:ok, Enum.map(String.graphemes(lyric), &[language, &1])}
+        end
+
+      [_ | _] = phonemes ->
+        {:ok, phonemes}
+
+      other ->
+        {:error, {:invalid_phonemes, id, other}}
+    end
   end
 
   defp fetch_ticks_per_frame(opts) do

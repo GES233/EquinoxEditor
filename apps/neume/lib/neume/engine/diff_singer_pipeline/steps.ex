@@ -23,12 +23,14 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
          true <- view.module == Coconut.Edit.Track.Vocal,
          {:ok, notes} <- build_notes(view.elements, snapshot),
          :ok <- validate_monophonic(notes),
-         {:ok, pitch_overrides} <- build_pitch_overrides(pitch_pins, notes, snapshot),
+         {:ok, origin_sec} <- build_origin(notes),
+         {:ok, pitch_overrides} <- build_pitch_overrides(pitch_pins, notes, snapshot, origin_sec),
          {:ok, duration_overrides} <-
            build_duration_overrides(duration_pins, notes, snapshot) do
       {:ok,
        %{
-         notes: notes,
+         notes: rebase_notes(notes, origin_sec),
+         origin_sec: origin_sec,
          duration_overrides: duration_overrides,
          pitch_overrides: pitch_overrides,
          head_padding_sec: @head_padding_sec
@@ -77,6 +79,19 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     end
   end
 
+  # 窗（或全轨）的局部时基原点：首音符起点前保留 head_padding 的辅音回排空间，
+  # 之前的死区不进推理。全轨且首音符贴近 0 时 origin 为 0，保持既有语义。
+  defp build_origin([]), do: {:ok, 0.0}
+
+  defp build_origin([first | _rest]),
+    do: {:ok, max(0.0, first.start_sec - @head_padding_sec)}
+
+  defp rebase_notes(notes, origin_sec) do
+    Enum.map(notes, fn note ->
+      %{note | start_sec: note.start_sec - origin_sec, end_sec: note.end_sec - origin_sec}
+    end)
+  end
+
   defp midi(%Note{key: nil}, id), do: {:error, {:missing_pitch, id}}
 
   defp midi(%Note{key: key}, id) do
@@ -114,12 +129,12 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     end
   end
 
-  defp build_pitch_overrides(pins, notes, snapshot) do
+  defp build_pitch_overrides(pins, notes, snapshot, origin_sec) do
     by_id = Map.new(notes, &{&1.id, &1})
 
     Enum.reduce_while(pins, {:ok, []}, fn {note_id, points}, {:ok, acc} ->
       with {:ok, note} <- Map.fetch(by_id, note_id),
-           {:ok, converted} <- convert_points(points, note, snapshot) do
+           {:ok, converted} <- convert_points(points, note, snapshot, origin_sec) do
         override = %{kind: "pitch", note_id: note_id, points: converted}
         {:cont, {:ok, [override | acc]}}
       else
@@ -152,6 +167,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     end
   end
 
+  # 时长 pin 是音符内相对量，与 origin 无关（convert 用秒差）。
   defp convert_durations(durations, note, snapshot) when is_list(durations) do
     phoneme_count = if is_list(note.phonemes), do: length(note.phonemes), else: nil
 
@@ -195,11 +211,12 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
       else: {:error, {:phoneme_duration_overflow, note.id}}
   end
 
-  defp convert_points(points, note, snapshot) when is_list(points) do
+  # pitch 点必须落在 words 时间线上：head_padding + 局部秒。
+  defp convert_points(points, note, snapshot, origin_sec) when is_list(points) do
     Enum.reduce_while(points, {:ok, []}, fn
       [tick, midi], {:ok, acc} when is_integer(tick) and is_number(midi) ->
         if tick >= note.start_tick and tick < note.end_tick do
-          seconds = @head_padding_sec + tick_to_sec(snapshot, tick)
+          seconds = @head_padding_sec + (tick_to_sec(snapshot, tick) - origin_sec)
           {:cont, {:ok, [[seconds, midi * 1.0] | acc]}}
         else
           {:halt, {:error, {:pitch_point_outside_note, note.id, tick}}}
@@ -214,7 +231,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     end
   end
 
-  defp convert_points(points, note, _snapshot),
+  defp convert_points(points, note, _snapshot, _origin_sec),
     do: {:error, {:invalid_pitch_points, note.id, points}}
 
   defp tick_to_sec(%Snapshot{tempo_map: nil, tpqn: tpqn}, tick), do: tick / (tpqn * 2.0)
@@ -223,68 +240,62 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     do: TempoMap.tick_to_sec(tempo_map, tick)
 end
 
-defmodule Neume.Engine.DiffSingerPipeline.Steps.Inference do
+defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
   @moduledoc false
 
-  use Oi.Step, name: :diffsinger
+  # 模型级 probe：G2P（按需）+ duration/pitch 预测 + 元音锚定对齐，
+  # 不跑 acoustic/vocoder。analyze 闭环在此 step 之后停机；渲染复用同一 probe。
 
-  alias Neume.RenderArtifact
+  use Oi.Step, name: :analysis
 
-  manifest(inputs: [:plan], outputs: [artifact: :any])
+  manifest(inputs: [:plan], outputs: [probe: :any])
 
   routine plan, opts do
-    case render(plan, opts) do
-      {:ok, artifact} -> ok(artifact)
+    case probe(plan, opts) do
+      {:ok, probe} -> ok(probe)
       {:error, _} = error -> error
     end
   end
 
-  defp render(%{notes: notes} = plan, opts) when is_list(notes) and notes != [] do
+  defp probe(%{notes: notes} = plan, opts) when is_list(notes) and notes != [] do
     client = Keyword.fetch!(opts, :client)
     config = Keyword.fetch!(opts, :worker_config)
     globals = Keyword.fetch!(opts, :globals)
 
     with {:ok, phonemes} <- resolve_phonemes(notes, client, config),
-         {:ok, words, word_indices} <- build_words(notes, phonemes, plan.head_padding_sec),
+         notes = fill_phonemes(notes, phonemes),
+         {:ok, words, word_indices} <- build_words(notes, plan.head_padding_sec),
          overrides <-
            attach_word_indices(plan.pitch_overrides ++ plan.duration_overrides, word_indices),
-         {:ok, probe} <-
+         {:ok, result} <-
            client.call(
              %{action: "check", words: words, globals: globals, overrides: overrides},
              config
            ),
-         {:ok, out_path} <- output_path(Keyword.fetch!(opts, :output_dir)),
-         {:ok, result} <-
-           client.call(
-             %{
-               action: "render",
-               words: words,
-               globals: globals,
-               overrides: overrides,
-               ph_dur: Map.fetch!(probe, "ph_dur"),
-               pitch_pred_midi: Map.fetch!(probe, "pitch_pred_midi"),
-               out_path: out_path
-             },
-             config
-           ),
-         {:ok, boundaries} <- attach_note_ids(Map.get(probe, "phonemes"), notes) do
+         {:ok, boundaries} <- attach_note_ids(Map.get(result, "phonemes"), notes) do
       {:ok,
-       %RenderArtifact{
-         format: :wav,
-         frame_count: Map.fetch!(result, "frames"),
-         path: Map.fetch!(result, "path"),
-         sample_rate: Map.fetch!(result, "sample_rate"),
-         sample_count: Map.get(result, "samples"),
-         duration_sec: Map.get(result, "duration_sec"),
-         lead_in_sec: Map.get(probe, "lead_in_sec", plan.head_padding_sec),
-         phonemes: boundaries,
-         phoneme_durations: Map.fetch!(probe, "ph_dur")
+       %{
+         words: words,
+         overrides: overrides,
+         ph_dur: Map.fetch!(result, "ph_dur"),
+         pitch_pred_midi: Map.fetch!(result, "pitch_pred_midi"),
+         total_frames: Map.get(result, "total_frames", Enum.sum(Map.fetch!(result, "ph_dur"))),
+         boundaries: boundaries,
+         lead_in_sec: Map.get(result, "lead_in_sec", plan.head_padding_sec),
+         origin_sec: plan.origin_sec,
+         notes: Enum.map(notes, &Map.take(&1, [:id, :lyric, :language, :phonemes]))
        }}
     end
   end
 
-  defp render(%{notes: []}, _opts), do: {:error, :empty_score}
-  defp render(plan, _opts), do: {:error, {:invalid_score_plan, plan}}
+  defp probe(%{notes: []}, _opts), do: {:error, :empty_score}
+  defp probe(plan, _opts), do: {:error, {:invalid_score_plan, plan}}
+
+  defp fill_phonemes(notes, resolved) do
+    Enum.map(notes, fn note ->
+      %{note | phonemes: note.phonemes || Map.fetch!(resolved, to_string(note.id))}
+    end)
+  end
 
   defp resolve_phonemes(notes, client, config) do
     missing = Enum.filter(notes, &is_nil(&1.phonemes))
@@ -309,7 +320,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Inference do
     end
   end
 
-  defp build_words(notes, resolved, head_padding_sec) do
+  defp build_words(notes, head_padding_sec) do
     first_language = notes |> hd() |> language_for()
     head = [[[[first_language, "SP"]], head_padding_sec, 0.0]]
 
@@ -317,8 +328,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Inference do
       Enum.reduce(notes, {head, %{}, nil}, fn note, {words, indices, previous} ->
         rest = gap_word(previous, note)
         word_index = length(words) + length(rest)
-        phonemes = note.phonemes || Map.fetch!(resolved, to_string(note.id))
-        word = [phonemes, note.end_sec - note.start_sec, note.midi * 1.0]
+        word = [note.phonemes, note.end_sec - note.start_sec, note.midi * 1.0]
 
         {words ++ rest ++ [word], Map.put(indices, note.id, word_index), note}
       end)
@@ -400,6 +410,61 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Inference do
        }}
     else
       _other -> :error
+    end
+  end
+end
+
+defmodule Neume.Engine.DiffSingerPipeline.Steps.Synthesis do
+  @moduledoc false
+
+  # 粗粒度 worker 边界：acoustic/vocoder 的中间张量留在同一 Python 进程内。
+  # step 名保持 :diffsinger，制品 reify key 不变。
+
+  use Oi.Step, name: :diffsinger
+
+  alias Neume.RenderArtifact
+
+  manifest(inputs: [:plan, :probe], outputs: [artifact: :any])
+
+  routine [plan, probe], opts do
+    case render(plan, probe, opts) do
+      {:ok, artifact} -> ok(artifact)
+      {:error, _} = error -> error
+    end
+  end
+
+  defp render(plan, probe, opts) do
+    client = Keyword.fetch!(opts, :client)
+    config = Keyword.fetch!(opts, :worker_config)
+    globals = Keyword.fetch!(opts, :globals)
+
+    with {:ok, out_path} <- output_path(Keyword.fetch!(opts, :output_dir)),
+         {:ok, result} <-
+           client.call(
+             %{
+               action: "render",
+               words: probe.words,
+               globals: globals,
+               overrides: probe.overrides,
+               ph_dur: probe.ph_dur,
+               pitch_pred_midi: probe.pitch_pred_midi,
+               out_path: out_path
+             },
+             config
+           ) do
+      {:ok,
+       %RenderArtifact{
+         format: :wav,
+         frame_count: Map.fetch!(result, "frames"),
+         path: Map.fetch!(result, "path"),
+         sample_rate: Map.fetch!(result, "sample_rate"),
+         sample_count: Map.get(result, "samples"),
+         duration_sec: Map.get(result, "duration_sec"),
+         lead_in_sec: probe.lead_in_sec,
+         origin_sec: plan.origin_sec,
+         phonemes: probe.boundaries,
+         phoneme_durations: probe.ph_dur
+       }}
     end
   end
 

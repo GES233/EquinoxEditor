@@ -2,7 +2,7 @@ defmodule Neume.DiffSingerEditorTest do
   use ExUnit.Case, async: false
 
   alias Neume.Editor
-  alias Neume.Voicebank.DiffSingerTest
+  alias Neume.VoicebankFixture
 
   defmodule FakeClient do
     @behaviour Neume.Engine.DiffSingerWorker
@@ -50,16 +50,18 @@ defmodule Neume.DiffSingerEditorTest do
        }}
     end
 
-    def call(%{action: "render", out_path: path}, _config) do
-      File.write!(path, "RIFF-fake")
+    def call(%{action: "render", out_path: path, ph_dur: ph_dur}, _config) do
+      frames = Enum.sum(ph_dur)
+      samples = frames * 512
+      :ok = Neume.Wav.write(path, :binary.copy(<<0, 0>>, samples), 44_100)
 
       {:ok,
        %{
          "path" => path,
          "sample_rate" => 44_100,
-         "frames" => 86,
-         "samples" => 44_100,
-         "duration_sec" => 1.0
+         "frames" => frames,
+         "samples" => samples,
+         "duration_sec" => samples / 44_100
        }}
     end
   end
@@ -79,23 +81,25 @@ defmodule Neume.DiffSingerEditorTest do
        }}
     end
 
-    def call(%{action: "render", out_path: path}, _config) do
-      File.write!(path, "RIFF-fake")
+    def call(%{action: "render", out_path: path, ph_dur: ph_dur}, _config) do
+      frames = Enum.sum(ph_dur)
+      samples = frames * 512
+      :ok = Neume.Wav.write(path, :binary.copy(<<0, 0>>, samples), 44_100)
 
       {:ok,
        %{
          "path" => path,
          "sample_rate" => 44_100,
-         "frames" => 1,
-         "samples" => 512,
-         "duration_sec" => 512 / 44_100
+         "frames" => frames,
+         "samples" => samples,
+         "duration_sec" => samples / 44_100
        }}
     end
   end
 
   @tag tmp_dir: true
   test "外部声库经 CoconutOi 和 Oi 产出 WAV 制品", %{tmp_dir: tmp_dir} do
-    voicebank = DiffSingerTest.fixture(tmp_dir)
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
     output_dir = Path.join(tmp_dir, "renders")
 
     assert {:ok, editor} =
@@ -129,7 +133,7 @@ defmodule Neume.DiffSingerEditorTest do
 
   @tag tmp_dir: true
   test "打开工程时拒绝摘要不同的同名声库", %{tmp_dir: tmp_dir} do
-    voicebank = DiffSingerTest.fixture(tmp_dir)
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
 
     assert {:ok, editor} =
              Editor.new(
@@ -154,7 +158,7 @@ defmodule Neume.DiffSingerEditorTest do
 
   @tag tmp_dir: true
   test "首音符前空白和 pitch 点共享同一绝对秒域", %{tmp_dir: tmp_dir} do
-    voicebank = DiffSingerTest.fixture(tmp_dir)
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
 
     assert {:ok, editor} =
              Editor.new(
@@ -187,14 +191,15 @@ defmodule Neume.DiffSingerEditorTest do
 
   @tag tmp_dir: true
   test "音素时长 pin 经 History 的 undo/redo 进入 worker", %{tmp_dir: tmp_dir} do
-    voicebank = DiffSingerTest.fixture(tmp_dir)
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
 
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
                diffsinger_client: RecordingClient,
                diffsinger_client_config: %{test_pid: self()},
-               output_dir: Path.join(tmp_dir, "renders")
+               output_dir: Path.join(tmp_dir, "renders"),
+               cache: false
              )
 
     assert {:ok, editor} =

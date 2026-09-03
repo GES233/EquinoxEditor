@@ -21,14 +21,15 @@ defmodule Neume.Editor do
   @default_track_id "vocal"
   @default_ticks_per_frame 10
 
-  @enforce_keys [:session, :registry, :track_id, :pipeline]
-  defstruct [:session, :registry, :track_id, :pipeline]
+  @enforce_keys [:session, :registry, :track_id, :pipeline, :pipeline_state]
+  defstruct [:session, :registry, :track_id, :pipeline, :pipeline_state]
 
   @type t :: %__MODULE__{
           session: Coconut.Session.t(),
           registry: Coconut.Pickle.Registry.t(),
           track_id: Track.track_id(),
-          pipeline: module()
+          pipeline: module(),
+          pipeline_state: term()
         }
 
   @doc "新建一个带单条人声轨的工程，并打开编辑会话。"
@@ -64,8 +65,9 @@ defmodule Neume.Editor do
     with {:ok, project, manifest} <- prepare_open_voicebank(project, opts),
          :ok <- validate_ticks_per_frame(ticks_per_frame),
          {:ok, %Track{module: Track.Vocal}} <- Workspace.fetch_track(project.workspace, track_id),
-         {:ok, pipeline, compiled} <- compile_pipeline(manifest, track_id, ticks_per_frame, opts),
-         engine_config <- pipeline.engine_config(compiled, track_id),
+         {:ok, pipeline, pipeline_state} <-
+           compile_pipeline(manifest, track_id, ticks_per_frame, opts),
+         engine_config <- pipeline.engine_config(pipeline_state, track_id),
          {:ok, session} <-
            Coconut.new(project,
              channels: %{duration: Duration, pitch: Pitch},
@@ -76,7 +78,8 @@ defmodule Neume.Editor do
          session: session,
          registry: registry,
          track_id: track_id,
-         pipeline: pipeline
+         pipeline: pipeline,
+         pipeline_state: pipeline_state
        }}
     else
       {:ok, %Track{module: module}} -> {:error, {:not_vocal_track, track_id, module}}
@@ -182,12 +185,87 @@ defmodule Neume.Editor do
   @spec redo(t()) :: {:ok, t()} | {:error, term()}
   def redo(%__MODULE__{} = editor), do: move_history(editor, &Coconut.redo/1)
 
-  @doc "完成 resolve/check/render，并返回不暴露 Oi 内部内存的渲染制品。"
+  @doc "完成静态 check 后渲染：DiffSinger 走分窗增量路径，mock 走整轨图。"
   @spec render(t()) :: {:ok, t(), Neume.RenderArtifact.t()} | {:error, term()}
   def render(%__MODULE__{} = editor) do
-    with {:ok, session, result} <- Coconut.render(editor.session),
-         {:ok, artifact} <- editor.pipeline.fetch_artifact(result) do
+    with {:ok, session} <- Coconut.check(editor.session),
+         {:ok, request} <- Coconut.request(session),
+         {:ok, artifact} <-
+           editor.pipeline.render(
+             editor.pipeline_state,
+             request.snapshot,
+             checked_pins(session),
+             editor.track_id
+           ) do
       {:ok, %{editor | session: session}, artifact}
+    end
+  end
+
+  @doc """
+  analyze/align 闭环：不运行 acoustic/vocoder，返回 G2P 结果、duration
+  预测和元音锚定后的音素边界（`Neume.Analysis`）。
+  """
+  @spec analyze(t()) :: {:ok, t(), Neume.Analysis.t()} | {:error, term()}
+  def analyze(%__MODULE__{} = editor) do
+    with {:ok, session} <- Coconut.check(editor.session),
+         {:ok, request} <- Coconut.request(session),
+         {:ok, analysis} <-
+           editor.pipeline.analyze(
+             editor.pipeline_state,
+             request.snapshot,
+             checked_pins(session),
+             editor.track_id
+           ) do
+      {:ok, %{editor | session: session}, analysis}
+    end
+  end
+
+  @doc """
+  稳定的检查 API：先跑 Coconut 静态 check（patch resolve + port 装配 +
+  globals 门禁），再跑模型级 probe（analyze 同款）。任何失败聚合为
+  `{:error, {:check_failed, entries}}`；模型侧失败 entry 形如
+  `%{kind: :model, reason: term()}`。
+  """
+  @spec check(t()) :: {:ok, t(), map()} | {:error, {:check_failed, [term()]}}
+  def check(%__MODULE__{} = editor) do
+    case Coconut.check(editor.session) do
+      {:ok, session} ->
+        with {:ok, request} <- Coconut.request(session),
+             {:ok, analysis} <-
+               editor.pipeline.analyze(
+                 editor.pipeline_state,
+                 request.snapshot,
+                 checked_pins(session),
+                 editor.track_id
+               ) do
+          {:ok, %{editor | session: session}, %{analysis: analysis}}
+        else
+          {:error, reason} -> {:error, {:check_failed, [%{kind: :model, reason: reason}]}}
+        end
+
+      {:error, {:resolve_vetoed, entries}} ->
+        {:error, {:check_failed, entries}}
+
+      {:error, {:check_vetoed, entries}} ->
+        {:error, {:check_failed, entries}}
+
+      {:error, reason} ->
+        {:error, {:check_failed, [%{kind: :static, reason: reason}]}}
+    end
+  end
+
+  # 从最近一次静态 check 的 assemble 结果里取 pins（无 patch 时为空 map）。
+  # DiffSinger 图挂在 score_plan 输入上，mock 图挂在 pitch step 输入上。
+  defp checked_pins(session) do
+    case Coconut.checked(session) do
+      {:ok, %{data: data}} when is_map(data) ->
+        %{
+          pitch: get_in(data, [:score_plan, :pitch_pins]) || get_in(data, [:pitch, :pins]) || %{},
+          duration: get_in(data, [:score_plan, :duration_pins]) || %{}
+        }
+
+      _other ->
+        %{pitch: %{}, duration: %{}}
     end
   end
 
@@ -283,8 +361,8 @@ defmodule Neume.Editor do
     do: {:error, {:voicebank_mismatch, expected, actual}}
 
   defp compile_pipeline(nil, _track_id, ticks_per_frame, _opts) do
-    with {:ok, compiled} <- MockPipeline.compile(ticks_per_frame: ticks_per_frame) do
-      {:ok, MockPipeline, compiled}
+    with {:ok, state} <- MockPipeline.compile(ticks_per_frame: ticks_per_frame) do
+      {:ok, MockPipeline, state}
     end
   end
 
@@ -301,9 +379,10 @@ defmodule Neume.Editor do
       |> put_option(:velocity, opts, :velocity)
       |> put_option(:depth, opts, :depth)
       |> put_option(:steps, opts, :steps)
+      |> put_option(:cache, opts, :cache)
 
-    with {:ok, compiled} <- DiffSingerPipeline.compile(pipeline_opts) do
-      {:ok, DiffSingerPipeline, compiled}
+    with {:ok, state} <- DiffSingerPipeline.compile(pipeline_opts) do
+      {:ok, DiffSingerPipeline, state}
     end
   end
 

@@ -17,8 +17,10 @@ defmodule Neume.RenderArtifact do
             sample_count: nil,
             duration_sec: nil,
             lead_in_sec: 0.0,
+            origin_sec: 0.0,
             phonemes: [],
-            phoneme_durations: []
+            phoneme_durations: [],
+            windows: []
 
   @type t :: %__MODULE__{
           format: :mock_frames | :wav,
@@ -31,8 +33,17 @@ defmodule Neume.RenderArtifact do
           sample_count: non_neg_integer() | nil,
           duration_sec: float() | nil,
           lead_in_sec: float(),
+          origin_sec: float(),
           phonemes: [phoneme_boundary()],
-          phoneme_durations: [non_neg_integer()]
+          phoneme_durations: [non_neg_integer()],
+          windows: [window_info()]
+        }
+
+  @type window_info :: %{
+          required(:start_tick) => non_neg_integer(),
+          required(:end_tick) => non_neg_integer(),
+          required(:note_ids) => [term()],
+          required(:cache) => :hit | :miss
         }
 
   @type phoneme_boundary :: %{
