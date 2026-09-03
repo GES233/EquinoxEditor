@@ -2,6 +2,8 @@
 
 人类重写版本。
 
+当前实现进度、验证基线、限制和后续路线见 [`STATUS.md`](STATUS.md)。
+
 ## 当前闭环
 
 无声库时使用确定性的 mock 图；传入仓库外的 OpenUtau DiffSinger 目录时，
