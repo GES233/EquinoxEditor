@@ -26,7 +26,8 @@ defmodule Neume.Analysis do
           required(:id) => term(),
           required(:lyric) => String.t() | nil,
           required(:language) => String.t(),
-          required(:phonemes) => [[String.t()]]
+          # 生效的 melisma 续音音符为 nil（音素由头的元音派生）
+          required(:phonemes) => [[String.t()]] | nil
         }
 
   @type t :: %__MODULE__{

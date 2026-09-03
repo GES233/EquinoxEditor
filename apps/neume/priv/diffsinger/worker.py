@@ -14,7 +14,7 @@ import onnxruntime as ort
 import soundfile as sf
 import yaml
 
-from alignment import REST_PHONEMES, align_phonemes
+from alignment import REST_PHONEMES, align_phonemes, expand_groups, word_parts
 
 try:
     from pypinyin import Style, pinyin
@@ -205,7 +205,9 @@ class DiffSingerEngine:
                     result.append([lang, phone])
         return result
 
-    def check(self, words, globals_, overrides=None):
+    def check(self, words, globals_, overrides=None, groups=None):
+        words, owners, remap = self._expand(words, groups)
+        overrides = self._remap_overrides(overrides, remap)
         duration_encoded = self._encode(words, "duration")
         predicted = self._duration_forward(
             words, duration_encoded, globals_, overrides or []
@@ -216,6 +218,7 @@ class DiffSingerEngine:
             self.phoneme_types,
             self.frame_rate,
             self._lead_in_sec(words),
+            owners,
         )
         ph_dur = np.asarray([alignment["ph_dur"]], dtype=np.int64)
         pitch_encoded = self._encode(words, "pitch")
@@ -231,8 +234,11 @@ class DiffSingerEngine:
         }
 
     def render(
-        self, words, output, globals_, ph_dur=None, pitch_pred=None, overrides=None
+        self, words, output, globals_, ph_dur=None, pitch_pred=None, overrides=None,
+        groups=None,
     ):
+        words, _owners, remap = self._expand(words, groups)
+        overrides = self._remap_overrides(overrides, remap)
         duration_encoded = self._encode(words, "duration")
         if ph_dur is None:
             ph_dur = self._duration_forward(words, duration_encoded, globals_)
@@ -276,15 +282,34 @@ class DiffSingerEngine:
             return float(words[0][1])
         return 0.0
 
+    def _expand(self, words, groups):
+        """展开 melisma 组；无组时原样返回（owners/remap 为 None）。"""
+        if not groups:
+            return words, None, None
+        return expand_groups(words, groups, self.phoneme_types)
+
+    @staticmethod
+    def _remap_overrides(overrides, remap):
+        """overrides 的 note_index 引用展开前词下标，按 remap 平移。"""
+        if not overrides or not remap:
+            return overrides
+        return [
+            {**override, "note_index": remap.get(int(override["note_index"]), int(override["note_index"]))}
+            if "note_index" in override
+            else override
+            for override in overrides
+        ]
+
     def _encode(self, words, stage):
         vocabulary = self.vocabularies[stage]
         token_ids, language_ids, phoneme_midis = [], [], []
         word_div, word_dur, rest = [], [], []
-        for phonemes, duration_sec, midi in words:
+        for word in words:
+            phonemes, duration_sec, midis, _slots = word_parts(word)
             word_div.append(len(phonemes))
             word_dur.append(int(round(duration_sec * self.frame_rate)))
             is_rest = all(phone in REST_PHONEMES for _lang, phone in phonemes)
-            for language, phone in phonemes:
+            for (language, phone), midi in zip(phonemes, midis):
                 token_ids.append(
                     self._phoneme_id(vocabulary["phonemes"], language, phone)
                 )
@@ -342,7 +367,8 @@ class DiffSingerEngine:
         result = np.zeros_like(predicted, dtype=np.int64)
         duration_pins = self._duration_pins(words, overrides)
         offset = 0
-        for phonemes, duration_sec, _midi in words:
+        for word in words:
+            phonemes, duration_sec, _midis, _slots = word_parts(word)
             count = len(phonemes)
             target = int(round(duration_sec * self.frame_rate))
             if target < count:
@@ -389,7 +415,8 @@ class DiffSingerEngine:
     def _duration_pins(self, words, overrides):
         offsets = []
         offset = 0
-        for phonemes, _duration_sec, _midi in words:
+        for word in words:
+            phonemes = word[0]
             offsets.append(offset)
             offset += len(phonemes)
 
@@ -451,7 +478,8 @@ class DiffSingerEngine:
         ranges = []
         phoneme_offset = 0
         frame_offset = 0
-        for phonemes, _duration, _midi in words:
+        for word in words:
+            phonemes = word[0]
             count = len(phonemes)
             word_frames = int(ph_dur[0, phoneme_offset : phoneme_offset + count].sum())
             ranges.append((frame_offset, frame_offset + word_frames))
@@ -555,7 +583,12 @@ def dispatch(engine, request):
     if action == "encode":
         return engine.encode_lyrics(request["notes"])
     if action == "check":
-        return engine.check(request["words"], globals_, request.get("overrides"))
+        return engine.check(
+            request["words"],
+            globals_,
+            request.get("overrides"),
+            request.get("groups"),
+        )
     if action == "render":
         return engine.render(
             request["words"],
@@ -564,6 +597,7 @@ def dispatch(engine, request):
             ph_dur=request.get("ph_dur"),
             pitch_pred=request.get("pitch_pred_midi"),
             overrides=request.get("overrides"),
+            groups=request.get("groups"),
         )
     raise ValueError(f"unknown action: {action}")
 

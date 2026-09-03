@@ -27,8 +27,14 @@ Python 环境需要 `onnxruntime`、`numpy`、`soundfile`、`pyyaml`；中文歌
 
 真实管线使用 OpenUtau 式元音锚定：音符起点对应词内首个元音（C-G-V
 结构对应 glide），此前的一个或多个辅音向前回排并占用前置 SP/间隙；
-`RenderArtifact.phonemes` 返回实际渲染帧网上的绝对音素边界。当前仍以
-“一音符一个音节槽”为边界，melisma 需要后续显式的跨音符音节身份。
+`RenderArtifact.phonemes` 返回实际渲染帧网上的绝对音素边界。
+
+melisma（一词跨多音符）用显式旗标表达：续音音符携带
+`metadata["melisma"] == "continue"` 且与前一音符贴接时并入其音节组；
+组的音素 = 头音素 + 每成员一个延续元音（锚在各成员音符起点，带各自
+音高）。`Editor.split_note/4` 拆分时右子自动获得旗标（拆分 = 同音节
+延续）；删除头音符后下一成员自动晋升，移动出缝隙即断组。worker 只
+消费显式组，不根据歌词或音高猜测。
 
 音素时长编辑通过 `Editor.mount_phoneme_duration/3` 挂载 Coconut
 `:duration` patch；指定音素固定为给定 tick 时长，其余音素按模型预测比例
@@ -46,6 +52,5 @@ globals + 窗内音符 + pins」失效，编辑后只重推内容变化的窗口
 
 ## TODO
 
-- [ ] 跨音符 syllable group：以相邻音符组作为显式音节身份，定义音素到
-  成员音符的归属、延音歌词约定，以及成员移动、拆分、删除后的 patch
-  存活与冲突语义；不要在 worker 中根据歌词或相邻音高隐式猜测 melisma。
+- [ ] duration/pitch pin 换 output base（钉模型输出；coconut
+  `design-2026-08-orchid-intervention.md` §6.6），冲突三手势裁决界面。

@@ -11,6 +11,89 @@ def phoneme_type(types, language, phone):
     return types.get(f"{language}/{phone}") or types.get(phone)
 
 
+def word_parts(word):
+    """把词规范化为 `(phonemes, duration_sec, midis, slots)` 四元组。
+
+    线上格式是三元素 `[phonemes, duration_sec, midi]`（midi 词级广播）；
+    melisma 展开后是四元素 `[phonemes, duration_sec, midis, slots]`——
+    `midis` 逐音素，`slots` 逐成员时长。约定：词的最后 `len(slots) - 1`
+    个音素是各成员的延续元音。
+    """
+    if len(word) == 3:
+        phonemes, duration_sec, midi = word
+        return phonemes, duration_sec, [midi] * len(phonemes), [duration_sec]
+    phonemes, duration_sec, midis, slots = word
+    return phonemes, duration_sec, midis, slots
+
+
+def expand_groups(words, groups, types):
+    """把 melisma 组（原 words 下标列表）展开为多 slot 词。
+
+    `groups` 的每项是 `[头下标, 成员下标, ...]`，成员顺序即时间顺序。返回
+    `(expanded, owners, remap)`：expanded word 为四元素词；owners 是逐音素
+    的原 words 下标（供 note_index 归属）；remap 把原词下标映射到展开后
+    下标（overrides 的 word 引用靠它平移）。延续元音取头词中第一个 vowel
+    类型音素；头词无元音时报错——音素类型是声库事实，不在调用侧猜测。
+    """
+    heads = {}
+    member_of = {}
+    for group in groups or []:
+        if len(group) < 2:
+            continue
+        head, *members = group
+        if head in member_of:
+            raise ValueError(f"melisma group head is another group's member: {head}")
+        for member in members:
+            if member in member_of or member in heads:
+                raise ValueError(f"melisma group member claimed twice: {member}")
+            member_of[member] = group
+        heads[head] = group
+
+    expanded = []
+    owners = []
+    remap = {}
+    for index, word in enumerate(words):
+        if index in member_of:
+            continue
+        phonemes, duration_sec, midis, slots = word_parts(word)
+        group = heads.get(index)
+        if group is None:
+            remap[index] = len(expanded)
+            expanded.append([list(phonemes), duration_sec, list(midis), list(slots)])
+            owners.extend([index] * len(phonemes))
+            continue
+
+        vowel = None
+        for language, phone in phonemes:
+            if phoneme_type(types, language, phone) == "vowel":
+                vowel = [language, phone]
+                break
+        if vowel is None:
+            raise ValueError(f"melisma head word has no vowel: {index}")
+
+        member_words = [words[member] for member in group[1:]]
+        out_phonemes = [list(pair) for pair in phonemes]
+        out_phonemes.extend([list(vowel) for _ in member_words])
+        out_midis = list(midis) + [_word_midi(member) for member in member_words]
+        out_slots = list(slots) + [word_parts(member)[1] for member in member_words]
+
+        remap[index] = len(expanded)
+        expanded.append(
+            [out_phonemes, sum(out_slots), out_midis, out_slots]
+        )
+        owners.extend([index] * len(phonemes))
+        owners.extend(group[1:])
+
+    return expanded, owners, remap
+
+
+def _word_midi(word):
+    if len(word) == 3:
+        return word[2]
+    midis = word[2]
+    return midis[0] if midis else 0.0
+
+
 def word_start_index(phonemes, types):
     """返回与音符起点对齐的词内音素下标。
 
@@ -38,25 +121,30 @@ def word_start_index(phonemes, types):
     return 0
 
 
-def align_phonemes(words, phoneme_durations, types, frame_rate, lead_in_sec):
+def align_phonemes(words, phoneme_durations, types, frame_rate, lead_in_sec, owners=None):
     """按 OpenUtau 式元音锚点放置音素。
 
-    `words` 是 `[[[language, phone], ...], duration_sec, midi]`。词首辅音并入
-    前一锚点区间，因而在下一音符起点前发声；锚点之间的其余音素按预测
-    比例伸缩。开头的休止音素吸收 padding，头辅音保持预测长度并向前回排。
+    `words` 的元素是三元素词或 `word_parts` 归一化的四元素词（melisma 经
+    `expand_groups` 展开）。词首辅音并入前一锚点区间，因而在下一音符起点
+    前发声；锚点之间的其余音素按预测比例伸缩。开头的休止音素吸收
+    padding，头辅音保持预测长度并向前回排。多 slot 词（melisma）的头音素
+    锚在词起点，第 k 个延续元音锚在第 k 个成员 slot 的起点。
 
-    返回值的帧边界连续、单调，且 `ph_dur` 可直接回放给后续模型。这里仍
-    采用一音符一个音节槽；melisma 需要独立的跨音符音节身份，不在本函数
-    中靠猜测歌词或音素来隐式合并。
+    `owners` 是逐音素的原始词下标（展开前），用于把边界归属到具体成员
+    音符；缺省为逐词自身下标。返回值的帧边界连续、单调，且 `ph_dur` 可
+    直接回放给后续模型。组的成立与否由调用侧显式给出（`expand_groups`
+    的 `groups` 参数），本函数不靠猜测歌词或音素隐式合并。
     """
     if frame_rate <= 0:
         raise ValueError(f"frame_rate must be positive, got {frame_rate}")
     if lead_in_sec < 0:
         raise ValueError(f"lead_in_sec must be non-negative, got {lead_in_sec}")
 
+    parts = [word_parts(word) for word in words]
+
     slot_starts = []
     timeline_end = 0.0
-    for phonemes, duration_sec, _midi in words:
+    for phonemes, duration_sec, _midis, _slots in parts:
         if not phonemes:
             raise ValueError("word must contain at least one phoneme")
         if duration_sec < 0:
@@ -66,7 +154,7 @@ def align_phonemes(words, phoneme_durations, types, frame_rate, lead_in_sec):
 
     flat = [
         (word_index, phoneme_index, language, phone)
-        for word_index, (phonemes, _duration, _midi) in enumerate(words)
+        for word_index, (phonemes, _duration, _midis, _slots) in enumerate(parts)
         for phoneme_index, (language, phone) in enumerate(phonemes)
     ]
     if len(flat) != len(phoneme_durations):
@@ -75,16 +163,29 @@ def align_phonemes(words, phoneme_durations, types, frame_rate, lead_in_sec):
             f"phoneme count {len(flat)}"
         )
 
+    if owners is None:
+        owners = [word_index for word_index, _local, _lang, _phone in flat]
+    if len(owners) != len(flat):
+        raise ValueError(
+            f"owners length {len(owners)} does not match phoneme count {len(flat)}"
+        )
+
+    # 音符序号按 owner（原始词）归属：一个 owner 的音素全是休止符才算休止，
+    # 这样 melisma 成员的延续元音把成员计为独立音符。
     note_ordinals = {}
-    for word_index, (phonemes, _duration, _midi) in enumerate(words):
-        if not is_rest_word(phonemes):
-            note_ordinals[word_index] = len(note_ordinals)
+    owner_phones = {}
+    for owner, (_word_index, _local, _language, phone) in zip(owners, flat):
+        owner_phones.setdefault(owner, []).append(phone)
+    for owner, phones in owner_phones.items():
+        if not all(phone in REST_PHONEMES for phone in phones):
+            note_ordinals[owner] = len(note_ordinals)
 
     groups = []
     flat_index = 0
-    for word_index, (phonemes, _duration, _midi) in enumerate(words):
+    for word_index, (phonemes, _duration, _midis, slots) in enumerate(parts):
         count = len(phonemes)
         indices = list(range(flat_index, flat_index + count))
+        word_start = slot_starts[word_index]
 
         if is_rest_word(phonemes):
             if groups:
@@ -94,15 +195,30 @@ def align_phonemes(words, phoneme_durations, types, frame_rate, lead_in_sec):
             flat_index += count
             continue
 
-        anchor_index = word_start_index(phonemes, types)
-        prefix = indices[:anchor_index]
-        anchored = indices[anchor_index:]
+        continuation_count = len(slots) - 1
+        head_count = count - continuation_count
+        if head_count < 1:
+            raise ValueError("melisma word must retain head phonemes")
+
+        head = indices[:head_count]
+        anchor_index = word_start_index(
+            [pair for pair in phonemes[:head_count]], types
+        )
+        prefix = head[:anchor_index]
+        anchored = head[anchor_index:]
         if prefix:
             if groups:
                 groups[-1]["indices"].extend(prefix)
             else:
                 groups.append({"anchor": None, "indices": prefix})
-        groups.append({"anchor": slot_starts[word_index], "indices": anchored})
+        groups.append({"anchor": word_start, "indices": anchored})
+
+        member_start = word_start + slots[0] * frame_rate
+        for position in range(continuation_count):
+            vowel_index = indices[head_count + position]
+            groups.append({"anchor": member_start, "indices": [vowel_index]})
+            member_start += slots[position + 1] * frame_rate
+
         flat_index += count
 
     positions = [None] * len(flat)
@@ -140,7 +256,7 @@ def align_phonemes(words, phoneme_durations, types, frame_rate, lead_in_sec):
                 else phoneme_type(types, language, phone),
                 "start_frame": previous_end,
                 "end_frame": end_frame,
-                "note_index": note_ordinals.get(word_index),
+                "note_index": note_ordinals.get(owners[flat_index]),
                 "phoneme_index": local_index,
             }
         )

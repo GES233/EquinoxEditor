@@ -97,6 +97,40 @@ defmodule Neume.DiffSingerIntegrationTest do
   end
 
   @tag tmp_dir: "asaritsu"
+  test "melisma：一词两音符，延续元音锚在成员音符起点", %{tmp_dir: tmp_dir} do
+    assert {:ok, editor} = asaritsu_editor(tmp_dir, "melisma")
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "啦"})
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n2", "n1", {480, 960}, %{
+               pitch: 64,
+               melisma: "continue"
+             })
+
+    assert {:ok, editor, analysis} = Editor.analyze(editor)
+
+    # 续音不参与 G2P，分析视图中音素为 nil
+    assert [%{id: "n1", phonemes: [_ | _]}, %{id: "n2", phonemes: nil}] = analysis.notes
+
+    onset = round((0.5 + analysis.lead_in_sec) * 44_100 / 512)
+    head_vowel = Enum.find(analysis.phonemes, &(&1.note_id == "n1" and &1.type == "vowel"))
+    member_vowel = Enum.find(analysis.phonemes, &(&1.note_id == "n2"))
+
+    # 延续元音 = 头的元音，锚在成员音符起点；头元音在成员起点截止
+    assert member_vowel.symbol == head_vowel.symbol
+    assert_in_delta member_vowel.start_frame, onset, 1
+    assert_in_delta head_vowel.end_frame, onset, 1
+
+    assert {:ok, _editor, artifact} = Editor.render(editor)
+    assert File.regular?(artifact.path)
+    assert {:ok, "RIFF" <> _rest} = File.read(artifact.path)
+    # 同一内容：analyze 边界与 render 制品边界一致
+    assert analysis.phonemes == artifact.phonemes
+  end
+
+  @tag tmp_dir: "asaritsu"
   test "多窗曲目编辑后仅受影响窗重渲", %{tmp_dir: tmp_dir} do
     assert {:ok, editor} = asaritsu_editor(tmp_dir, "windows")
 

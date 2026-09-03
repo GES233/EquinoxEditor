@@ -4,6 +4,7 @@ defmodule Neume.Engine.MockPipeline.Steps.ScorePlan do
   use Oi.Step, name: :score_plan
 
   alias Coconut.Score.Key
+  alias Neume.Syllable
 
   manifest(inputs: [:notes], outputs: [plan: :any])
 
@@ -17,12 +18,16 @@ defmodule Neume.Engine.MockPipeline.Steps.ScorePlan do
   end
 
   defp build(notes, ticks_per_frame) when is_list(notes) do
-    Enum.reduce_while(notes, {:ok, []}, fn
+    sorted = Enum.sort_by(notes, fn {id, _note, {start_tick, _end}} -> {start_tick, id} end)
+    memberships = memberships(sorted)
+
+    Enum.reduce_while(sorted, {:ok, []}, fn
       {id, note, {start_tick, end_tick}}, {:ok, acc}
       when is_integer(start_tick) and is_integer(end_tick) and end_tick > start_tick ->
         case midi(note.key, id) do
           {:ok, midi} ->
             frame_count = div(end_tick - start_tick + ticks_per_frame - 1, ticks_per_frame)
+            membership = Map.fetch!(memberships, id)
 
             segment = %{
               id: id,
@@ -30,7 +35,7 @@ defmodule Neume.Engine.MockPipeline.Steps.ScorePlan do
               end_tick: end_tick,
               frame_count: frame_count,
               midi: midi,
-              lyric: note.lyric
+              lyric: display_lyric(sorted, memberships, membership, note.lyric)
             }
 
             {:cont, {:ok, [segment | acc]}}
@@ -46,6 +51,26 @@ defmodule Neume.Engine.MockPipeline.Steps.ScorePlan do
       {:ok, plan} -> {:ok, Enum.reverse(plan)}
       {:error, _} = error -> error
     end
+  end
+
+  # 生效续音沿用头音符的 lyric 展示（mock 没有延音记号约定）。
+  defp display_lyric(_sorted, _memberships, %{continuation?: false}, lyric), do: lyric
+
+  defp display_lyric(sorted, _memberships, %{head_id: head_id}, _lyric) do
+    case Enum.find(sorted, fn {id, _note, _span} -> id == head_id end) do
+      {^head_id, note, _span} -> note.lyric
+      nil -> nil
+    end
+  end
+
+  @doc false
+  def memberships(sorted_notes) do
+    sorted_notes
+    |> Enum.map(fn {id, note, {start_tick, end_tick}} ->
+      {id, start_tick, end_tick, Syllable.flagged?(note.metadata)}
+    end)
+    |> Syllable.derive_groups()
+    |> Map.new(&{&1.id, &1})
   end
 
   defp midi(nil, id), do: {:error, {:missing_pitch, id}}

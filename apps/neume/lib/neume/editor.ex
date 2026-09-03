@@ -158,6 +158,20 @@ defmodule Neume.Editor do
     apply_edit(editor, %DeleteNote{track_id: editor.track_id, note_id: note_id})
   end
 
+  @doc """
+  在 `at_tick` 拆分音符：左子继承原 id，右子 `new_id` 自动获得 melisma
+  续音旗标（拆分 = 同音节延续）。整手势是一条历史边，undo 一次即还原。
+  """
+  @spec split_note(t(), term(), non_neg_integer(), term()) :: {:ok, t()} | {:error, term()}
+  def split_note(%__MODULE__{} = editor, note_id, at_tick, new_id) do
+    apply_edit(editor, %Neume.Operations.SplitNote{
+      track_id: editor.track_id,
+      note_id: note_id,
+      at_tick: at_tick,
+      new_id: new_id
+    })
+  end
+
   @doc "在音符上挂载绝对 tick 到 MIDI 的稀疏 pitch 控制点。"
   @spec mount_pitch(t(), term(), [[number()]]) :: {:ok, t()} | {:error, term()}
   def mount_pitch(%__MODULE__{} = editor, note_id, points) do

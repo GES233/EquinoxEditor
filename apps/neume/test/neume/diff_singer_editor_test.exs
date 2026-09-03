@@ -229,4 +229,125 @@ defmodule Neume.DiffSingerEditorTest do
     assert_receive {:check_payload, redone}
     assert Enum.any?(redone.overrides, &(&1.kind == "duration"))
   end
+
+  @tag tmp_dir: true
+  test "melisma：续音音符打包进组，pin 平移到词内下标", %{tmp_dir: tmp_dir} do
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
+
+    assert {:ok, editor} =
+             Editor.new(
+               voicebank_path: voicebank,
+               diffsinger_client: RecordingClient,
+               diffsinger_client_config: %{test_pid: self()},
+               output_dir: Path.join(tmp_dir, "renders")
+             )
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{
+               pitch: 60,
+               lyric: "sa",
+               language: "zh",
+               phonemes: [["zh", "s"], ["zh", "a"]]
+             })
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n2", "n1", {480, 960}, %{
+               pitch: 62,
+               melisma: "continue"
+             })
+
+    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n2", [[0, 96]])
+    assert {:ok, _editor, _artifact} = Editor.render(editor)
+    assert_receive {:check_payload, payload}
+
+    # words 保持逐音符槽（头 SP = 0，n1 = 1，n2 = 2），成员词音素为空占位，
+    # 由 worker 按 groups 展开
+    assert [head_sp, head_word, member_word] = payload.words
+    assert head_sp == [[["zh", "SP"]], 0.5, 0.0]
+    assert head_word == [[["zh", "s"], ["zh", "a"]], 0.5, 60.0]
+    assert member_word == [[], 0.5, 62.0]
+    assert payload.groups == [[1, 2]]
+
+    # 续音 pin：word 下标换头词，音素下标 = len(头音素) + member_index - 1
+    assert [%{kind: "duration", note_index: 1, durations: [[2, seconds]]}] =
+             Enum.filter(payload.overrides, &(&1.kind == "duration"))
+
+    assert_in_delta seconds, 0.1, 1.0e-9
+  end
+
+  @tag tmp_dir: true
+  test "melisma：出缝旗标失效，音符按普通歌词处理", %{tmp_dir: tmp_dir} do
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
+
+    assert {:ok, editor} =
+             Editor.new(
+               voicebank_path: voicebank,
+               diffsinger_client: RecordingClient,
+               diffsinger_client_config: %{test_pid: self()},
+               output_dir: Path.join(tmp_dir, "renders")
+             )
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{
+               pitch: 60,
+               lyric: "sa",
+               language: "zh",
+               phonemes: [["zh", "s"], ["zh", "a"]]
+             })
+
+    # 有旗标但有间隙 → 失效，按普通音符处理
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n2", "n1", {960, 1440}, %{
+               pitch: 62,
+               lyric: "u",
+               language: "zh",
+               phonemes: [["zh", "u"]],
+               melisma: "continue"
+             })
+
+    assert {:ok, _editor, _artifact} = Editor.render(editor)
+    assert_receive {:check_payload, payload}
+
+    assert payload.groups == []
+    assert [_, _, gap, note] = payload.words
+    assert gap == [[["zh", "SP"]], 0.5, 0.0]
+    assert note == [[["zh", "u"]], 0.5, 62.0]
+  end
+
+  @tag tmp_dir: true
+  test "melisma：组级时长预算，合计超组总时长即拒绝", %{tmp_dir: tmp_dir} do
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
+
+    assert {:ok, editor} =
+             Editor.new(
+               voicebank_path: voicebank,
+               diffsinger_client: RecordingClient,
+               diffsinger_client_config: %{test_pid: self()},
+               output_dir: Path.join(tmp_dir, "renders")
+             )
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{
+               pitch: 60,
+               lyric: "sa",
+               language: "zh",
+               phonemes: [["zh", "s"], ["zh", "a"]]
+             })
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n2", "n1", {480, 960}, %{
+               pitch: 62,
+               melisma: "continue"
+             })
+
+    # 头 pin 0.5s + 成员 pin 0.501s > 组总长 1.0s（成员 pin 超自身 span 合法，
+    # 可以吃掉头的区间，但组总预算不能超）
+    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[1, 480]])
+    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n2", [[0, 481]])
+
+    assert {:error, {:check_failed, [%{kind: :model, reason: reason}]}} =
+             Editor.check(editor)
+
+    assert inspect(reason) =~ "phoneme_duration_overflow"
+  end
 end

@@ -93,70 +93,92 @@ defmodule Neume.Engine.MockPipeline do
   defp ensure_vocal(%{module: Coconut.Edit.Track.Vocal}), do: :ok
   defp ensure_vocal(%{module: module}), do: {:error, {:not_vocal_track, module}}
 
+  # 生效续音不拆字：音素 = 头音符的末音素（mock 的"延续元音"近似），
+  # lyric 也不再必需。
   defp build_analysis(elements, ticks_per_frame) do
-    elements
-    |> Enum.sort_by(fn {id, _note, {start_tick, _end_tick}} -> {start_tick, id} end)
-    |> Enum.reduce_while({:ok, [], [], [], 0}, fn {id, note, {start_tick, end_tick}},
-                                                  {:ok, notes, boundaries, durations, cursor} ->
-      case mock_phonemes(note, id) do
-        {:ok, phonemes} ->
-          frames = div(end_tick - start_tick + ticks_per_frame - 1, ticks_per_frame)
-          count = length(phonemes)
-          base = div(frames, count)
-          rest = rem(frames, count)
+    sorted = Enum.sort_by(elements, fn {id, _note, {start_tick, _end}} -> {start_tick, id} end)
+    memberships = ScorePlan.memberships(sorted)
 
-          {note_boundaries, note_durations, cursor} =
-            phonemes
-            |> Enum.with_index()
-            |> Enum.reduce({[], [], cursor}, fn {[language, symbol], index},
-                                                {boundaries, durations, cursor} ->
-              duration = base + if index < rest, do: 1, else: 0
+    with {:ok, phonemes_by_id} <- resolve_mock_phonemes(sorted, memberships) do
+      sorted
+      |> Enum.reduce_while({:ok, [], [], [], 0}, fn {id, note, {start_tick, end_tick}},
+                                                    {:ok, notes, boundaries, durations, cursor} ->
+        phonemes = Map.fetch!(phonemes_by_id, id)
+        frames = div(end_tick - start_tick + ticks_per_frame - 1, ticks_per_frame)
+        count = length(phonemes)
+        base = div(frames, count)
+        rest = rem(frames, count)
 
-              boundary = %{
-                language: language,
-                symbol: symbol,
-                type: nil,
-                start_frame: cursor,
-                end_frame: cursor + duration,
-                note_id: id,
-                phoneme_index: index
-              }
+        {note_boundaries, note_durations, cursor} =
+          phonemes
+          |> Enum.with_index()
+          |> Enum.reduce({[], [], cursor}, fn {[language, symbol], index},
+                                              {boundaries, durations, cursor} ->
+            duration = base + if index < rest, do: 1, else: 0
 
-              {[boundary | boundaries], [duration | durations], cursor + duration}
-            end)
+            boundary = %{
+              language: language,
+              symbol: symbol,
+              type: nil,
+              start_frame: cursor,
+              end_frame: cursor + duration,
+              note_id: id,
+              phoneme_index: index
+            }
 
-          entry = %{
-            id: id,
-            lyric: note.lyric,
-            language: Map.get(note.metadata, "language", "zh"),
-            phonemes: phonemes
-          }
+            {[boundary | boundaries], [duration | durations], cursor + duration}
+          end)
 
-          {:cont,
-           {:ok, [entry | notes], boundaries ++ Enum.reverse(note_boundaries),
-            durations ++ Enum.reverse(note_durations), cursor}}
+        entry = %{
+          id: id,
+          lyric: note.lyric,
+          language: Map.get(note.metadata, "language", "zh"),
+          phonemes: phonemes
+        }
+
+        {:cont,
+         {:ok, [entry | notes], boundaries ++ Enum.reverse(note_boundaries),
+          durations ++ Enum.reverse(note_durations), cursor}}
+      end)
+      |> case do
+        {:ok, notes, boundaries, durations, total_frames} ->
+          {:ok,
+           %Analysis{
+             notes: Enum.reverse(notes),
+             phonemes: boundaries,
+             phoneme_durations: durations,
+             pitch_pred_midi: [],
+             lead_in_sec: 0.0,
+             origin_sec: 0.0,
+             total_frames: total_frames,
+             frame_rate: 480.0 / ticks_per_frame
+           }}
 
         {:error, _} = error ->
-          {:halt, error}
+          error
+      end
+    end
+  end
+
+  defp resolve_mock_phonemes(sorted, memberships) do
+    Enum.reduce_while(sorted, {:ok, %{}}, fn {id, note, _span}, {:ok, acc} ->
+      case Map.fetch!(memberships, id) do
+        %{continuation?: true, head_id: head_id} ->
+          case acc do
+            %{^head_id => [_ | _] = head_phonemes} ->
+              {:cont, {:ok, Map.put(acc, id, [List.last(head_phonemes)])}}
+
+            _missing ->
+              {:halt, {:error, {:missing_lyric, head_id}}}
+          end
+
+        %{continuation?: false} ->
+          case mock_phonemes(note, id) do
+            {:ok, phonemes} -> {:cont, {:ok, Map.put(acc, id, phonemes)}}
+            {:error, _} = error -> {:halt, error}
+          end
       end
     end)
-    |> case do
-      {:ok, notes, boundaries, durations, total_frames} ->
-        {:ok,
-         %Analysis{
-           notes: Enum.reverse(notes),
-           phonemes: boundaries,
-           phoneme_durations: durations,
-           pitch_pred_midi: [],
-           lead_in_sec: 0.0,
-           origin_sec: 0.0,
-           total_frames: total_frames,
-           frame_rate: 480.0 / ticks_per_frame
-         }}
-
-      {:error, _} = error ->
-        error
-    end
   end
 
   defp mock_phonemes(note, id) do

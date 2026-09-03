@@ -5,6 +5,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
 
   alias Coconut.Render.Engine.Snapshot
   alias Coconut.Score.{Key, Note, TempoMap}
+  alias Neume.Syllable
 
   @head_padding_sec 0.5
 
@@ -22,6 +23,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     with {:ok, view} <- Map.fetch(snapshot.tracks, track_id),
          true <- view.module == Coconut.Edit.Track.Vocal,
          {:ok, notes} <- build_notes(view.elements, snapshot),
+         notes = attach_groups(notes),
          :ok <- validate_monophonic(notes),
          {:ok, origin_sec} <- build_origin(notes),
          {:ok, pitch_overrides} <- build_pitch_overrides(pitch_pins, notes, snapshot, origin_sec),
@@ -59,6 +61,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
             language: Map.get(note.metadata, "language", "zh"),
             phonemes: phonemes,
             midi: midi,
+            melisma_flag: Syllable.flagged?(note.metadata),
             start_tick: start_tick,
             end_tick: end_tick,
             start_sec: tick_to_sec(snapshot, start_tick),
@@ -77,6 +80,33 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
       {:ok, notes} -> {:ok, Enum.reverse(notes)}
       {:error, _} = error -> error
     end
+  end
+
+  # 组派生挂在 ScorePlan：纯函数、确定性，组归属随音符进 plan，
+  # Analysis 只做打包不重新推导。
+  defp attach_groups(notes) do
+    memberships =
+      notes
+      |> Enum.map(fn note -> {note.id, note.start_tick, note.end_tick, note.melisma_flag} end)
+      |> Syllable.derive_groups()
+      |> Map.new(&{&1.id, &1})
+
+    group_sizes =
+      memberships
+      |> Map.values()
+      |> Enum.group_by(& &1.head_id)
+      |> Map.new(fn {head_id, members} -> {head_id, length(members)} end)
+
+    Enum.map(notes, fn note ->
+      membership = Map.fetch!(memberships, note.id)
+
+      Map.merge(note, %{
+        continuation?: membership.continuation?,
+        head_id: membership.head_id,
+        member_index: membership.member_index,
+        group_size: Map.fetch!(group_sizes, membership.head_id)
+      })
+    end)
   end
 
   # 窗（或全轨）的局部时基原点：首音符起点前保留 head_padding 的辅音回排空间，
@@ -167,9 +197,16 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     end
   end
 
-  # 时长 pin 是音符内相对量，与 origin 无关（convert 用秒差）。
+  # 时长 pin 是音符内相对量，与 origin 无关（convert 用秒差）。生效续音音符
+  # 只有一个派生延续元音（下标恒 0）；多成员组的预算校验上移到 Analysis
+  # 按组总时长做（pin 可以合法地吃掉组内其他成员的区间）。
   defp convert_durations(durations, note, snapshot) when is_list(durations) do
-    phoneme_count = if is_list(note.phonemes), do: length(note.phonemes), else: nil
+    phoneme_count =
+      cond do
+        note.continuation? -> 1
+        is_list(note.phonemes) -> length(note.phonemes)
+        true -> nil
+      end
 
     durations
     |> Enum.reduce_while({:ok, [], MapSet.new()}, fn
@@ -201,6 +238,11 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
 
   defp convert_durations(durations, note, _snapshot),
     do: {:error, {:invalid_phoneme_durations, note.id, durations}}
+
+  # 单音符组的预算在此兜底；多成员组的预算是组总时长，由 Analysis 在
+  # G2P 填充后统一校验。
+  defp validate_duration_budget(durations, %{group_size: size}) when size > 1,
+    do: {:ok, durations}
 
   defp validate_duration_budget(durations, note) do
     pinned_seconds = Enum.sum(Enum.map(durations, fn [_index, seconds] -> seconds end))
@@ -264,18 +306,31 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
 
     with {:ok, phonemes} <- resolve_phonemes(notes, client, config),
          notes = fill_phonemes(notes, phonemes),
+         :ok <- validate_group_budgets(notes, plan.duration_overrides),
          {:ok, words, word_indices} <- build_words(notes, plan.head_padding_sec),
+         groups = build_groups(notes, word_indices),
          overrides <-
-           attach_word_indices(plan.pitch_overrides ++ plan.duration_overrides, word_indices),
+           attach_word_indices(
+             plan.pitch_overrides ++ plan.duration_overrides,
+             word_indices,
+             notes
+           ),
          {:ok, result} <-
            client.call(
-             %{action: "check", words: words, globals: globals, overrides: overrides},
+             %{
+               action: "check",
+               words: words,
+               globals: globals,
+               overrides: overrides,
+               groups: groups
+             },
              config
            ),
          {:ok, boundaries} <- attach_note_ids(Map.get(result, "phonemes"), notes) do
       {:ok,
        %{
          words: words,
+         groups: groups,
          overrides: overrides,
          ph_dur: Map.fetch!(result, "ph_dur"),
          pitch_pred_midi: Map.fetch!(result, "pitch_pred_midi"),
@@ -291,14 +346,17 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
   defp probe(%{notes: []}, _opts), do: {:error, :empty_score}
   defp probe(plan, _opts), do: {:error, {:invalid_score_plan, plan}}
 
+  # 生效续音的音素由头的元音派生（worker 侧展开），不参与 G2P。
   defp fill_phonemes(notes, resolved) do
     Enum.map(notes, fn note ->
-      %{note | phonemes: note.phonemes || Map.fetch!(resolved, to_string(note.id))}
+      if note.continuation?,
+        do: note,
+        else: %{note | phonemes: note.phonemes || Map.fetch!(resolved, to_string(note.id))}
     end)
   end
 
   defp resolve_phonemes(notes, client, config) do
-    missing = Enum.filter(notes, &is_nil(&1.phonemes))
+    missing = Enum.filter(notes, &(is_nil(&1.phonemes) and not &1.continuation?))
 
     if missing == [] do
       {:ok, %{}}
@@ -320,6 +378,49 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
     end
   end
 
+  # 组级预算：组内所有 pin 的秒数合计不得超过组总时长（pin 可以合法地
+  # 吃掉组内其他成员的区间，故不能按单音符校验）。同时复核 G2P 填充后的
+  # 头音符 pin 下标范围（续音的下标恒 0，ScorePlan 已校验）。
+  defp validate_group_budgets(notes, duration_overrides) do
+    pins_by_note = Map.new(duration_overrides, &{&1.note_id, &1.durations})
+    by_id = Map.new(notes, &{&1.id, &1})
+
+    notes
+    |> Enum.group_by(& &1.head_id)
+    |> Enum.reduce_while(:ok, fn {head_id, members}, :ok ->
+      with :ok <- validate_pin_indices(members, pins_by_note, by_id) do
+        total = members |> Enum.map(&(&1.end_sec - &1.start_sec)) |> Enum.sum()
+
+        pinned =
+          members
+          |> Enum.flat_map(fn member -> Map.get(pins_by_note, member.id, []) end)
+          |> Enum.map(fn [_index, seconds] -> seconds end)
+          |> Enum.sum()
+
+        if pinned <= total + 1.0e-9,
+          do: {:cont, :ok},
+          else: {:halt, {:error, {:phoneme_duration_overflow, head_id}}}
+      else
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+  end
+
+  defp validate_pin_indices(members, pins_by_note, by_id) do
+    Enum.reduce_while(members, :ok, fn member, :ok ->
+      durations = Map.get(pins_by_note, member.id, [])
+      head = Map.fetch!(by_id, member.head_id)
+      capacity = if member.continuation?, do: 1, else: length(head.phonemes || [])
+
+      case Enum.find(durations, fn [index, _seconds] -> index >= capacity end) do
+        nil -> {:cont, :ok}
+        [index, _seconds] -> {:halt, {:error, {:phoneme_index_out_of_range, member.id, index}}}
+      end
+    end)
+  end
+
+  # 续音成员的词是空音素占位（`[[], dur, midi]`），由 worker 按 groups
+  # 展开时填入头的元音；成员贴接组头，不产生 gap 休止词。
   defp build_words(notes, head_padding_sec) do
     first_language = notes |> hd() |> language_for()
     head = [[[[first_language, "SP"]], head_padding_sec, 0.0]]
@@ -328,12 +429,31 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
       Enum.reduce(notes, {head, %{}, nil}, fn note, {words, indices, previous} ->
         rest = gap_word(previous, note)
         word_index = length(words) + length(rest)
-        word = [note.phonemes, note.end_sec - note.start_sec, note.midi * 1.0]
+
+        word =
+          if note.continuation?,
+            do: [[], note.end_sec - note.start_sec, note.midi * 1.0],
+            else: [note.phonemes, note.end_sec - note.start_sec, note.midi * 1.0]
 
         {words ++ rest ++ [word], Map.put(indices, note.id, word_index), note}
       end)
 
     {:ok, words, indices}
+  end
+
+  # 多成员组 → `[头词下标, 成员词下标, ...]`（成员按组内序号排序）。
+  defp build_groups(notes, word_indices) do
+    notes
+    |> Enum.filter(& &1.continuation?)
+    |> Enum.group_by(& &1.head_id)
+    |> Enum.map(fn {head_id, members} ->
+      [
+        Map.fetch!(word_indices, head_id)
+        | members
+          |> Enum.sort_by(& &1.member_index)
+          |> Enum.map(&Map.fetch!(word_indices, &1.id))
+      ]
+    end)
   end
 
   defp gap_word(nil, note) do
@@ -353,13 +473,39 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
   defp language_for(%{phonemes: [[language, _symbol] | _]}), do: language
   defp language_for(note), do: note.language
 
-  defp attach_word_indices(overrides, word_indices) do
+  # 续音成员的 pin 归并到头词：word 下标换头，duration 下标平移到
+  # `len(头音素) + member_index - 1`（延续元音在展开词中的位置）；pitch
+  # 点是绝对秒域，只换 word 下标。
+  defp attach_word_indices(overrides, word_indices, notes) do
+    by_id = Map.new(notes, &{&1.id, &1})
+
     Enum.map(overrides, fn override ->
-      override
-      |> Map.put(:note_index, Map.fetch!(word_indices, override.note_id))
-      |> Map.delete(:note_id)
+      note = Map.fetch!(by_id, override.note_id)
+
+      override =
+        if note.continuation? do
+          head = Map.fetch!(by_id, note.head_id)
+
+          override
+          |> Map.put(:note_index, Map.fetch!(word_indices, note.head_id))
+          |> remap_continuation_pin(override.kind, head, note.member_index)
+        else
+          Map.put(override, :note_index, Map.fetch!(word_indices, note.id))
+        end
+
+      Map.delete(override, :note_id)
     end)
   end
+
+  defp remap_continuation_pin(override, "duration", head, member_index) do
+    Map.update!(override, :durations, fn durations ->
+      Enum.map(durations, fn [index, seconds] ->
+        [length(head.phonemes) + member_index - 1 + index, seconds]
+      end)
+    end)
+  end
+
+  defp remap_continuation_pin(override, _kind, _head, _member_index), do: override
 
   defp attach_note_ids(boundaries, notes) when is_list(boundaries) do
     Enum.reduce_while(boundaries, {:ok, []}, fn boundary, {:ok, acc} ->
@@ -446,6 +592,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Synthesis do
                words: probe.words,
                globals: globals,
                overrides: probe.overrides,
+               groups: probe.groups,
                ph_dur: probe.ph_dur,
                pitch_pred_midi: probe.pitch_pred_midi,
                out_path: out_path

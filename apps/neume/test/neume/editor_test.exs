@@ -133,6 +133,47 @@ defmodule Neume.EditorTest do
     assert {:error, {:check_failed, [%{kind: :conflict}]}} = Editor.check(editor)
   end
 
+  test "split_note 右子自动获得续音旗标，undo 一步还原", %{editor: editor} do
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    assert {:ok, editor} = Editor.split_note(editor, "n1", 240, "n1b")
+    assert [{"n1", head, {0, 240}}, {"n1b", member, {240, 480}}] = notes(editor)
+    refute Map.has_key?(head.metadata, "melisma")
+    assert member.metadata["melisma"] == "continue"
+
+    # 续音派生头音符的末音素（"la" → l/a，延续 a）
+    assert {:ok, _editor, analysis} = Editor.analyze(editor)
+    assert analysis.total_frames == 48
+
+    assert [
+             %{symbol: "l", start_frame: 0, end_frame: 12, note_id: "n1"},
+             %{symbol: "a", start_frame: 12, end_frame: 24, note_id: "n1"},
+             %{symbol: "a", start_frame: 24, end_frame: 48, note_id: "n1b"}
+           ] = analysis.phonemes
+
+    assert {:ok, editor} = Editor.undo(editor)
+    assert [{"n1", _note, {0, 480}}] = notes(editor)
+  end
+
+  test "拆出的续音拖出缝隙后断组，恢复按自身歌词发音", %{editor: editor} do
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    assert {:ok, editor} = Editor.split_note(editor, "n1", 240, "n1b")
+    assert {:ok, editor} = Editor.edit_note(editor, "n1b", %{lyric: "mi"})
+    assert {:ok, editor} = Editor.drag_note(editor, "n1b", "n1", {480, 720})
+
+    assert {:ok, _editor, analysis} = Editor.analyze(editor)
+
+    assert [
+             %{symbol: "l", note_id: "n1"},
+             %{symbol: "a", note_id: "n1"},
+             %{symbol: "m", note_id: "n1b"},
+             %{symbol: "i", note_id: "n1b"}
+           ] = analysis.phonemes
+  end
+
   defp notes(editor) do
     {:ok, notes} = Editor.notes(editor)
     notes
