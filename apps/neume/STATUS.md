@@ -5,16 +5,17 @@
 
 ## 当前定位
 
-Neume 已完成无界面 SVS 内核的第一条真实纵向闭环，但还不是可交互编辑器：
+Neume 已完成无界面 SVS 内核的第一条真实纵向闭环，并具备 analyze/align、
+稳定 check API 与分窗增量渲染，但还不是可交互编辑器：
 
 ```text
 Neume.Editor
 → Coconut Session / History / Resolve
-→ CoconutOi.OrchidAdapter
-→ Oi（ScorePlan → Inference）
+→ CoconutOi.OrchidAdapter（静态 check）
+→ Oi（ScorePlan → Analysis → Synthesis）
 → 常驻 Python worker
 → DiffSinger duration / pitch / variance / acoustic / vocoder
-→ WAV + 实际音素边界
+→ 窗口 WAV 缓存 → 拼接 WAV + 全局音素边界
 ```
 
 ## 已完成
@@ -38,15 +39,31 @@ Neume.Editor
   onset 对齐音符起点；C-G-V 结构以 glide 为锚。
 - `RenderArtifact` 返回 WAV 信息、lead-in、逐音素时长，以及带 `note_id` 的
   实际绝对帧边界；展示数据与模型消费的 `ph_dur` 是同一份结果。
+- `Editor.analyze/1`：analyze/align 闭环——不运行 acoustic/vocoder 即可取得
+  G2P 结果、duration/pitch 预测和元音锚定后的音素边界（`Neume.Analysis`）。
+  走独立的 `ScorePlan → Analysis` 编译图（同一 cluster 内 Oi 不分 stage，
+  checkpoint 无法停在 Synthesis 前）。
+- `Editor.check/1`：稳定的检查 API——先 Coconut 静态 check（patch resolve、
+  port 装配、globals 门禁），再跑模型级 probe；所有失败聚合为
+  `{:error, {:check_failed, entries}}`，模型侧 entry 形如 `%{kind: :model, ...}`。
+  模型检查不再只藏在 render 执行路径里。
+- 分窗增量渲染：RestSplit3Beats 规则切窗（空档 < 3 拍粘连，≥ 3 拍切开、
+  前 1 拍归前窗、后 2 拍归后窗、更长留死区）；窗口级 WAV 缓存
+  （key 覆盖声库摘要、globals、窗内音符内容与 pins），编辑只失效内容变化
+  的窗口；各窗 WAV 按绝对采样偏移拼接成整轨制品。缓存边界保持粗粒度，
+  ONNX 中间张量不跨 Orchid step、进程或 ETS。`RenderArtifact.windows`
+  报告逐窗 `:hit | :miss`。
 
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- 根目录 `mix test`：`11 passed, 1 excluded`。
+- 根目录 `mix test`：`34 passed, 4 excluded`（excluded 为真声库集成测试）。
 - `mix dialyzer`：`Total errors: 0`。
 - Python 纯对齐测试：4 项通过，覆盖 V/CV/CCV/CVC、C-G-V 和休止。
-- Asaritsu 真声库集成测试：完整推理和 WAV 输出通过；96 tick 的首辅音被
-  量化为 9 帧，后续元音仍落在音符起点 ±1 帧。
+- Asaritsu 真声库集成测试（4 例）：整轨渲染与 WAV 输出；analyze 边界与
+  render 一致；check 聚合模型错误；多窗编辑后仅受影响窗重渲（缓存
+  `:hit/:miss` 逐窗断言）。96 tick 的首辅音被量化为 9 帧，后续元音仍落在
+  音符起点 ±1 帧。
 - `git diff --check`：通过。
 
 真声库测试默认排除，显式运行：
@@ -60,12 +77,10 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 当前限制
 
-- 仅单轨、单声部、整轨渲染；同轨重叠音符会明确报错。
-- 没有 phrase/window 增量渲染和缓存，每次修改仍执行完整推理。
+- 仅单轨、单声部；同轨重叠音符会明确报错。
+- 渲染按窗增量，analyze/check 仍是全轨一次性 probe。
 - 当前只有 pitch 和 phoneme duration 两种生成参数编辑。
-- 音素边界随 WAV 返回，尚无独立的“只预测对齐、不生成音频”API。
-- CoconutOi 的 check 负责静态 channel/port 检查；模型输入检查与 duration
-  预测仍在 Oi 的 Inference step 执行期间发生。
+- 分窗规则不含 slice_flag 手动覆盖（音符 metadata 覆盖未移植）。
 - 工程读档后 History 从空树重新开始。
 - 没有声库注册表、多轨混音、播放/导出管理或 UI。
 - 一个音符仍对应一个音节槽；不会根据歌词或音高隐式猜测 melisma。
@@ -78,19 +93,13 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 下一步
 
-1. 增加独立的 `analyze/align` 闭环：不运行 acoustic/vocoder 即可取得 G2P、
-   duration 预测和音素绝对边界，供编辑器读取。
-2. 将模型 check 从 render 内部执行路径中明确分离，给错误和对齐结果稳定的
-   Editor API。
-3. 实现 phrase/window 切分、局部失效、增量渲染和缓存；缓存边界保持粗粒度，
-   不让大型 ONNX 中间张量跨 Orchid step、进程或 ETS。
-4. 实现跨音符 syllable group：使用显式相邻音符组身份，定义音素到成员音符
+1. 实现跨音符 syllable group：使用显式相邻音符组身份，定义音素到成员音符
    的归属、延音歌词约定，以及成员移动、拆分、删除后的 patch 存活和冲突
    语义。
-5. 扩展 energy、breathiness、voicing 等曲线 channel，并保持参数语义位于
+2. 扩展 energy、breathiness、voicing 等曲线 channel，并保持参数语义位于
    adapter，不硬编码进 CoconutOi。
-6. 增加声库发现/注册表、多轨调度、播放和导出管理。
-7. 在 headless API 与增量渲染稳定后接最小钢琴卷帘、音素边界编辑和播放 UI。
+3. 增加声库发现/注册表、多轨调度、播放和导出管理。
+4. 在 headless API 稳定后接最小钢琴卷帘、音素边界编辑和播放 UI。
 
 ## 不变量
 

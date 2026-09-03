@@ -35,6 +35,15 @@ Python 环境需要 `onnxruntime`、`numpy`、`soundfile`、`pyyaml`；中文歌
 吸收剩余帧。该编辑进入 Coconut History，支持 undo/redo，最终仍经过上述
 元音锚定，因此 artifact 展示的边界与实际合成一致。
 
+无需出音频的对齐读取用 `Editor.analyze/1`（G2P、duration/pitch 预测和
+绝对音素边界，不运行 acoustic/vocoder）；提交渲染前的完整检查用
+`Editor.check/1`（静态 patch/port/globals 检查 + 模型级 probe，失败聚合为
+`{:error, {:check_failed, entries}}`）。
+
+渲染按乐句分窗增量执行：空档 ≥ 3 拍切窗，窗口级 WAV 缓存按「声库摘要 +
+globals + 窗内音符 + pins」失效，编辑后只重推内容变化的窗口，各窗音频按
+绝对时间拼接成整轨 `RenderArtifact`。
+
 ## TODO
 
 - [ ] 跨音符 syllable group：以相邻音符组作为显式音节身份，定义音素到
