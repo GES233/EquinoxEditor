@@ -608,6 +608,11 @@ defmodule Neume.Editor do
       |> put_option(:depth, opts, :depth)
       |> put_option(:steps, opts, :steps)
       |> put_option(:cache, opts, :cache)
+      |> put_option(:seed, opts, :seed)
+      |> put_option(:fp, opts, :fp)
+      |> put_option(:fp_dir, opts, :fp_dir)
+      |> put_option(:fp_build, opts, :fp_build)
+      |> put_option(:fp_python, opts, :fp_python)
 
     with {:ok, state} <- DiffSingerPipeline.compile(pipeline_opts) do
       {:ok, DiffSingerPipeline, state}

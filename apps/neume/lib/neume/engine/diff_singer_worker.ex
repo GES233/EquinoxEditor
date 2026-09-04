@@ -38,7 +38,9 @@ defmodule Neume.Engine.DiffSingerWorker do
 
   defp worker_key(config) do
     {Map.get(config, :python, ["python"]), Map.fetch!(config, :voicebank_root),
-     Map.get(config, :voicebank_digest), Map.get(config, :worker, default_worker())}
+     Map.get(config, :voicebank_digest), Map.get(config, :fp_manifest),
+     Map.get(config, :fp_manifest_digest), Map.get(config, :fp_noise_version), Map.get(config, :seed, 0),
+     Map.get(config, :worker, default_worker())}
   end
 
   defp default_worker do
@@ -138,13 +140,26 @@ defmodule Neume.Engine.DiffSingerWorker do
                 :stream,
                 :exit_status,
                 {:line, @line_limit},
-                {:args, args ++ [worker, Map.fetch!(config, :voicebank_root)]}
+                {:args,
+                 args ++
+                   [worker, Map.fetch!(config, :voicebank_root)] ++
+                   worker_args(config)}
               ])
 
             {:ok, %{state | port: port, ready: false, buffer: "", current: nil}}
           else
             {:error, {:worker_not_found, worker}}
           end
+      end
+    end
+
+    defp worker_args(config) do
+      case Map.get(config, :fp_manifest) do
+        path when is_binary(path) ->
+          ["--fp-manifest", path, "--seed", to_string(Map.get(config, :seed, 0))]
+
+        _ ->
+          []
       end
     end
 

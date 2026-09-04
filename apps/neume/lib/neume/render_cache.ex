@@ -8,7 +8,7 @@ defmodule Neume.RenderCache do
   渲染输出目录，沿用其 tmp 语义。
   """
 
-  @version 1
+  @version 2
 
   @type entry :: %{path: Path.t(), meta: map()}
 

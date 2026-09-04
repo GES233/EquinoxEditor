@@ -30,8 +30,13 @@ Neume.Editor
   核对摘要。
 - 中文歌词通过声库 `dsdict-zh.yaml` 和 `pypinyin` 自动音素化，也支持音符
   metadata 中的显式 `[[language, phoneme]]`。
-- 常驻 NDJSON Python worker；ONNX session 按 Python、声库路径、声库摘要和
-  worker 路径隔离，摘要变化后不会复用旧 session。
+- 常驻 NDJSON Python worker；ONNX session 按 Python、声库路径/摘要、
+  FP manifest/噪声版本/seed 和 worker 路径隔离，摘要或渲染上下文变化后
+  不会复用旧 session。
+- DiffSinger Pure-FP 默认路径：本地手术把 pitch/variance/acoustic/vocoder
+  图内随机算子改成 host-noise 输入，worker 按固定 seed 生成 NumPy float32
+  噪声；`fp: false` 可显式回退 stock。派生模型只写 gitignored `tmp/`，
+  原声库只读，分发与商用权限仍取决于具体声库许可证。
 - 稀疏 pitch 控制点，经 note-local pin 投影到实际帧网格。
 - 逐音素 duration pin：指定音素固定为给定 tick 时长，其余音素按预测比例
   吸收剩余帧；该 patch 支持 undo/redo。
@@ -79,7 +84,7 @@ Neume.Editor
   debug.json——notes（秒轴）、帧级 pitch（有效/可选 `raw?: true` 无干预
   对照）、音素绝对边界、tempo 段，以及 `meta.patches`（存活 pin 的锚点
   投影：kind/refs/at_version + 解析出的 tick 区间 + payload）和 `curves`
-  （pitch pin 控制点的「锚定音符 MIDI + cents/100」可视化投影）。
+  （pitch pin 的绝对 tick → MIDI 控制点投影，与模型消费契约一致）。
   `tools/plot_render.py`（vendored 自 coconut_intervention，扩展了
   frames_origin/span 默认缩放/pin 铆钉标记）用 matplotlib 画钢琴卷帘 +
   pitch + 音素时序，`-o` 扩展名决定 PNG/SVG/PDF。导出前走完整
@@ -97,7 +102,10 @@ Neume.Editor
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- 根目录 `mix test`：`61 passed, 5 excluded`（excluded 为真声库集成测试）。
+- `apps/neume` 的 `mix test`：`63 passed, 6 excluded`（excluded 为真声库集成测试）。
+- Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
+  `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
+  `43.6%`，通过 2× 包络门禁。
 - `mix dialyzer`：`Total errors: 0`。
 - Python 纯对齐测试：10 项通过，覆盖 V/CV/CCV/CVC、C-G-V、休止、melisma
   组展开/多 slot 锚定与 `note_phonemes` 按 owner 归并。

@@ -12,7 +12,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
   alias Coconut.Render.Engine.Snapshot
   alias Neume.Analysis
   alias Neume.Engine.DiffSingerPipeline.Steps
-  alias Neume.Engine.DiffSingerWorker
+  alias Neume.Engine.{DiffSingerFp, DiffSingerWorker}
   alias Neume.Voicebank.DiffSinger
   alias Oi.Flowgraph
 
@@ -38,68 +38,75 @@ defmodule Neume.Engine.DiffSingerPipeline do
     track_id = Keyword.fetch!(opts, :track_id)
     output_dir = Keyword.get(opts, :output_dir, Path.join(File.cwd!(), "tmp/neume-renders"))
     client = Keyword.get(opts, :client, DiffSingerWorker)
+    python = Keyword.get(opts, :python, ["python"])
 
-    worker_config =
-      opts
-      |> Keyword.get(:client_config, %{})
-      |> Map.merge(%{
-        voicebank_root: manifest.root,
-        voicebank_digest: manifest.digest,
-        python: Keyword.get(opts, :python, ["python"]),
-        worker: Keyword.get(opts, :worker, default_worker())
-      })
+    with {:ok, fp} <- resolve_fp(manifest, client, opts) do
+      worker_config =
+        opts
+        |> Keyword.get(:client_config, %{})
+        |> Map.merge(%{
+          voicebank_root: manifest.root,
+          voicebank_digest: manifest.digest,
+          python: python,
+          worker: Keyword.get(opts, :worker, default_worker()),
+          fp_manifest: fp && fp.manifest_path,
+          fp_manifest_digest: fp && fp.manifest_digest,
+          fp_noise_version: fp && fp.noise_version,
+          seed: Keyword.get(opts, :seed, 0)
+        })
 
-    globals = %{
-      "speaker" => Keyword.get(opts, :speaker, default_speaker(manifest)),
-      "gender" => Keyword.get(opts, :gender, 0.0),
-      "velocity" => Keyword.get(opts, :velocity, 1.0),
-      "depth" => Keyword.get(opts, :depth, 0.6),
-      "steps" => Keyword.get(opts, :steps, 20),
-      "energy" => Keyword.get(opts, :energy, 1.0),
-      "breathiness" => Keyword.get(opts, :breathiness, 1.0),
-      "voicing" => Keyword.get(opts, :voicing, 1.0)
-    }
+      globals = %{
+        "speaker" => Keyword.get(opts, :speaker, default_speaker(manifest)),
+        "gender" => Keyword.get(opts, :gender, 0.0),
+        "velocity" => Keyword.get(opts, :velocity, 1.0),
+        "depth" => Keyword.get(opts, :depth, 0.6),
+        "steps" => Keyword.get(opts, :steps, 20),
+        "energy" => Keyword.get(opts, :energy, 1.0),
+        "breathiness" => Keyword.get(opts, :breathiness, 1.0),
+        "voicing" => Keyword.get(opts, :voicing, 1.0)
+      }
 
-    graph =
-      Flowgraph.new_flowchart()
-      |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id, globals: globals])
-      |> Flowgraph.add_step(Steps.Analysis,
-        opts: [client: client, worker_config: worker_config]
-      )
-      |> Flowgraph.add_step(Steps.Synthesis,
-        opts: [
-          client: client,
-          worker_config: worker_config,
-          output_dir: output_dir
-        ]
-      )
-      |> Flowgraph.connect({:score_plan, :plan}, {:analysis, :plan})
-      |> Flowgraph.connect({:score_plan, :plan}, {:diffsinger, :plan})
-      |> Flowgraph.connect({:analysis, :probe}, {:diffsinger, :probe})
+      graph =
+        Flowgraph.new_flowchart()
+        |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id, globals: globals])
+        |> Flowgraph.add_step(Steps.Analysis,
+          opts: [client: client, worker_config: worker_config]
+        )
+        |> Flowgraph.add_step(Steps.Synthesis,
+          opts: [
+            client: client,
+            worker_config: worker_config,
+            output_dir: output_dir
+          ]
+        )
+        |> Flowgraph.connect({:score_plan, :plan}, {:analysis, :plan})
+        |> Flowgraph.connect({:score_plan, :plan}, {:diffsinger, :plan})
+        |> Flowgraph.connect({:analysis, :probe}, {:diffsinger, :probe})
 
-    # 同一 cluster 内 Oi 不分 stage，checkpoint 无法停在 Synthesis 前；
-    # analyze 闭环用独立的 Analysis-only 图。
-    analysis_graph =
-      Flowgraph.new_flowchart()
-      |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id, globals: globals])
-      |> Flowgraph.add_step(Steps.Analysis,
-        opts: [client: client, worker_config: worker_config]
-      )
-      |> Flowgraph.connect({:score_plan, :plan}, {:analysis, :plan})
+      # 同一 cluster 内 Oi 不分 stage，checkpoint 无法停在 Synthesis 前；
+      # analyze 闭环用独立的 Analysis-only 图。
+      analysis_graph =
+        Flowgraph.new_flowchart()
+        |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id, globals: globals])
+        |> Flowgraph.add_step(Steps.Analysis,
+          opts: [client: client, worker_config: worker_config]
+        )
+        |> Flowgraph.connect({:score_plan, :plan}, {:analysis, :plan})
 
-    with {:ok, compiled} <- Oi.compile(graph),
-         {:ok, compiled_analysis} <- Oi.compile(analysis_graph) do
-      {:ok,
-       %{
-         compiled: compiled,
-         compiled_analysis: compiled_analysis,
-         client: client,
-         worker_config: worker_config,
-         globals: globals,
-         output_dir: output_dir,
-         manifest: manifest,
-         cache: Keyword.get(opts, :cache, true)
-       }}
+      with {:ok, compiled} <- Oi.compile(graph),
+           {:ok, compiled_analysis} <- Oi.compile(analysis_graph) do
+        {:ok,
+         %{
+           compiled: compiled,
+           compiled_analysis: compiled_analysis,
+           client: client,
+           worker_config: worker_config,
+           globals: globals,
+           output_dir: output_dir,
+           manifest: manifest,
+           cache: Keyword.get(opts, :cache, true)
+         }}
+      end
     end
   end
 
@@ -241,6 +248,9 @@ defmodule Neume.Engine.DiffSingerPipeline do
     key =
       Neume.RenderCache.key(%{
         voicebank_digest: state.manifest.digest,
+        fp_manifest_digest: state.worker_config.fp_manifest_digest,
+        fp_noise_version: state.worker_config.fp_noise_version,
+        seed: state.worker_config.seed,
         globals: globals,
         notes: Enum.map(elements, &canonical_note/1),
         pins: window_pins,
@@ -460,6 +470,32 @@ defmodule Neume.Engine.DiffSingerPipeline do
       sample_rate: manifest.timing.sample_rate,
       hop_size: manifest.timing.hop_size
     }
+  end
+
+  # 真实 worker 默认 FP；注入测试 client 时保持轻量，除非调用方显式 fp: true。
+  defp resolve_fp(manifest, client, opts) do
+    case Keyword.get(opts, :fp, :default) do
+      false ->
+        {:ok, nil}
+
+      fp when is_map(fp) ->
+        {:ok, fp}
+
+      mode when mode in [:default, true] ->
+        if client == DiffSingerWorker or mode == true do
+          # 手术环境需要 onnx；推理环境只需 onnxruntime，二者可独立配置。
+          fp_opts = [
+            python: Keyword.get(opts, :fp_python, ["python"]),
+            build?: Keyword.get(opts, :fp_build, true),
+            voicebank_digest: manifest.digest
+          ]
+
+          fp_opts = if opts[:fp_dir], do: Keyword.put(fp_opts, :dir, opts[:fp_dir]), else: fp_opts
+          DiffSingerFp.for_voicebank(manifest.root, fp_opts)
+        else
+          {:ok, nil}
+        end
+    end
   end
 
   defp default_worker, do: Application.app_dir(:neume, "priv/diffsinger/worker.py")

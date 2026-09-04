@@ -5,6 +5,8 @@
 speaker embedding 的旧模型和带 256 维 embedding 的 variance 模型。
 """
 
+import argparse
+import hashlib
 import json
 import os
 import sys
@@ -48,8 +50,10 @@ def load_yaml(path):
 
 
 class DiffSingerEngine:
-    def __init__(self, root):
+    def __init__(self, root, fp_manifest=None, seed=0):
         self.root = os.path.abspath(root)
+        self.seed = int(seed)
+        self.fp = load_json(fp_manifest) if fp_manifest else {}
         self.acoustic_cfg = load_yaml(os.path.join(root, "dsconfig.yaml"))
         self.duration_cfg = load_yaml(os.path.join(root, "dsdur", "dsconfig.yaml"))
         self.pitch_cfg = load_yaml(os.path.join(root, "dspitch", "dsconfig.yaml"))
@@ -77,17 +81,19 @@ class DiffSingerEngine:
             self._asset(os.path.join(root, "dspitch"), self.pitch_cfg["linguistic"])
         )
         self.pitch = self._session(
-            self._asset(os.path.join(root, "dspitch"), self.pitch_cfg["pitch"])
+            self._model("pitch_predict", self._asset(os.path.join(root, "dspitch"), self.pitch_cfg["pitch"]))
         )
         self.variance_linguistic = self._session(
             self._asset(os.path.join(root, "dsvariance"), self.variance_cfg["linguistic"])
         )
         self.variance = self._session(
-            self._asset(os.path.join(root, "dsvariance"), self.variance_cfg["variance"])
+            self._model("variance", self._asset(os.path.join(root, "dsvariance"), self.variance_cfg["variance"]))
         )
-        self.acoustic = self._session(self._asset(root, self.acoustic_cfg["acoustic"]))
+        self.acoustic = self._session(
+            self._model("acoustic", self._asset(root, self.acoustic_cfg["acoustic"]))
+        )
         self.vocoder = self._session(
-            self._asset(os.path.join(root, "dsvocoder"), self.vocoder_cfg["model"])
+            self._model("vocoder", self._asset(os.path.join(root, "dsvocoder"), self.vocoder_cfg["model"]))
         )
 
         self.speaker_names = list(self.acoustic_cfg.get("speakers") or [])
@@ -98,6 +104,31 @@ class DiffSingerEngine:
     @staticmethod
     def _asset(base, relative):
         return os.path.abspath(os.path.join(base, relative))
+
+    def _model(self, key, stock_path):
+        entry = self.fp.get(key)
+        return os.path.abspath(entry["path"]) if entry else stock_path
+
+    def _noise(self, key, frames):
+        """按 seed + 阶段 + spec 生成确定性 float32 host noise。"""
+        values = {}
+        entry = self.fp.get(key) or {}
+        for stream, spec in enumerate(entry.get("noise") or []):
+            material = f"neume-fp-v1:{self.seed}:{key}:{stream}".encode()
+            derived = int.from_bytes(hashlib.sha256(material).digest()[:8], "little")
+            rng = np.random.Generator(np.random.PCG64(derived))
+            shape = tuple(
+                frames if dim == "frames" else frames * self.hop_size if dim == "samples" else dim
+                for dim in spec["shape"]
+            )
+            if spec["dist"] == "normal":
+                value = rng.standard_normal(shape, dtype=np.float32)
+            elif spec["dist"] == "uniform":
+                value = rng.random(shape, dtype=np.float32)
+            else:
+                raise ValueError(f"unknown FP distribution: {spec['dist']}")
+            values[spec["name"]] = value
+        return values
 
     def _session(self, path):
         if path not in self._sessions:
@@ -279,7 +310,8 @@ class DiffSingerEngine:
         mel = self._acoustic_forward(
             acoustic_encoded, ph_dur, f0, variance, globals_
         )
-        waveform = self._run(self.vocoder, ["waveform"], {"mel": mel, "f0": f0})[0]
+        vocoder_inputs = {"mel": mel, "f0": f0, **self._noise("vocoder", total_frames)}
+        waveform = self._run(self.vocoder, ["waveform"], vocoder_inputs)[0]
 
         output = os.path.abspath(output)
         os.makedirs(os.path.dirname(output), exist_ok=True)
@@ -484,6 +516,7 @@ class DiffSingerEngine:
                 "retake": retake,
                 "spk_embed": self._speaker(globals_, frames),
                 "steps": steps,
+                **self._noise("pitch_predict", frames),
             },
         )[0]
 
@@ -520,6 +553,7 @@ class DiffSingerEngine:
         }
         for channel in channels:
             values[channel] = np.zeros((1, frames), dtype=np.float32)
+        values.update(self._noise("variance", frames))
         outputs = self._run(self.variance, output_names, values)
         return dict(zip(channels, outputs))
 
@@ -547,6 +581,7 @@ class DiffSingerEngine:
             "depth": np.asarray(globals_["depth"], dtype=np.float32),
             "steps": np.asarray(int(globals_["steps"]), dtype=np.int64),
         }
+        values.update(self._noise("acoustic", frames))
         return self._run(self.acoustic, ["mel"], values)[0]
 
     @staticmethod
@@ -662,19 +697,23 @@ def dispatch(engine, request):
 
 
 def main():
-    if len(sys.argv) != 2:
-        print("usage: worker.py <voicebank_root>", file=sys.stderr)
-        raise SystemExit(2)
+    parser = argparse.ArgumentParser()
+    parser.add_argument("voicebank_root")
+    parser.add_argument("--fp-manifest")
+    parser.add_argument("--seed", type=int, default=0)
+    args = parser.parse_args()
 
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
-    engine = DiffSingerEngine(sys.argv[1])
+    engine = DiffSingerEngine(args.voicebank_root, args.fp_manifest, args.seed)
     emit(
         {
             "ready": True,
             "sample_rate": engine.sample_rate,
             "hop_size": engine.hop_size,
             "speakers": engine.speaker_names,
+            "fp": bool(engine.fp),
+            "seed": engine.seed,
         }
     )
 

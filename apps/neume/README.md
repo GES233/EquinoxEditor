@@ -16,14 +16,20 @@
     python: ["D:/path/to/python.exe"],
     output_dir: "D:/temp/neume-renders",
     speaker: "Normal",
-    steps: 8
+    steps: 8,
+    seed: 0
+    # fp: false # 显式退回原始 stock 模型
   )
 ```
 
-Python 环境需要 `onnxruntime`、`numpy`、`soundfile`、`pyyaml`；中文歌词的
-自动音素化还需要 `pypinyin`。声库目录只读，模型不会复制或写入仓库；
-工程只保存 `{name, engine, digest}`，重新打开时必须再次提供
-`voicebank_path` 并通过摘要核对。
+推理 Python 环境需要 `onnxruntime`、`numpy`、`soundfile`、`pyyaml`；中文歌词的
+自动音素化还需要 `pypinyin`。真实 worker 默认启用 Pure-FP：首次使用时由
+`fp_python`（默认系统 `python`，需额外安装 `onnx`）把图内随机算子改为 host
+noise 输入，派生 ONNX 写到 gitignored 的 `tmp/onnx_fp/<声库摘要>/`，原声库
+始终只读。相同输入与 `seed` 不依赖缓存也逐比特复现；换 seed 产生新 take；
+`fp: false` 显式使用 stock 模型。派生模型的分发/商用仍服从具体声库许可证。
+工程只保存 `{name, engine, digest}`，重新打开时必须再次提供 `voicebank_path`
+并通过摘要核对。
 
 真实管线使用 OpenUtau 式元音锚定：音符起点对应词内首个元音（C-G-V
 结构对应 glide），此前的一个或多个辅音向前回排并占用前置 SP/间隙；
@@ -64,7 +70,7 @@ debug.json（notes/pitch 帧网/音素边界/tempo/`meta.patches` 铆钉点/pin
 （`-o out.svg` 出矢量图，依赖 `pip install matplotlib`）。
 
 渲染按乐句分窗增量执行：空档 ≥ 3 拍切窗，窗口级 WAV 缓存按「声库摘要 +
-globals + 窗内音符 + pins」失效，编辑后只重推内容变化的窗口，各窗音频按
+globals + 窗内音符 + pins + FP/stock 模式 + seed + 噪声算法版本」失效，编辑后只重推内容变化的窗口，各窗音频按
 绝对时间拼接成整轨 `RenderArtifact`。
 
 ## TODO
