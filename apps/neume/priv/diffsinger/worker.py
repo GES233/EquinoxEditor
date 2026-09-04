@@ -14,7 +14,7 @@ import onnxruntime as ort
 import soundfile as sf
 import yaml
 
-from alignment import REST_PHONEMES, align_phonemes, expand_groups, word_parts
+from alignment import REST_PHONEMES, align_phonemes, expand_groups, note_phonemes, word_parts
 
 try:
     from pypinyin import Style, pinyin
@@ -231,7 +231,18 @@ class DiffSingerEngine:
             "total_frames": int(ph_dur.sum()),
             "phonemes": alignment["phonemes"],
             "lead_in_sec": alignment["lead_in_sec"],
+            "note_phonemes": note_phonemes(words, owners),
         }
+
+    def expand(self, words, groups=None):
+        """轻量 probe：只做组展开，返回逐原词（音符）的音素序列。
+
+        身份底料的物化入口（pin 挂载/重挂签名用）：不跑任何模型，
+        音素类型是声库事实，由 expand_groups 消费。key 是展开前的
+        原 words 下标（字符串），调用侧按 word_indices 归并到音符。
+        """
+        expanded, owners, _remap = self._expand(words, groups)
+        return {"note_phonemes": note_phonemes(expanded, owners)}
 
     def render(
         self, words, output, globals_, ph_dur=None, pitch_pred=None, overrides=None,
@@ -582,6 +593,8 @@ def dispatch(engine, request):
     globals_ = {**DEFAULT_GLOBALS, **(request.get("globals") or {})}
     if action == "encode":
         return engine.encode_lyrics(request["notes"])
+    if action == "expand":
+        return engine.expand(request["words"], request.get("groups"))
     if action == "check":
         return engine.check(
             request["words"],

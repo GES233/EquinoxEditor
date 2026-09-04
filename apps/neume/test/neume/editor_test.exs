@@ -80,14 +80,16 @@ defmodule Neume.EditorTest do
     assert inspect(error) =~ "outside_note_span"
   end
 
-  test "内容修改触发 patch 冲突，撤销后恢复可渲染", %{editor: editor} do
+  test "内容修改触发 probe 期身份冲突，撤销后恢复可渲染", %{editor: editor} do
     assert {:ok, editor} =
              Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
 
     assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[120, 72]])
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
 
-    assert {:error, {:resolve_vetoed, [%{kind: :conflict}]}} = Editor.render(editor)
+    # mock G2P："la" → [l, a]，"lai" → [l, a, i]——词内音素序列变了，pin 炸。
+    assert {:error, {:check_failed, [%{kind: :conflict, stage: :probe}]}} =
+             Editor.render(editor)
 
     assert {:ok, editor} = Editor.undo(editor)
     assert {:ok, _editor, artifact} = Editor.render(editor)
@@ -124,13 +126,13 @@ defmodule Neume.EditorTest do
              Editor.check(editor)
   end
 
-  test "check 直通静态 patch 冲突", %{editor: editor} do
+  test "check 把身份冲突聚合为 check_failed（probe 期）", %{editor: editor} do
     assert {:ok, editor} =
              Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
 
     assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[120, 72]])
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
-    assert {:error, {:check_failed, [%{kind: :conflict}]}} = Editor.check(editor)
+    assert {:error, {:check_failed, [%{kind: :conflict, stage: :probe}]}} = Editor.check(editor)
   end
 
   test "split_note 右子自动获得续音旗标，undo 一步还原", %{editor: editor} do

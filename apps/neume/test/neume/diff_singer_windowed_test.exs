@@ -21,11 +21,18 @@ defmodule Neume.DiffSingerWindowedTest do
       {:ok, %{"tokens" => tokens}}
     end
 
-    def call(%{action: "check", words: words}, config) do
+    def call(%{action: "expand", words: words} = payload, config) do
+      count(config, "expand")
+
+      {:ok,
+       %{"note_phonemes" => Neume.FakePhonemes.note_phonemes(words, Map.get(payload, :groups))}}
+    end
+
+    def call(%{action: "check", words: words} = payload, config) do
       count(config, "check")
 
       {boundaries, _cursor, _ordinal} =
-        Enum.reduce(words, {[], 0, -1}, fn [phonemes, seconds, _midi], {acc, cursor, ordinal} ->
+        Enum.reduce(words, {[], 0, -1}, fn [phonemes, seconds | _rest], {acc, cursor, ordinal} ->
           frames = round(seconds * @frame_rate)
           rest? = Enum.all?(phonemes, fn [_lang, phone] -> phone == "SP" end)
           ordinal = if rest?, do: ordinal, else: ordinal + 1
@@ -43,7 +50,11 @@ defmodule Neume.DiffSingerWindowedTest do
           {[boundary | acc], cursor + frames, ordinal}
         end)
 
-      durations = Enum.map(words, fn [_ph, seconds, _midi] -> round(seconds * @frame_rate) end)
+      durations =
+        Enum.flat_map(words, fn [phonemes, seconds | _rest] ->
+          List.duplicate(round(seconds * @frame_rate), max(length(phonemes), 1))
+        end)
+
       frame_count = Enum.sum(durations)
 
       {:ok,
@@ -52,6 +63,7 @@ defmodule Neume.DiffSingerWindowedTest do
          "pitch_pred_midi" => List.duplicate(60.0, frame_count),
          "total_frames" => frame_count,
          "lead_in_sec" => 0.5,
+         "note_phonemes" => Neume.FakePhonemes.note_phonemes(words, Map.get(payload, :groups)),
          "phonemes" => Enum.reverse(boundaries)
        }}
     end

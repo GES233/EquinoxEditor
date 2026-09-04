@@ -18,8 +18,12 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     end
   end
 
-  defp build(%Snapshot{} = snapshot, pitch_pins, duration_pins, track_id)
-       when is_map(pitch_pins) and is_map(duration_pins) do
+  # 公开给挂载 probe（`DiffSingerPipeline.phonemes/3`）：pins 传 %{} 时
+  # 只产出 score 装配（notes/groups/时基），不带任何 override。
+  @doc false
+  @spec build(Snapshot.t(), map(), map(), term()) :: {:ok, map()} | {:error, term()}
+  def build(%Snapshot{} = snapshot, pitch_pins, duration_pins, track_id)
+      when is_map(pitch_pins) and is_map(duration_pins) do
     with {:ok, view} <- Map.fetch(snapshot.tracks, track_id),
          true <- view.module == Coconut.Edit.Track.Vocal,
          {:ok, notes} <- build_notes(view.elements, snapshot),
@@ -44,7 +48,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     end
   end
 
-  defp build(%Snapshot{} = _snapshot, pitch_pins, duration_pins, _track_id),
+  def build(%Snapshot{} = _snapshot, pitch_pins, duration_pins, _track_id),
     do: {:error, {:invalid_pins, pitch_pins, duration_pins}}
 
   defp build_notes(elements, snapshot) do
@@ -304,47 +308,96 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
     config = Keyword.fetch!(opts, :worker_config)
     globals = Keyword.fetch!(opts, :globals)
 
-    with {:ok, phonemes} <- resolve_phonemes(notes, client, config),
-         notes = fill_phonemes(notes, phonemes),
-         :ok <- validate_group_budgets(notes, plan.duration_overrides),
-         {:ok, words, word_indices} <- build_words(notes, plan.head_padding_sec),
-         groups = build_groups(notes, word_indices),
+    with {:ok, prepared} <- prepare(plan, client, config),
+         :ok <- validate_group_budgets(prepared.notes, plan.duration_overrides),
          overrides <-
            attach_word_indices(
              plan.pitch_overrides ++ plan.duration_overrides,
-             word_indices,
-             notes
+             prepared.word_indices,
+             prepared.notes
            ),
          {:ok, result} <-
            client.call(
              %{
                action: "check",
-               words: words,
+               words: prepared.words,
                globals: globals,
                overrides: overrides,
-               groups: groups
+               groups: prepared.groups
              },
              config
            ),
-         {:ok, boundaries} <- attach_note_ids(Map.get(result, "phonemes"), notes) do
+         {:ok, boundaries} <- attach_note_ids(Map.get(result, "phonemes"), prepared.notes),
+         {:ok, note_phonemes} <- note_phonemes(Map.get(result, "note_phonemes"), prepared) do
       {:ok,
        %{
-         words: words,
-         groups: groups,
+         words: prepared.words,
+         groups: prepared.groups,
          overrides: overrides,
          ph_dur: Map.fetch!(result, "ph_dur"),
          pitch_pred_midi: Map.fetch!(result, "pitch_pred_midi"),
          total_frames: Map.get(result, "total_frames", Enum.sum(Map.fetch!(result, "ph_dur"))),
          boundaries: boundaries,
+         note_phonemes: note_phonemes,
          lead_in_sec: Map.get(result, "lead_in_sec", plan.head_padding_sec),
          origin_sec: plan.origin_sec,
-         notes: Enum.map(notes, &Map.take(&1, [:id, :lyric, :language, :phonemes]))
+         notes: Enum.map(prepared.notes, &Map.take(&1, [:id, :lyric, :language, :phonemes]))
        }}
     end
   end
 
   defp probe(%{notes: []}, _opts), do: {:error, :empty_score}
   defp probe(plan, _opts), do: {:error, {:invalid_score_plan, plan}}
+
+  # G2P（按需）+ 词/组装配：probe 与挂载 probe（`DiffSingerPipeline.phonemes/3`）
+  # 的共用前段。不做任何模型推理、不消费 overrides——pin 不改变音素身份，
+  # 挂载时刻的有效底料等于当前 score 的物化序列（无 lyric 短路型干预）。
+  @doc false
+  @spec prepare(map(), module(), map()) :: {:ok, map()} | {:error, term()}
+  def prepare(%{notes: notes} = plan, client, config) when is_list(notes) and notes != [] do
+    with {:ok, phonemes} <- resolve_phonemes(notes, client, config),
+         notes = fill_phonemes(notes, phonemes),
+         {:ok, words, word_indices} <- build_words(notes, plan.head_padding_sec) do
+      {:ok,
+       %{
+         notes: notes,
+         words: words,
+         word_indices: word_indices,
+         groups: build_groups(notes, word_indices)
+       }}
+    end
+  end
+
+  def prepare(%{notes: []}, _client, _config), do: {:error, :empty_score}
+  def prepare(plan, _client, _config), do: {:error, {:invalid_score_plan, plan}}
+
+  # worker 返回的 note_phonemes 以原 words 下标（字符串）为 key，按
+  # word_indices 归并到音符 id；休止词（SP padding/gap）不在册，天然排除。
+  @doc false
+  @spec note_phonemes(term(), map()) :: {:ok, Neume.Identity.note_phonemes()} | {:error, term()}
+  def note_phonemes(by_word, %{word_indices: word_indices}) when is_map(by_word) do
+    Enum.reduce_while(word_indices, {:ok, %{}}, fn {note_id, word_index}, {:ok, acc} ->
+      case Map.fetch(by_word, to_string(word_index)) do
+        {:ok, sequence} when is_list(sequence) ->
+          if Enum.all?(sequence, &valid_pair?/1) do
+            {:cont, {:ok, Map.put(acc, note_id, sequence)}}
+          else
+            {:halt, {:error, {:invalid_note_phonemes, note_id, sequence}}}
+          end
+
+        {:ok, other} ->
+          {:halt, {:error, {:invalid_note_phonemes, note_id, other}}}
+
+        :error ->
+          {:halt, {:error, {:missing_note_phonemes, note_id}}}
+      end
+    end)
+  end
+
+  def note_phonemes(other, _prepared), do: {:error, {:missing_note_phonemes, other}}
+
+  defp valid_pair?([language, symbol]), do: is_binary(language) and is_binary(symbol)
+  defp valid_pair?(_other), do: false
 
   # 生效续音的音素由头的元音派生（worker 侧展开），不参与 G2P。
   defp fill_phonemes(notes, resolved) do

@@ -2,7 +2,13 @@
 
 import unittest
 
-from alignment import align_phonemes, expand_groups, is_rest_word, word_start_index
+from alignment import (
+    align_phonemes,
+    expand_groups,
+    is_rest_word,
+    note_phonemes,
+    word_start_index,
+)
 
 
 TYPES = {
@@ -156,6 +162,28 @@ class MelismaTest(unittest.TestCase):
         self.assertEqual(by_position[3]["symbol"], "ae")
         self.assertEqual(by_position[3]["start_frame"], 50)
         self.assertEqual(by_position[3]["note_index"], 1)
+    def test_note_phonemes_group_by_owner(self):
+        # 无组：逐词归属自身（含休止词，调用侧按 word_indices 排除）。
+        words = [
+            [["zh", "SP"]],
+            [["zh", "s"], ["zh", "a"]],
+        ]
+        words = [[phonemes, 0.5, 0.0] for phonemes in words]
+        self.assertEqual(
+            note_phonemes(words, None),
+            {"0": [["zh", "SP"]], "1": [["zh", "s"], ["zh", "a"]]},
+        )
+
+        # melisma 组：头是自身音素，成员是派生延续元音单元素序列。
+        expanded, owners, _remap = expand_groups(self.WORDS, [[1, 2]], TYPES)
+        self.assertEqual(
+            note_phonemes(expanded, owners),
+            {
+                "0": [["zh", "SP"]],
+                "1": [["zh", "s"], ["zh", "a"]],
+                "2": [["zh", "a"]],
+            },
+        )
 
 
 if __name__ == "__main__":

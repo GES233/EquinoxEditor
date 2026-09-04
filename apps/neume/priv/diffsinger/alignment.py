@@ -94,6 +94,28 @@ def _word_midi(word):
     return midis[0] if midis else 0.0
 
 
+def note_phonemes(words, owners):
+    """按 owner（原词下标）归并展开后的音素序列。
+
+    身份底料的物化形状：`{str(原词下标): [[lang, phone], ...]}`——头词是
+    自身音素，melisma 成员词是派生的延续元音单元素序列。owners 为 None
+    （无组）时逐词归属自身。
+    """
+    if owners is None:
+        owners = [
+            index for index, word in enumerate(words) for _ in word_parts(word)[0]
+        ]
+    result = {}
+    cursor = 0
+    for word in words:
+        phonemes = word_parts(word)[0]
+        for offset, pair in enumerate(phonemes):
+            owner = owners[cursor + offset]
+            result.setdefault(str(owner), []).append(list(pair))
+        cursor += len(phonemes)
+    return result
+
+
 def word_start_index(phonemes, types):
     """返回与音符起点对齐的词内音素下标。
 

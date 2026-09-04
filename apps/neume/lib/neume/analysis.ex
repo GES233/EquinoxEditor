@@ -7,6 +7,9 @@ defmodule Neume.Analysis do
   窗（或全轨）局部时基；歌曲绝对帧（含 lead-in 平移约定，与
   `RenderArtifact.phonemes` 一致）= `local_frame + round(origin_sec * frame_rate)`。
 
+  `note_phonemes` 是 probe 物化的逐音符词内音素序列（头=自身 G2P 序列，
+  续音=派生延续元音），即 pin 身份底料（`Neume.Identity`）的裁决输入。
+
   运行时结果，不进入工程文件和编辑历史。
   """
 
@@ -15,6 +18,7 @@ defmodule Neume.Analysis do
             phonemes: [],
             phoneme_durations: [],
             pitch_pred_midi: [],
+            note_phonemes: %{},
             lead_in_sec: 0.0,
             origin_sec: 0.0,
             total_frames: 0,
@@ -35,6 +39,7 @@ defmodule Neume.Analysis do
           phonemes: [Neume.RenderArtifact.phoneme_boundary()],
           phoneme_durations: [non_neg_integer()],
           pitch_pred_midi: [float()],
+          note_phonemes: Neume.Identity.note_phonemes(),
           lead_in_sec: float(),
           origin_sec: float(),
           total_frames: non_neg_integer(),

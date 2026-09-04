@@ -13,10 +13,15 @@ defmodule Neume.DiffSingerEditorTest do
       {:ok, %{"tokens" => tokens}}
     end
 
-    def call(%{action: "check", words: words}, _config) do
+    def call(%{action: "expand", words: words} = payload, _config) do
+      {:ok,
+       %{"note_phonemes" => Neume.FakePhonemes.note_phonemes(words, Map.get(payload, :groups))}}
+    end
+
+    def call(%{action: "check", words: words} = payload, _config) do
       durations =
-        Enum.map(words, fn [_phonemes, seconds, _midi] ->
-          round(seconds * 44_100 / 512)
+        Enum.map(words, fn [phonemes, seconds | _rest] ->
+          length(phonemes) * round(seconds * 44_100 / 512)
         end)
 
       frame_count = Enum.sum(durations)
@@ -27,6 +32,7 @@ defmodule Neume.DiffSingerEditorTest do
          "pitch_pred_midi" => List.duplicate(60.0, frame_count),
          "total_frames" => frame_count,
          "lead_in_sec" => 0.5,
+         "note_phonemes" => Neume.FakePhonemes.note_phonemes(words, Map.get(payload, :groups)),
          "phonemes" => [
            %{
              "language" => "zh",
@@ -70,6 +76,11 @@ defmodule Neume.DiffSingerEditorTest do
     @behaviour Neume.Engine.DiffSingerWorker
 
     @impl true
+    def call(%{action: "expand", words: words} = payload, _config) do
+      {:ok,
+       %{"note_phonemes" => Neume.FakePhonemes.note_phonemes(words, Map.get(payload, :groups))}}
+    end
+
     def call(%{action: "check"} = payload, config) do
       send(Map.fetch!(config, :test_pid), {:check_payload, payload})
 
@@ -77,7 +88,9 @@ defmodule Neume.DiffSingerEditorTest do
        %{
          "ph_dur" => List.duplicate(1, length(payload.words)),
          "pitch_pred_midi" => [60.0],
-         "total_frames" => 1
+         "total_frames" => 1,
+         "note_phonemes" =>
+           Neume.FakePhonemes.note_phonemes(payload.words, Map.get(payload, :groups))
        }}
     end
 
@@ -212,22 +225,29 @@ defmodule Neume.DiffSingerEditorTest do
 
     assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
     assert {:ok, editor, _artifact} = Editor.render(editor)
-    assert_receive {:check_payload, pinned}
 
-    assert [%{kind: "duration", note_index: 1, durations: [[0, seconds]]}] =
-             Enum.filter(pinned.overrides, &(&1.kind == "duration"))
+    # render = 全轨 probe + 分窗渲染，每次 render 有多个 check_payload；
+    # 取整批断言"pin 进入了每一次 check"。
+    pinned = drain_check_payloads()
+    assert pinned != []
 
-    assert_in_delta seconds, 0.1, 1.0e-9
+    assert Enum.all?(pinned, fn payload ->
+             case Enum.filter(payload.overrides, &(&1.kind == "duration")) do
+               [%{note_index: 1, durations: [[0, seconds]]}] -> abs(seconds - 0.1) < 1.0e-9
+               _other -> false
+             end
+           end)
 
     assert {:ok, editor} = Editor.undo(editor)
     assert {:ok, editor, _artifact} = Editor.render(editor)
-    assert_receive {:check_payload, undone}
-    assert Enum.all?(undone.overrides, &(&1.kind != "duration"))
+    undone = drain_check_payloads()
+    assert undone != []
+    assert Enum.all?(undone, &Enum.all?(&1.overrides, fn o -> o.kind != "duration" end))
 
     assert {:ok, editor} = Editor.redo(editor)
     assert {:ok, _editor, _artifact} = Editor.render(editor)
-    assert_receive {:check_payload, redone}
-    assert Enum.any?(redone.overrides, &(&1.kind == "duration"))
+    redone = drain_check_payloads()
+    assert Enum.all?(redone, &Enum.any?(&1.overrides, fn o -> o.kind == "duration" end))
   end
 
   @tag tmp_dir: true
@@ -349,5 +369,14 @@ defmodule Neume.DiffSingerEditorTest do
              Editor.check(editor)
 
     assert inspect(reason) =~ "phoneme_duration_overflow"
+  end
+
+  # render = 全轨 probe + 逐窗 check，一次 render 产生多条 check_payload。
+  defp drain_check_payloads do
+    receive do
+      {:check_payload, payload} -> [payload | drain_check_payloads()]
+    after
+      0 -> []
+    end
   end
 end

@@ -132,6 +132,27 @@ defmodule Neume.Engine.DiffSingerPipeline do
   end
 
   @doc """
+  挂载/重挂 probe：G2P + 组展开的轻量路径（worker `expand`，不跑模型），
+  返回 probe 物化的逐音符词内音素序列——pin 身份底料（`Neume.Identity`）。
+  不经过 Oi 图，直接复用 step 的纯装配函数。
+  """
+  @spec phonemes(state(), Snapshot.t(), term()) ::
+          {:ok, Neume.Identity.note_phonemes()} | {:error, term()}
+  def phonemes(%{} = state, %Snapshot{} = snapshot, track_id) do
+    with {:ok, plan} <- Steps.ScorePlan.build(snapshot, %{}, %{}, track_id),
+         {:ok, prepared} <- Steps.Analysis.prepare(plan, state.client, state.worker_config),
+         {:ok, result} <-
+           state.client.call(
+             %{action: "expand", words: prepared.words, groups: prepared.groups},
+             state.worker_config
+           ),
+         {:ok, sequences} <-
+           Steps.Analysis.note_phonemes(Map.get(result, "note_phonemes"), prepared) do
+      {:ok, sequences}
+    end
+  end
+
+  @doc """
   窗口化增量渲染：分窗 → 逐窗查缓存（miss 才走 Oi 全图推理）→ 按绝对
   采样偏移拼接。全局帧约定与旧整轨渲染一致：音频 t=0 ↔ 歌曲绝对
   `-head_padding`，窗局部帧平移量为 `round(origin_sec * frame_rate)`。
@@ -405,6 +426,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
       phonemes: probe.boundaries,
       phoneme_durations: probe.ph_dur,
       pitch_pred_midi: probe.pitch_pred_midi,
+      note_phonemes: probe.note_phonemes,
       lead_in_sec: probe.lead_in_sec,
       origin_sec: probe.origin_sec,
       total_frames: probe.total_frames,

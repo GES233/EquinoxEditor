@@ -60,14 +60,28 @@ Neume.Editor
   `expand_groups` 展开（音素类型是声库事实，不猜测）；duration pin 保持
   per-note Ordinal 锚，Analysis 平移到词内下标并按组总时长校验预算；
   `Editor.split_note/4` 拆分右子自动补旗标（单一历史边，undo 一步还原）。
+- pin 身份底料（coconut `design-2026-08-orchid-intervention.md` §6.6
+  第二档）：duration/pitch pin 的 digest 钉 probe 物化的**词内音素序列**
+  （头=自身 G2P 序列，续音=派生延续元音单元素序列），不再钉 score 内容。
+  爆炸半径：改词/显式音素修改/melisma 晋升断组/声库字典变化会炸；改音高、
+  拖动、邻居编辑不炸。coconut 侧新增 channel `resolve_stage/0`（`:probe`
+  跳过静态 digest 裁决）与 `Coconut.mount` 的 `:base` 显式签名；挂载经
+  轻量 probe（worker `expand` action，G2P+组展开不跑模型；mock 为纯
+  Elixir 派生），裁决在 `check`/`analyze`/`render` 的 probe 之后统一执行
+  （`Neume.Identity`），冲突 entry 形如
+  `%{kind: :conflict, stage: :probe, patch: ...}`，与静态冲突共用同一界面。
+- `Editor.repatch/2` 批量重挂手势：payload 在新底料上仍可表达（下标在
+  界内等）则保留重签，否则降级报告 `:degraded`（旧 patch 原样保留）；
+  整批经 coconut `Command.repatch_patches` 落**一条历史边**（undo 一次
+  全还原）。
 
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- 根目录 `mix test`：`46 passed, 5 excluded`（excluded 为真声库集成测试）。
+- 根目录 `mix test`：`53 passed, 5 excluded`（excluded 为真声库集成测试）。
 - `mix dialyzer`：`Total errors: 0`。
-- Python 纯对齐测试：9 项通过，覆盖 V/CV/CCV/CVC、C-G-V、休止与 melisma
-  组展开/多 slot 锚定。
+- Python 纯对齐测试：10 项通过，覆盖 V/CV/CCV/CVC、C-G-V、休止、melisma
+  组展开/多 slot 锚定与 `note_phonemes` 按 owner 归并。
 - Asaritsu 真声库集成测试（5 例）：整轨渲染与 WAV 输出；analyze 边界与
   render 一致；check 聚合模型错误；多窗编辑后仅受影响窗重渲（缓存
   `:hit/:miss` 逐窗断言）；melisma 一词两音符（延续元音锚在成员起点、
@@ -87,7 +101,9 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 ## 当前限制
 
 - 仅单轨、单声部；同轨重叠音符会明确报错。
-- 渲染按窗增量，analyze/check 仍是全轨一次性 probe。
+- 渲染按窗增量，但 analyze/check 仍是全轨一次性 probe；render 在分窗
+  渲染前也会先跑一次全轨 probe 做 pin 身份裁决（probe 须够快，分窗
+  probe 是曲目变长后的后备优化）。
 - 当前只有 pitch 和 phoneme duration 两种生成参数编辑。
 - 分窗规则不含 slice_flag 手动覆盖（音符 metadata 覆盖未移植）。
 - 工程读档后 History 从空树重新开始。
@@ -101,21 +117,18 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 下一步
 
-1. duration/pitch pin 换**身份底料**（钉 probe 期词内音素序列而非 score
-   内容；coconut `design-2026-08-orchid-intervention.md` §6.6 三档分类）——
-   melisma 晋升/断组的 pin 语义漂移由 digest 自动 veto，邻居编辑的预测
-   数值漂移不误伤；re-patch 批量重挂手势
-   （`(Patch(old, diff), new) -> Patch(new, diff')"`）共用一个冲突裁决界面。
-   output base（钉 stage 输出数值）留给将来的增量型曲线干预。
-2. 扩展 energy、breathiness、voicing 等曲线 channel，并保持参数语义位于
-   adapter，不硬编码进 CoconutOi。
-3. 增加声库发现/注册表、多轨调度、播放和导出管理。
-4. 在 headless API 稳定后接最小钢琴卷帘、音素边界编辑和播放 UI。
+1. 扩展 energy、breathiness、voicing 等曲线 channel，并保持参数语义位于
+   adapter，不硬编码进 CoconutOi。增量型曲线干预（"抹平这段颤音"）走
+   output base（钉 stage 输出数值，§6.6 第三档）。
+2. 增加声库发现/注册表、多轨调度、播放和导出管理。
+3. 在 headless API 稳定后接最小钢琴卷帘、音素边界编辑和播放 UI。
 
 ## 不变量
 
 - Coconut 是编辑状态、History、patch 与序列化的事实来源。
 - CoconutOi 只翻译 Coconut intervention 与 Oi data，不拥有音素对齐语义。
 - 音素类型、帧网格、G2P 和元音锚定属于 DiffSinger adapter/worker。
+- pin 底料是 probe 物化的音素序列（身份底料）；其物化与 digest 裁决在
+  引擎 probe 期，Coconut 静态 check 不过问。
 - 声库路径不持久化，模型和生成 WAV 不提交。
 - melisma 必须由显式 syllable group 表达，不在 worker 中启发式猜测。

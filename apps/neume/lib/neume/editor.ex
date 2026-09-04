@@ -7,15 +7,16 @@ defmodule Neume.Editor do
   状态，不写入工程文件。
   """
 
-  alias Coconut.Edit.{Track, Workspace}
+  alias Coconut.Edit.{Command, Patch, Track, Workspace}
   alias Coconut.Edit.Operations.{DeleteNote, DragNote, EditNote, InsertNote}
   alias Coconut.Pickle.File
   alias Coconut.Pickle.Track, as: PickleTrack
   alias Coconut.Project
-  alias Coconut.Render.Channels.{Duration, Pitch}
   alias Coconut.Util.ID
+  alias Neume.Channels.{DurationPin, PitchPin}
   alias Neume.Engine.DiffSingerPipeline
   alias Neume.Engine.MockPipeline
+  alias Neume.Identity
   alias Neume.Voicebank.DiffSinger
 
   @default_track_id "vocal"
@@ -70,7 +71,7 @@ defmodule Neume.Editor do
          engine_config <- pipeline.engine_config(pipeline_state, track_id),
          {:ok, session} <-
            Coconut.new(project,
-             channels: %{duration: Duration, pitch: Pitch},
+             channels: %{duration: DurationPin, pitch: PitchPin},
              engine: {CoconutOi.OrchidAdapter, engine_config}
            ) do
       {:ok,
@@ -172,24 +173,67 @@ defmodule Neume.Editor do
     })
   end
 
-  @doc "在音符上挂载绝对 tick 到 MIDI 的稀疏 pitch 控制点。"
+  @doc """
+  在音符上挂载绝对 tick 到 MIDI 的稀疏 pitch 控制点。
+
+  身份底料（§6.6）：挂载时跑一次轻量 probe（G2P + 组展开，不跑模型），
+  用物化的词内音素序列签名；probe 期裁决见 `Neume.Identity`。
+  """
   @spec mount_pitch(t(), term(), [[number()]]) :: {:ok, t()} | {:error, term()}
   def mount_pitch(%__MODULE__{} = editor, note_id, points) do
-    case Coconut.mount(editor.session, editor.track_id, note_id, :pitch, points) do
-      {:ok, session, _patch} -> {:ok, %{editor | session: session}}
+    case mount_pin(editor, note_id, :pitch, points) do
+      {:ok, editor, _patch} -> {:ok, editor}
       {:error, _} = error -> error
     end
   end
 
-  @doc "在音符上挂载逐音素的稀疏时长 pin：`[[音素下标, tick 时长], ...]`。"
+  @doc """
+  在音符上挂载逐音素的稀疏时长 pin：`[[音素下标, tick 时长], ...]`。
+
+  底料与裁决同 `mount_pitch/3`；下标指向 probe 物化序列中的音素。
+  """
   @spec mount_phoneme_duration(t(), term(), [[non_neg_integer()]]) ::
           {:ok, t()} | {:error, term()}
   def mount_phoneme_duration(%__MODULE__{} = editor, note_id, durations) do
-    case Coconut.mount(editor.session, editor.track_id, note_id, :duration, durations) do
-      {:ok, session, _patch} -> {:ok, %{editor | session: session}}
+    case mount_pin(editor, note_id, :duration, durations) do
+      {:ok, editor, _patch} -> {:ok, editor}
       {:error, _} = error -> error
     end
   end
+
+  @doc """
+  批量重挂手势（§6.6 re-patch）：把 check 冲突 entry 里的 pin 在新底料上
+  重签。payload 仍可表达（下标在界内等）则保留重签；否则降级报告为
+  `:degraded`（旧 patch 原样保留，由调用方修改后重新挂载）。
+
+  整批重挂是一条历史边（undo 一次全还原），与死 patch、adopt 失败共用
+  同一个冲突裁决界面。entry 的 patch 必须仍在册；已进墓地的 patch 请用
+  `mount_pitch/3` / `mount_phoneme_duration/3` 重新挂载。
+
+  返回 `{:ok, editor, results}`，`results` 逐项为
+  `%{patch_id, status: :repatched, new_patch_id}` 或
+  `%{patch_id, status: :degraded, reason}`。
+  """
+  @spec repatch(t(), [map()]) :: {:ok, t(), [map()]} | {:error, term()}
+  def repatch(%__MODULE__{} = editor, []), do: {:ok, editor, []}
+
+  def repatch(%__MODULE__{} = editor, entries) when is_list(entries) do
+    with {:ok, patches} <- fetch_alive_patches(editor, entries),
+         {:ok, request} <- Coconut.request(editor.session),
+         {:ok, sequences} <-
+           editor.pipeline.phonemes(editor.pipeline_state, request.snapshot, editor.track_id),
+         {:ok, track} <- current_track(editor),
+         {:ok, discards, attaches, results} <- plan_repatch(patches, sequences, track),
+         {:ok, session} <- run_repatch(editor.session, discards, attaches) do
+      {:ok, %{editor | session: session}, results}
+    end
+  end
+
+  # 全部降级 = 无写入，不落历史边。
+  defp run_repatch(session, [], []), do: {:ok, session}
+
+  defp run_repatch(session, discards, attaches),
+    do: Coconut.run(session, Command.repatch_patches(discards, attaches))
 
   @doc "撤销一步编辑。"
   @spec undo(t()) :: {:ok, t()} | {:error, term()}
@@ -199,72 +243,165 @@ defmodule Neume.Editor do
   @spec redo(t()) :: {:ok, t()} | {:error, term()}
   def redo(%__MODULE__{} = editor), do: move_history(editor, &Coconut.redo/1)
 
-  @doc "完成静态 check 后渲染：DiffSinger 走分窗增量路径，mock 走整轨图。"
+  @doc """
+  完成全部裁决后渲染：DiffSinger 走分窗增量路径，mock 走整轨图。
+
+  渲染前先跑与 `check/1` 相同的静态 check + probe + 身份裁决；任何失败
+  聚合为 `{:error, {:check_failed, entries}}`（与死 patch、adopt 失败
+  共用冲突裁决界面）。管线自身的执行错误原样返回。
+  """
   @spec render(t()) :: {:ok, t(), Neume.RenderArtifact.t()} | {:error, term()}
   def render(%__MODULE__{} = editor) do
-    with {:ok, session} <- Coconut.check(editor.session),
-         {:ok, request} <- Coconut.request(session),
+    with {:ok, editor, request, _analysis} <- checked_probe(editor),
          {:ok, artifact} <-
            editor.pipeline.render(
              editor.pipeline_state,
              request.snapshot,
-             checked_pins(session),
+             checked_pins(editor.session),
              editor.track_id
            ) do
-      {:ok, %{editor | session: session}, artifact}
+      {:ok, editor, artifact}
     end
   end
 
   @doc """
   analyze/align 闭环：不运行 acoustic/vocoder，返回 G2P 结果、duration
-  预测和元音锚定后的音素边界（`Neume.Analysis`）。
+  预测和元音锚定后的音素边界（`Neume.Analysis`）。失败形状同 `render/1`。
   """
   @spec analyze(t()) :: {:ok, t(), Neume.Analysis.t()} | {:error, term()}
   def analyze(%__MODULE__{} = editor) do
-    with {:ok, session} <- Coconut.check(editor.session),
-         {:ok, request} <- Coconut.request(session),
-         {:ok, analysis} <-
-           editor.pipeline.analyze(
-             editor.pipeline_state,
-             request.snapshot,
-             checked_pins(session),
-             editor.track_id
-           ) do
-      {:ok, %{editor | session: session}, analysis}
+    with {:ok, editor, _request, analysis} <- checked_probe(editor) do
+      {:ok, editor, analysis}
     end
   end
 
   @doc """
-  稳定的检查 API：先跑 Coconut 静态 check（patch resolve + port 装配 +
-  globals 门禁），再跑模型级 probe（analyze 同款）。任何失败聚合为
-  `{:error, {:check_failed, entries}}`；模型侧失败 entry 形如
-  `%{kind: :model, reason: term()}`。
+  稳定的检查 API：静态 check（锚 transport + port 装配 + globals 门禁）
+  → 模型级 probe（analyze 同款）→ pin 身份裁决（`Neume.Identity`，
+  probe 期 `Tamale.Patch.resolve/2`）。所有失败聚合为
+  `{:error, {:check_failed, entries}}`；模型侧 entry 形如
+  `%{kind: :model, reason: term()}`，probe 期身份冲突形如
+  `%{kind: :conflict, stage: :probe, patch: ..., reason: ...}`。
   """
   @spec check(t()) :: {:ok, t(), map()} | {:error, {:check_failed, [term()]}}
   def check(%__MODULE__{} = editor) do
+    with {:ok, editor, _request, analysis} <- checked_probe(editor) do
+      {:ok, editor, %{analysis: analysis}}
+    end
+  end
+
+  # 三条公开路径（render/analyze/check）共用的裁决管线：
+  # 静态 check → 模型 probe → 身份裁决；一切失败归一为 check_failed。
+  defp checked_probe(%__MODULE__{} = editor) do
     case Coconut.check(editor.session) do
-      {:ok, session} ->
-        with {:ok, request} <- Coconut.request(session),
-             {:ok, analysis} <-
-               editor.pipeline.analyze(
-                 editor.pipeline_state,
-                 request.snapshot,
-                 checked_pins(session),
-                 editor.track_id
-               ) do
-          {:ok, %{editor | session: session}, %{analysis: analysis}}
+      {:ok, session} -> probe_and_adjudicate(%{editor | session: session})
+      {:error, {:resolve_vetoed, entries}} -> {:error, {:check_failed, entries}}
+      {:error, {:check_vetoed, entries}} -> {:error, {:check_failed, entries}}
+      {:error, reason} -> {:error, {:check_failed, [%{kind: :static, reason: reason}]}}
+    end
+  end
+
+  defp probe_and_adjudicate(%__MODULE__{} = editor) do
+    %{request: request} = editor.session.last_round
+
+    with {:ok, analysis} <-
+           editor.pipeline.analyze(
+             editor.pipeline_state,
+             request.snapshot,
+             checked_pins(editor.session),
+             editor.track_id
+           ),
+         :ok <- adjudicate_identity(editor, analysis) do
+      {:ok, editor, request, analysis}
+    else
+      {:error, {:check_failed, _entries}} = error -> error
+      {:error, reason} -> {:error, {:check_failed, [%{kind: :model, reason: reason}]}}
+    end
+  end
+
+  defp adjudicate_identity(%__MODULE__{} = editor, %Neume.Analysis{} = analysis) do
+    with {:ok, track} <- current_track(editor) do
+      case Identity.adjudicate(track, editor.session.channels, analysis.note_phonemes) do
+        [] -> :ok
+        entries -> {:error, {:check_failed, entries}}
+      end
+    end
+  end
+
+  # 挂载共用路径：轻量 probe 物化身份底料 → 显式 :base 签名 → 一条历史边。
+  defp mount_pin(%__MODULE__{} = editor, note_id, channel, payload) do
+    with {:ok, request} <- Coconut.request(editor.session),
+         {:ok, sequences} <-
+           editor.pipeline.phonemes(editor.pipeline_state, request.snapshot, editor.track_id),
+         {:ok, sequence} <- fetch_sequence(sequences, note_id),
+         {:ok, session, patch} <-
+           Coconut.mount(editor.session, editor.track_id, note_id, channel, payload,
+             base: sequence
+           ) do
+      {:ok, %{editor | session: session}, patch}
+    end
+  end
+
+  defp fetch_sequence(sequences, note_id) do
+    case Map.fetch(sequences, note_id) do
+      {:ok, sequence} -> {:ok, sequence}
+      :error -> {:error, {:unknown_note, note_id}}
+    end
+  end
+
+  # re-patch 计划：逐 patch 取新底料 + 可表达性校验，可重签的进批量。
+  defp plan_repatch(patches, sequences, track) do
+    {discards, attaches, results} =
+      Enum.reduce(patches, {[], [], []}, fn patch, {discards, attaches, results} ->
+        note_id = hd(patch.anchor.refs)
+
+        with {:ok, fresh} <- fetch_sequence(sequences, note_id),
+             :ok <- Identity.expressible?(patch.channel, patch.patch.payload, fresh),
+             {:ok, resigned} <- Tamale.Patch.new(fresh, patch.patch.payload),
+             {:ok, replacement} <-
+               Patch.new(%{
+                 track_id: patch.track_id,
+                 channel: patch.channel,
+                 anchor: %Tamale.Anchor.Ordinal{
+                   refs: patch.anchor.refs,
+                   at_version: track.space.version
+                 },
+                 patch: resigned
+               }) do
+          entry = {patch.track_id, patch.id, :rebased}
+          result = %{patch_id: patch.id, status: :repatched}
+          {[entry | discards], [replacement | attaches], [result | results]}
         else
-          {:error, reason} -> {:error, {:check_failed, [%{kind: :model, reason: reason}]}}
+          {:error, reason} ->
+            result = %{patch_id: patch.id, status: :degraded, reason: reason}
+            {discards, attaches, [result | results]}
         end
+      end)
 
-      {:error, {:resolve_vetoed, entries}} ->
-        {:error, {:check_failed, entries}}
+    {:ok, Enum.reverse(discards), Enum.reverse(attaches), Enum.reverse(results)}
+  end
 
-      {:error, {:check_vetoed, entries}} ->
-        {:error, {:check_failed, entries}}
+  # 只允许重挂在册 patch；entry 必须携带 patch（check 冲突 entry 形状）。
+  defp fetch_alive_patches(%__MODULE__{} = editor, entries) do
+    with {:ok, track} <- current_track(editor) do
+      alive = Map.new(track.patches, &{&1.id, &1})
 
-      {:error, reason} ->
-        {:error, {:check_failed, [%{kind: :static, reason: reason}]}}
+      Enum.reduce_while(entries, {:ok, []}, fn entry, {:ok, acc} ->
+        case entry do
+          %{patch: %Patch{id: id}} when not is_nil(id) ->
+            case Map.fetch(alive, id) do
+              {:ok, patch} -> {:cont, {:ok, [patch | acc]}}
+              :error -> {:halt, {:error, {:patch_not_alive, id}}}
+            end
+
+          other ->
+            {:halt, {:error, {:invalid_repatch_entry, other}}}
+        end
+      end)
+      |> case do
+        {:ok, patches} -> {:ok, Enum.reverse(patches)}
+        {:error, _} = error -> error
+      end
     end
   end
 

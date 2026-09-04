@@ -6,9 +6,11 @@ defmodule Neume.Engine.MockPipeline.Steps.ScorePlan do
   alias Coconut.Score.Key
   alias Neume.Syllable
 
-  manifest(inputs: [:notes], outputs: [plan: :any])
+  manifest(inputs: [:notes, :duration_pins], outputs: [plan: :any])
 
-  routine notes, opts do
+  # mock 不消费 duration pin（无时长模型）：只接收透传，保持与真实管线
+  # 相同的挂载/check 闭环；下标与预算校验在真实 ScorePlan/Analysis 才有。
+  routine [notes, _duration_pins], opts do
     ticks_per_frame = Keyword.fetch!(opts, :ticks_per_frame)
 
     case build(notes, ticks_per_frame) do

@@ -41,7 +41,10 @@ defmodule Neume.Engine.MockPipeline do
   def engine_config(%{compiled: compiled}, track_id) do
     %{
       compiled: compiled,
-      port_map: %{pitch: {:input, :pitch, :pins}},
+      port_map: %{
+        pitch: {:input, :pitch, :pins},
+        duration: {:input, :score_plan, :duration_pins}
+      },
       base_data: fn snapshot -> base_data(snapshot, track_id) end
     }
   end
@@ -55,7 +58,7 @@ defmodule Neume.Engine.MockPipeline do
         :error -> []
       end
 
-    %{score_plan: %{notes: notes}, pitch: %{pins: %{}}}
+    %{score_plan: %{notes: notes, duration_pins: %{}}, pitch: %{pins: %{}}}
   end
 
   @doc "无声库环境的确定性 analyze：音符按 ticks_per_frame 投影成帧边界。"
@@ -64,6 +67,23 @@ defmodule Neume.Engine.MockPipeline do
     with {:ok, view} <- Map.fetch(snapshot.tracks, track_id),
          :ok <- ensure_vocal(view) do
       build_analysis(view.elements, ticks_per_frame)
+    else
+      :error -> {:error, {:unknown_track, track_id}}
+      {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  挂载/重挂 probe：mock 音素派生与 analyze 同一份纯逻辑（lyric 拆字 +
+  续音取头末音素），直接作为 pin 的身份底料。
+  """
+  @spec phonemes(state(), Snapshot.t(), term()) ::
+          {:ok, Neume.Identity.note_phonemes()} | {:error, term()}
+  def phonemes(_state, %Snapshot{} = snapshot, track_id) do
+    with {:ok, view} <- Map.fetch(snapshot.tracks, track_id),
+         :ok <- ensure_vocal(view),
+         {:ok, phonemes_by_id} <- phonemes_by_id(view.elements) do
+      {:ok, phonemes_by_id}
     else
       :error -> {:error, {:unknown_track, track_id}}
       {:error, _} = error -> error
@@ -97,9 +117,8 @@ defmodule Neume.Engine.MockPipeline do
   # lyric 也不再必需。
   defp build_analysis(elements, ticks_per_frame) do
     sorted = Enum.sort_by(elements, fn {id, _note, {start_tick, _end}} -> {start_tick, id} end)
-    memberships = ScorePlan.memberships(sorted)
 
-    with {:ok, phonemes_by_id} <- resolve_mock_phonemes(sorted, memberships) do
+    with {:ok, phonemes_by_id} <- phonemes_by_id(elements) do
       sorted
       |> Enum.reduce_while({:ok, [], [], [], 0}, fn {id, note, {start_tick, end_tick}},
                                                     {:ok, notes, boundaries, durations, cursor} ->
@@ -148,6 +167,7 @@ defmodule Neume.Engine.MockPipeline do
              phonemes: boundaries,
              phoneme_durations: durations,
              pitch_pred_midi: [],
+             note_phonemes: phonemes_by_id,
              lead_in_sec: 0.0,
              origin_sec: 0.0,
              total_frames: total_frames,
@@ -158,6 +178,13 @@ defmodule Neume.Engine.MockPipeline do
           error
       end
     end
+  end
+
+  # 排序 + 组派生 + mock G2P：analyze 与挂载 probe 的同一份纯派生。
+  defp phonemes_by_id(elements) do
+    sorted = Enum.sort_by(elements, fn {id, _note, {start_tick, _end}} -> {start_tick, id} end)
+    memberships = ScorePlan.memberships(sorted)
+    resolve_mock_phonemes(sorted, memberships)
   end
 
   defp resolve_mock_phonemes(sorted, memberships) do

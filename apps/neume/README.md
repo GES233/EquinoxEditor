@@ -1,6 +1,6 @@
 # Neume
 
-人类重写版本。
+~~人类重写版本。~~ 第二轮迭代版本。
 
 当前实现进度、验证基线、限制和后续路线见 [`STATUS.md`](STATUS.md)。
 
@@ -38,8 +38,13 @@ melisma（一词跨多音符）用显式旗标表达：续音音符携带
 
 音素时长编辑通过 `Editor.mount_phoneme_duration/3` 挂载 Coconut
 `:duration` patch；指定音素固定为给定 tick 时长，其余音素按模型预测比例
-吸收剩余帧。该编辑进入 Coconut History，支持 undo/redo，最终仍经过上述
-元音锚定，因此 artifact 展示的边界与实际合成一致。
+吸收剩余帧。pitch 曲线经 `Editor.mount_pitch/3` 挂载稀疏控制点。两种 pin
+的 digest 都钉在 **probe 物化的词内音素序列**上（身份底料）：改词、
+melisma 晋升/断组会让 pin 冲突并进入统一的 `check_failed` 裁决界面，
+`Editor.repatch/2` 把仍可表达的 pin 批量重签（一条历史边，undo 一次全
+还原）；改音高、拖动和邻居编辑不会误伤。所有干预编辑进入 Coconut
+History，支持 undo/redo，最终仍经过上述元音锚定，因此 artifact 展示的
+边界与实际合成一致。
 
 无需出音频的对齐读取用 `Editor.analyze/1`（G2P、duration/pitch 预测和
 绝对音素边界，不运行 acoustic/vocoder）；提交渲染前的完整检查用
@@ -52,5 +57,8 @@ globals + 窗内音符 + pins」失效，编辑后只重推内容变化的窗口
 
 ## TODO
 
-- [ ] duration/pitch pin 换身份底料（钉 probe 期音素序列；coconut
-  `design-2026-08-orchid-intervention.md` §6.6）+ re-patch 批量重挂手势。
+- [ ] 扩展 energy/breathiness/voicing 等曲线 channel；增量型曲线干预走
+  output base（coconut `design-2026-08-orchid-intervention.md` §6.6
+  第三档）。
+- [ ] 声库发现/注册表、多轨调度、播放与导出管理。
+- [ ] 最小钢琴卷帘、音素边界编辑和播放 UI。
