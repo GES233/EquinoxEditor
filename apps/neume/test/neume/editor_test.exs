@@ -176,6 +176,31 @@ defmodule Neume.EditorTest do
            ] = analysis.phonemes
   end
 
+  test "全局旋钮：会话合并、nil 删除、门禁聚合（mock 不消费旋钮值）", %{editor: editor} do
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: 1.2, breathiness: 0.8})
+    assert Editor.globals(editor) == %{energy: 1.2, breathiness: 0.8}
+    assert {:ok, editor, _report} = Editor.check(editor)
+    assert {:ok, editor, _artifact} = Editor.render(editor)
+
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: nil})
+    assert Editor.globals(editor) == %{breathiness: 0.8}
+
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: 2.5})
+
+    assert {:error, {:check_failed, [%{kind: :global, key: :energy, reason: reason}]}} =
+             Editor.check(editor)
+
+    assert reason == {:out_of_range, {0.0, 2.0}}
+
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: 1.0, loudness: 1.0})
+
+    assert {:error, {:check_failed, [%{kind: :global, key: :loudness, reason: :unknown_global}]}} =
+             Editor.check(editor)
+  end
+
   defp notes(editor) do
     {:ok, notes} = Editor.notes(editor)
     notes

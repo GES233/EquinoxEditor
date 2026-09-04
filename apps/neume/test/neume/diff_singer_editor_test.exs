@@ -94,7 +94,9 @@ defmodule Neume.DiffSingerEditorTest do
        }}
     end
 
-    def call(%{action: "render", out_path: path, ph_dur: ph_dur}, _config) do
+    def call(%{action: "render", out_path: path, ph_dur: ph_dur} = payload, config) do
+      send(Map.fetch!(config, :test_pid), {:render_payload, payload})
+
       frames = Enum.sum(ph_dur)
       samples = frames * 512
       :ok = Neume.Wav.write(path, :binary.copy(<<0, 0>>, samples), 44_100)
@@ -378,5 +380,80 @@ defmodule Neume.DiffSingerEditorTest do
     after
       0 -> []
     end
+  end
+
+  @tag tmp_dir: true
+  test "全局旋钮直接进 render 且参与缓存键", %{tmp_dir: tmp_dir} do
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
+
+    assert {:ok, editor} =
+             Editor.new(
+               voicebank_path: voicebank,
+               diffsinger_client: RecordingClient,
+               diffsinger_client_config: %{test_pid: self()},
+               output_dir: Path.join(tmp_dir, "renders")
+             )
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{
+               pitch: 60,
+               lyric: "sa",
+               language: "zh",
+               phonemes: [["zh", "s"], ["zh", "a"]]
+             })
+
+    # 默认 1.0 中立
+    assert {:ok, editor, _artifact} = Editor.render(editor)
+    assert_receive {:render_payload, payload}
+    assert payload.globals["energy"] == 1.0
+    assert payload.globals["voicing"] == 1.0
+
+    # 会话旋钮直进 worker；globals 在缓存键里 → 全窗 miss 重渲
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: 1.5})
+    assert Editor.globals(editor) == %{energy: 1.5}
+    assert {:ok, editor, artifact} = Editor.render(editor)
+    assert [%{cache: :miss}] = artifact.windows
+    assert_receive {:render_payload, payload2}
+    assert payload2.globals["energy"] == 1.5
+    assert payload2.globals["breathiness"] == 1.0
+
+    # nil 删除回默认；缓存键复原 → 命中首轮缓存
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: nil})
+    assert Editor.globals(editor) == %{}
+    assert {:ok, _editor, artifact3} = Editor.render(editor)
+    assert [%{cache: :hit}] = artifact3.windows
+  end
+
+  @tag tmp_dir: true
+  test "旋钮门禁：越界值与未知键聚合为 global entry", %{tmp_dir: tmp_dir} do
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
+
+    assert {:ok, editor} =
+             Editor.new(
+               voicebank_path: voicebank,
+               diffsinger_client: RecordingClient,
+               diffsinger_client_config: %{test_pid: self()},
+               output_dir: Path.join(tmp_dir, "renders")
+             )
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{
+               pitch: 60,
+               lyric: "sa",
+               language: "zh",
+               phonemes: [["zh", "s"], ["zh", "a"]]
+             })
+
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: 2.5})
+
+    assert {:error, {:check_failed, [%{kind: :global, key: :energy, reason: reason}]}} =
+             Editor.check(editor)
+
+    assert reason == {:out_of_range, {0.0, 2.0}}
+
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: 1.0, loudness: 1.0})
+
+    assert {:error, {:check_failed, [%{kind: :global, key: :loudness, reason: :unknown_global}]}} =
+             Editor.check(editor)
   end
 end

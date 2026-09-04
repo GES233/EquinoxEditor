@@ -16,6 +16,11 @@ defmodule Neume.Engine.DiffSingerPipeline do
   alias Neume.Voicebank.DiffSinger
   alias Oi.Flowgraph
 
+  # 全局表现旋钮（会话态，直接进 render，不经 tamale patch）：variance
+  # 预测曲线的乘性系数，1.0 中立。逐帧曲线干预另走 channel（§6.6 第三档）。
+  @global_knobs [:energy, :breathiness, :voicing]
+  @knob_spec {:range, 0.0, 2.0}
+
   @type state :: %{
           compiled: Oi.Compiled.t(),
           compiled_analysis: Oi.Compiled.t(),
@@ -49,21 +54,23 @@ defmodule Neume.Engine.DiffSingerPipeline do
       "gender" => Keyword.get(opts, :gender, 0.0),
       "velocity" => Keyword.get(opts, :velocity, 1.0),
       "depth" => Keyword.get(opts, :depth, 0.6),
-      "steps" => Keyword.get(opts, :steps, 20)
+      "steps" => Keyword.get(opts, :steps, 20),
+      "energy" => Keyword.get(opts, :energy, 1.0),
+      "breathiness" => Keyword.get(opts, :breathiness, 1.0),
+      "voicing" => Keyword.get(opts, :voicing, 1.0)
     }
 
     graph =
       Flowgraph.new_flowchart()
-      |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id])
+      |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id, globals: globals])
       |> Flowgraph.add_step(Steps.Analysis,
-        opts: [client: client, worker_config: worker_config, globals: globals]
+        opts: [client: client, worker_config: worker_config]
       )
       |> Flowgraph.add_step(Steps.Synthesis,
         opts: [
           client: client,
           worker_config: worker_config,
-          output_dir: output_dir,
-          globals: globals
+          output_dir: output_dir
         ]
       )
       |> Flowgraph.connect({:score_plan, :plan}, {:analysis, :plan})
@@ -74,9 +81,9 @@ defmodule Neume.Engine.DiffSingerPipeline do
     # analyze 闭环用独立的 Analysis-only 图。
     analysis_graph =
       Flowgraph.new_flowchart()
-      |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id])
+      |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id, globals: globals])
       |> Flowgraph.add_step(Steps.Analysis,
-        opts: [client: client, worker_config: worker_config, globals: globals]
+        opts: [client: client, worker_config: worker_config]
       )
       |> Flowgraph.connect({:score_plan, :plan}, {:analysis, :plan})
 
@@ -105,23 +112,36 @@ defmodule Neume.Engine.DiffSingerPipeline do
         pitch: {:input, :score_plan, :pitch_pins}
       },
       base_data: fn snapshot ->
-        %{score_plan: %{snapshot: snapshot, duration_pins: %{}, pitch_pins: %{}}}
-      end
+        %{score_plan: %{snapshot: snapshot, duration_pins: %{}, pitch_pins: %{}, globals: %{}}}
+      end,
+      # 全局旋钮门禁：会话 globals 只允许这三个乘性系数（0.0–2.0）。
+      globals: Map.new(@global_knobs, &{&1, @knob_spec})
     }
+  end
+
+  # 会话旋钮（atom key，门禁已校验）并入编译期 globals（string key）。
+  defp effective_globals(state_globals, session_globals) do
+    Enum.reduce(@global_knobs, state_globals, fn key, acc ->
+      case Map.fetch(session_globals, key) do
+        {:ok, value} -> Map.put(acc, Atom.to_string(key), value)
+        :error -> acc
+      end
+    end)
   end
 
   @doc """
   只跑 `ScorePlan → Analysis` 的 analyze/align 闭环：独立编译图，
   返回不产出音频的 `Neume.Analysis`。
   """
-  @spec analyze(state(), Snapshot.t(), %{pitch: map(), duration: map()}, term()) ::
+  @spec analyze(state(), Snapshot.t(), %{pitch: map(), duration: map()}, map(), term()) ::
           {:ok, Analysis.t()} | {:error, term()}
-  def analyze(%{} = state, %Snapshot{} = snapshot, pins, _track_id) do
+  def analyze(%{} = state, %Snapshot{} = snapshot, pins, session_globals, _track_id) do
     data = %{
       score_plan: %{
         snapshot: snapshot,
         pitch_pins: Map.get(pins, :pitch, %{}),
-        duration_pins: Map.get(pins, :duration, %{})
+        duration_pins: Map.get(pins, :duration, %{}),
+        globals: effective_globals(state.globals, session_globals)
       }
     }
 
@@ -156,13 +176,18 @@ defmodule Neume.Engine.DiffSingerPipeline do
   窗口化增量渲染：分窗 → 逐窗查缓存（miss 才走 Oi 全图推理）→ 按绝对
   采样偏移拼接。全局帧约定与旧整轨渲染一致：音频 t=0 ↔ 歌曲绝对
   `-head_padding`，窗局部帧平移量为 `round(origin_sec * frame_rate)`。
+
+  `session_globals` 是会话级全局旋钮（atom key，已过门禁），并入编译期
+  globals 后同时进入窗口缓存键与 worker 调用。
   """
-  @spec render(state(), Snapshot.t(), %{pitch: map(), duration: map()}, term()) ::
+  @spec render(state(), Snapshot.t(), %{pitch: map(), duration: map()}, map(), term()) ::
           {:ok, Neume.RenderArtifact.t()} | {:error, term()}
-  def render(%{} = state, %Snapshot{} = snapshot, pins, track_id) do
+  def render(%{} = state, %Snapshot{} = snapshot, pins, session_globals, track_id) do
+    globals = effective_globals(state.globals, session_globals)
+
     with {:ok, view} <- fetch_vocal_view(snapshot, track_id),
          {:ok, windows} <- split_windows(view, snapshot.tpqn),
-         {:ok, results} <- render_windows(state, snapshot, view, track_id, windows, pins) do
+         {:ok, results} <- render_windows(state, snapshot, view, track_id, windows, pins, globals) do
       assemble(state, windows, results)
     end
   end
@@ -187,9 +212,9 @@ defmodule Neume.Engine.DiffSingerPipeline do
     {:ok, Neume.Windowing.split(items, tpqn: tpqn)}
   end
 
-  defp render_windows(state, snapshot, view, track_id, windows, pins) do
+  defp render_windows(state, snapshot, view, track_id, windows, pins, globals) do
     Enum.reduce_while(windows, {:ok, []}, fn window, {:ok, acc} ->
-      case render_window(state, snapshot, view, track_id, window, pins) do
+      case render_window(state, snapshot, view, track_id, window, pins, globals) do
         {:ok, result} -> {:cont, {:ok, [result | acc]}}
         {:error, _} = error -> {:halt, error}
       end
@@ -200,7 +225,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
     end
   end
 
-  defp render_window(state, snapshot, view, track_id, window, pins) do
+  defp render_window(state, snapshot, view, track_id, window, pins, globals) do
     note_ids = MapSet.new(window.note_ids)
 
     elements =
@@ -216,7 +241,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
     key =
       Neume.RenderCache.key(%{
         voicebank_digest: state.manifest.digest,
-        globals: state.globals,
+        globals: globals,
         notes: Enum.map(elements, &canonical_note/1),
         pins: window_pins,
         tempo_map: snapshot.tempo_map,
@@ -226,7 +251,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
     cache_dir = cache_dir(state)
 
     with :skip <- cache_fetch(state, cache_dir, key),
-         {:ok, result} <- execute_window(state, window_snapshot, window_pins) do
+         {:ok, result} <- execute_window(state, window_snapshot, window_pins, globals) do
       cache_store(state, cache_dir, key, result)
     else
       {:hit, entry} -> hit_result(entry)
@@ -252,12 +277,13 @@ defmodule Neume.Engine.DiffSingerPipeline do
     end
   end
 
-  defp execute_window(state, window_snapshot, window_pins) do
+  defp execute_window(state, window_snapshot, window_pins, globals) do
     data = %{
       score_plan: %{
         snapshot: window_snapshot,
         pitch_pins: window_pins.pitch,
-        duration_pins: window_pins.duration
+        duration_pins: window_pins.duration,
+        globals: globals
       }
     }
 

@@ -9,10 +9,17 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
 
   @head_padding_sec 0.5
 
-  manifest(inputs: [:snapshot, :pitch_pins, :duration_pins], outputs: [plan: :any])
+  manifest(inputs: [:snapshot, :pitch_pins, :duration_pins, :globals], outputs: [plan: :any])
 
-  routine [snapshot, pitch_pins, duration_pins], opts do
-    case build(snapshot, pitch_pins, duration_pins, Keyword.fetch!(opts, :track_id)) do
+  routine [snapshot, pitch_pins, duration_pins, globals], opts do
+    case build(
+           snapshot,
+           pitch_pins,
+           duration_pins,
+           globals,
+           Keyword.fetch!(opts, :track_id),
+           opts
+         ) do
       {:ok, plan} -> ok(plan)
       {:error, _} = error -> error
     end
@@ -22,8 +29,13 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
   # 只产出 score 装配（notes/groups/时基），不带任何 override。
   @doc false
   @spec build(Snapshot.t(), map(), map(), term()) :: {:ok, map()} | {:error, term()}
-  def build(%Snapshot{} = snapshot, pitch_pins, duration_pins, track_id)
-      when is_map(pitch_pins) and is_map(duration_pins) do
+  def build(%Snapshot{} = snapshot, pitch_pins, duration_pins, track_id),
+    do: build(snapshot, pitch_pins, duration_pins, %{}, track_id, [])
+
+  # globals：data 里的会话旋钮覆盖编译期默认（`opts[:globals]`），随 plan
+  # 流向 Analysis/Synthesis——旋钮直接进 render，不是 patch 干预。
+  def build(%Snapshot{} = snapshot, pitch_pins, duration_pins, globals, track_id, opts)
+      when is_map(pitch_pins) and is_map(duration_pins) and is_map(globals) do
     with {:ok, view} <- Map.fetch(snapshot.tracks, track_id),
          true <- view.module == Coconut.Edit.Track.Vocal,
          {:ok, notes} <- build_notes(view.elements, snapshot),
@@ -39,7 +51,8 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
          origin_sec: origin_sec,
          duration_overrides: duration_overrides,
          pitch_overrides: pitch_overrides,
-         head_padding_sec: @head_padding_sec
+         head_padding_sec: @head_padding_sec,
+         globals: Map.merge(Keyword.get(opts, :globals, %{}), globals)
        }}
     else
       :error -> {:error, {:unknown_track, track_id}}
@@ -48,7 +61,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     end
   end
 
-  def build(%Snapshot{} = _snapshot, pitch_pins, duration_pins, _track_id),
+  def build(%Snapshot{} = _snapshot, pitch_pins, duration_pins, _globals, _track_id, _opts),
     do: {:error, {:invalid_pins, pitch_pins, duration_pins}}
 
   defp build_notes(elements, snapshot) do
@@ -306,7 +319,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
   defp probe(%{notes: notes} = plan, opts) when is_list(notes) and notes != [] do
     client = Keyword.fetch!(opts, :client)
     config = Keyword.fetch!(opts, :worker_config)
-    globals = Keyword.fetch!(opts, :globals)
+    globals = plan.globals
 
     with {:ok, prepared} <- prepare(plan, client, config),
          :ok <- validate_group_budgets(prepared.notes, plan.duration_overrides),
@@ -635,7 +648,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Synthesis do
   defp render(plan, probe, opts) do
     client = Keyword.fetch!(opts, :client)
     config = Keyword.fetch!(opts, :worker_config)
-    globals = Keyword.fetch!(opts, :globals)
+    globals = plan.globals
 
     with {:ok, out_path} <- output_path(Keyword.fetch!(opts, :output_dir)),
          {:ok, result} <-

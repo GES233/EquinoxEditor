@@ -51,14 +51,20 @@ History，支持 undo/redo，最终仍经过上述元音锚定，因此 artifact
 `Editor.check/1`（静态 patch/port/globals 检查 + 模型级 probe，失败聚合为
 `{:error, {:check_failed, entries}}`）。
 
+全局表现旋钮（`energy`/`breathiness`/`voicing`，variance 预测曲线的乘性
+系数，1.0 中立）走 `Editor.update_globals/2` 直进 render：会话态、不经
+tamale patch、不可 undo 也不随工程持久化；越界或未知键在 check 的门禁
+聚合为 `%{kind: :global, ...}` entry。逐帧曲线干预是另一条路（tamale
+patch，待落地）。
+
 渲染按乐句分窗增量执行：空档 ≥ 3 拍切窗，窗口级 WAV 缓存按「声库摘要 +
 globals + 窗内音符 + pins」失效，编辑后只重推内容变化的窗口，各窗音频按
 绝对时间拼接成整轨 `RenderArtifact`。
 
 ## TODO
 
-- [ ] 扩展 energy/breathiness/voicing 等曲线 channel；增量型曲线干预走
-  output base（coconut `design-2026-08-orchid-intervention.md` §6.6
-  第三档）。
+- [ ] energy/breathiness/voicing 的逐帧曲线 channel（手绘编辑）；增量型
+  曲线干预走 output base（coconut `design-2026-08-orchid-intervention.md`
+  §6.6 第三档），与全局旋钮复合。
 - [ ] 声库发现/注册表、多轨调度、播放与导出管理。
 - [ ] 最小钢琴卷帘、音素边界编辑和播放 UI。

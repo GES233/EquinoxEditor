@@ -28,6 +28,11 @@ DEFAULT_GLOBALS = {
     "velocity": 1.0,
     "depth": 0.6,
     "steps": 20,
+    # 全局表现旋钮：variance 预测曲线的乘性系数，1.0 中立（OpenUtau 的
+    # 100% 心智）。会话态，直接进 render，不是逐帧曲线干预。
+    "energy": 1.0,
+    "breathiness": 1.0,
+    "voicing": 1.0,
 }
 
 
@@ -557,14 +562,19 @@ class DiffSingerEngine:
     def _acoustic_forward(self, encoded, ph_dur, f0, variance, globals_):
         frames = int(ph_dur.sum())
         zeros = np.zeros((1, frames), dtype=np.float32)
+
+        # 全局旋钮 = 预测曲线的乘性系数（1.0 中立），在 acoustic 消费边界应用。
+        def scaled(channel):
+            return variance.get(channel, zeros) * float(globals_.get(channel, 1.0))
+
         values = {
             "tokens": encoded["tokens"],
             "languages": encoded["languages"],
             "durations": ph_dur,
             "f0": f0,
-            "energy": variance.get("energy", zeros),
-            "breathiness": variance.get("breathiness", zeros),
-            "voicing": variance.get("voicing", zeros),
+            "energy": scaled("energy"),
+            "breathiness": scaled("breathiness"),
+            "voicing": scaled("voicing"),
             "tension": variance.get("tension", zeros),
             "falsetto_dev": variance.get("falsetto_dev", zeros),
             "gender": np.full((1, frames), globals_["gender"], dtype=np.float32),

@@ -74,6 +74,15 @@ Neume.Editor
   界内等）则保留重签，否则降级报告 `:degraded`（旧 patch 原样保留）；
   整批经 coconut `Command.repatch_patches` 落**一条历史边**（undo 一次
   全还原）。
+- 全局表现旋钮（会话态，不经 tamale patch）：`:energy` / `:breathiness`
+  / `:voicing` 是 variance 预测曲线的乘性系数（`1.0` 中立，合法范围
+  0.0–2.0），`Editor.update_globals/2` key 合并（nil 删除）后经
+  `Coconut.configure` 直进 render——globals 门禁在 check 聚合
+  （`%{kind: :global, ...}`），有效值进入窗口缓存键与 worker 调用
+  （编译期默认在下、会话覆盖在上）。旋钮不持久化、不可 undo；将来若要
+  落工程文件，候选位置是 `Project.metadata`（coconut Track 暂无
+  metadata/extras 字段，届时需要椰子侧开口子）。逐帧曲线干预不属于
+  本路径，另走 channel（§6.6 第三档 output base）。
 
 ## 验证基线
 
@@ -117,9 +126,9 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 下一步
 
-1. 扩展 energy、breathiness、voicing 等曲线 channel，并保持参数语义位于
-   adapter，不硬编码进 CoconutOi。增量型曲线干预（"抹平这段颤音"）走
-   output base（钉 stage 输出数值，§6.6 第三档）。
+1. 逐帧曲线 channel（energy/breathiness/voicing 的手绘编辑）：走 tamale
+   patch，增量型干预（"抹平这段颤音"）用 output base（钉 stage 输出数值，
+   §6.6 第三档）；与全局旋钮共存（曲线 resolve 后与旋钮系数复合）。
 2. 增加声库发现/注册表、多轨调度、播放和导出管理。
 3. 在 headless API 稳定后接最小钢琴卷帘、音素边界编辑和播放 UI。
 

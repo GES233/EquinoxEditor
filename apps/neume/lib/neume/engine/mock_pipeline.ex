@@ -45,7 +45,9 @@ defmodule Neume.Engine.MockPipeline do
         pitch: {:input, :pitch, :pins},
         duration: {:input, :score_plan, :duration_pins}
       },
-      base_data: fn snapshot -> base_data(snapshot, track_id) end
+      base_data: fn snapshot -> base_data(snapshot, track_id) end,
+      # 与真实管线同一组全局旋钮门禁；mock 不消费，只为闭环验收透传。
+      globals: Map.new([:energy, :breathiness, :voicing], &{&1, {:range, 0.0, 2.0}})
     }
   end
 
@@ -62,8 +64,15 @@ defmodule Neume.Engine.MockPipeline do
   end
 
   @doc "无声库环境的确定性 analyze：音符按 ticks_per_frame 投影成帧边界。"
-  @spec analyze(state(), Snapshot.t(), map(), term()) :: {:ok, Analysis.t()} | {:error, term()}
-  def analyze(%{ticks_per_frame: ticks_per_frame}, %Snapshot{} = snapshot, _pins, track_id) do
+  @spec analyze(state(), Snapshot.t(), map(), map(), term()) ::
+          {:ok, Analysis.t()} | {:error, term()}
+  def analyze(
+        %{ticks_per_frame: ticks_per_frame},
+        %Snapshot{} = snapshot,
+        _pins,
+        _globals,
+        track_id
+      ) do
     with {:ok, view} <- Map.fetch(snapshot.tracks, track_id),
          :ok <- ensure_vocal(view) do
       build_analysis(view.elements, ticks_per_frame)
@@ -90,10 +99,10 @@ defmodule Neume.Engine.MockPipeline do
     end
   end
 
-  @doc "整轨执行 mock 图并取出制品（mock 不做分窗与缓存）。"
-  @spec render(state(), Snapshot.t(), map(), term()) ::
+  @doc "整轨执行 mock 图并取出制品（mock 不做分窗与缓存；全局旋钮不消费）。"
+  @spec render(state(), Snapshot.t(), map(), map(), term()) ::
           {:ok, Neume.RenderArtifact.t()} | {:error, term()}
-  def render(%{compiled: compiled}, %Snapshot{} = snapshot, pins, track_id) do
+  def render(%{compiled: compiled}, %Snapshot{} = snapshot, pins, _globals, track_id) do
     data =
       snapshot
       |> base_data(track_id)

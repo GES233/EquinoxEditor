@@ -202,6 +202,33 @@ defmodule Neume.Editor do
   end
 
   @doc """
+  更新会话级全局旋钮（key 合并，nil 删除该键）。
+
+  旋钮直接进 render，不经 tamale patch，也不进工程文件/undo 历史（与
+  speaker/velocity 等编译期 globals 同一层）。当前声明白名单是
+  `:energy` / `:breathiness` / `:voicing`（variance 预测曲线的乘性系数，
+  `1.0` 中立，合法范围 0.0–2.0）；未知键或越界值在 `check/1` 的门禁聚合
+  为 `%{kind: :global, ...}` entry。持久化若要落地，候选位置是
+  `Project.metadata`（coconut Track 暂无 metadata/extras 字段）。
+  """
+  @spec update_globals(t(), map()) :: {:ok, t()} | {:error, term()}
+  def update_globals(%__MODULE__{} = editor, knobs) when is_map(knobs) do
+    globals =
+      Enum.reduce(knobs, editor.session.globals, fn
+        {key, nil}, acc -> Map.delete(acc, key)
+        {key, value}, acc -> Map.put(acc, key, value)
+      end)
+
+    with {:ok, session} <- Coconut.configure(editor.session, globals: globals) do
+      {:ok, %{editor | session: session}}
+    end
+  end
+
+  @doc "当前会话级全局旋钮（不含管线编译期默认值）。"
+  @spec globals(t()) :: map()
+  def globals(%__MODULE__{} = editor), do: editor.session.globals
+
+  @doc """
   批量重挂手势（§6.6 re-patch）：把 check 冲突 entry 里的 pin 在新底料上
   重签。payload 仍可表达（下标在界内等）则保留重签；否则降级报告为
   `:degraded`（旧 patch 原样保留，由调用方修改后重新挂载）。
@@ -258,6 +285,7 @@ defmodule Neume.Editor do
              editor.pipeline_state,
              request.snapshot,
              checked_pins(editor.session),
+             request.globals,
              editor.track_id
            ) do
       {:ok, editor, artifact}
@@ -309,6 +337,7 @@ defmodule Neume.Editor do
              editor.pipeline_state,
              request.snapshot,
              checked_pins(editor.session),
+             request.globals,
              editor.track_id
            ),
          :ok <- adjudicate_identity(editor, analysis) do
