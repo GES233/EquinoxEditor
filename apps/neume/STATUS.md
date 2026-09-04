@@ -50,14 +50,17 @@ Neume.Editor
   onset 对齐音符起点；C-G-V 结构以 glide 为锚。
 - `RenderArtifact` 返回 WAV 信息、lead-in、逐音素时长，以及带 `note_id` 的
   实际绝对帧边界；展示数据与模型消费的 `ph_dur` 是同一份结果。
-- `Editor.analyze/1`：analyze/align 闭环——不运行 acoustic/vocoder 即可取得
-  G2P 结果、duration/pitch 预测和元音锚定后的音素边界（`Neume.Analysis`）。
-  走独立的 `ScorePlan → Analysis` 编译图（同一 cluster 内 Oi 不分 stage，
-  checkpoint 无法停在 Synthesis 前）。
-- `Editor.check/1`：稳定的检查 API——先 Coconut 静态 check（patch resolve、
-  port 装配、globals 门禁），再跑模型级 probe；所有失败聚合为
-  `{:error, {:check_failed, entries}}`，模型侧 entry 形如 `%{kind: :model, ...}`。
-  模型检查不再只藏在 render 执行路径里。
+- `Editor.analyze/1` / `check/1` 按 RestSplit3Beats 乐句逐窗 probe：所有乐句都会
+  执行，错误统一聚合并携带 `track_id`、`phrase_id`、`span`、`note_ids`；
+  `Neume.Analysis.merge/1` 把逐窗音符、预测和音素边界投影回整曲绝对帧轴。
+  同一次 `render/1` 直接把已检查的 plan/probe 交给独立 Synthesis Oi 图，
+  不再重复模型 probe。
+- 多轨 runtime（`Neume.MultiTrack`）：声库签名从工程级下移到各 Vocal track 的
+  `extras[:neume][:voicebank]`，每轨按 registry signature 创建独立 pipeline、
+  worker 与乐句缓存；多轨 check 聚合所有轨道/乐句错误。
+- Neume-owned Oi 混音图（`Neume.MixPipeline`）：`TrackGainPan → Mix → Master →
+  Export`，支持逐轨 mute/gain/pan、sample-rate 门禁、PCM16 master 限幅与立体声
+  WAV 导出；mix 配置保存在 track extras，并经 Coconut History 更新。
 - 分窗增量渲染：RestSplit3Beats 规则切窗（空档 < 3 拍粘连，≥ 3 拍切开、
   前 1 拍归前窗、后 2 拍归后窗、更长留死区）；窗口级 WAV 缓存
   （key 覆盖声库摘要、globals、窗内音符内容与 pins），编辑只失效内容变化
@@ -132,13 +135,15 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 当前限制
 
-- 仅单轨、单声部；同轨重叠音符会明确报错。
-- 渲染按窗增量，但 analyze/check 仍是全轨一次性 probe；render 在分窗
-  渲染前也会先跑一次全轨 probe 做 pin 身份裁决（probe 须够快，分窗
-  probe 是曲目变长后的后备优化）。
+- `Neume.MultiTrack` 已可逐轨 check/render/mix，但当前每轨暂持独立 Editor/
+  Coconut session；下一步收束为整个工程唯一的 session/history。
+- 同一 Vocal track 仍是单声部；同轨重叠音符会明确报错。
 - 当前只有 pitch 和 phoneme duration 两种生成参数编辑。
 - 分窗规则不含 slice_flag 手动覆盖（音符 metadata 覆盖未移植）。
-- 没有声库注册表、多轨混音、播放/导出管理或 UI。
+- Oi 尚未接管多轨 fan-out/fan-in 的并发、取消、solo 路由与 mix/master
+  节点缓存；当前图已声明混音步骤，但轨道调度仍是同步 facade。
+- PCM 热路径仍是纯 Elixir reference 实现，尚未引入 Rust NIF。
+- 没有 Neumu application service、播放设备适配或 UI。
 
 ## 声库处置
 
@@ -148,12 +153,16 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 下一步
 
-1. ~~逐帧曲线 channel（energy/breathiness/voicing 的手绘编辑）~~——本版本
-   不做：三旋钮保持轨道级全局系数直进 render，不上 patch；未来若重启，
-   增量型干预（"抹平这段颤音"）走 output base（钉 stage 输出数值，
-   §6.6 第三档），并与全局旋钮复合。
-2. 增加声库发现/注册表、多轨调度、播放和导出管理。
-3. 在 headless API 稳定后接最小钢琴卷帘、音素边界编辑和播放 UI。
+详细职责决定见 [`docs/design-2026-09-multitrack-runtime.md`](docs/design-2026-09-multitrack-runtime.md)。
+
+1. 将多轨 runtime 收束为整个工程唯一的 Coconut session/history。
+2. 多轨并发/取消、solo 路由和 phrase/track/mix/master 缓存交给 Oi；Neume
+   只声明业务图、identity、veto 与 artifact 契约。
+3. 增加 `Neume.Audio` facade，以当前纯 Elixir 算法为 reference backend，
+   引入 Rust NIF 承担 PCM 解码/增益/equal-power pan/混合/限幅等热路径。
+4. 先定义 Neume job/event 与 playback/export 契约，再建立 Neumu application
+   service；UI 只提交意图并展示权威状态，不复制音频、check 或任务语义。
+5. ~~逐帧曲线 channel（energy/breathiness/voicing 的手绘编辑）~~本版本不做。
 
 ## 不变量
 

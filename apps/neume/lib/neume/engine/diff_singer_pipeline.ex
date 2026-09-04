@@ -24,6 +24,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
   @type state :: %{
           compiled: Oi.Compiled.t(),
           compiled_analysis: Oi.Compiled.t(),
+          compiled_synthesis: Oi.Compiled.t(),
           client: module(),
           worker_config: map(),
           globals: %{String.t() => term()},
@@ -97,12 +98,20 @@ defmodule Neume.Engine.DiffSingerPipeline do
         )
         |> Flowgraph.connect({:score_plan, :plan}, {:analysis, :plan})
 
+      synthesis_graph =
+        Flowgraph.new_flowchart()
+        |> Flowgraph.add_step(Steps.Synthesis,
+          opts: [client: client, worker_config: worker_config, output_dir: output_dir]
+        )
+
       with {:ok, compiled} <- Oi.compile(graph),
-           {:ok, compiled_analysis} <- Oi.compile(analysis_graph) do
+           {:ok, compiled_analysis} <- Oi.compile(analysis_graph),
+           {:ok, compiled_synthesis} <- Oi.compile(synthesis_graph) do
         {:ok,
          %{
            compiled: compiled,
            compiled_analysis: compiled_analysis,
+           compiled_synthesis: compiled_synthesis,
            client: client,
            worker_config: worker_config,
            globals: globals,
@@ -140,6 +149,26 @@ defmodule Neume.Engine.DiffSingerPipeline do
     end)
   end
 
+  @doc "逐乐句执行模型 probe；全部乐句都会运行，错误带轨道、乐句和 span 定位。"
+  @spec analyze_phrases(state(), Snapshot.t(), %{pitch: map(), duration: map()}, map(), term()) ::
+          {:ok, [{Neume.Phrase.t(), Analysis.t(), map()}], [map()]} | {:error, term()}
+  def analyze_phrases(%{} = state, %Snapshot{} = snapshot, pins, session_globals, track_id) do
+    with {:ok, phrases} <- Neume.Phrase.split(snapshot, track_id, pins) do
+      {results, errors} =
+        Enum.reduce(phrases, {[], []}, fn phrase, {results, errors} ->
+          case probe_phrase(state, phrase.snapshot, phrase.pins, session_globals) do
+            {:ok, analysis, plan, probe} ->
+              {[{phrase, analysis, %{plan: plan, probe: probe}} | results], errors}
+
+            {:error, reason} ->
+              {results, [phrase_error(phrase, reason) | errors]}
+          end
+        end)
+
+      {:ok, Enum.reverse(results), Enum.reverse(errors)}
+    end
+  end
+
   @doc """
   只跑 `ScorePlan → Analysis` 的 analyze/align 闭环：独立编译图，
   返回不产出音频的 `Neume.Analysis`。
@@ -147,6 +176,12 @@ defmodule Neume.Engine.DiffSingerPipeline do
   @spec analyze(state(), Snapshot.t(), %{pitch: map(), duration: map()}, map(), term()) ::
           {:ok, Analysis.t()} | {:error, term()}
   def analyze(%{} = state, %Snapshot{} = snapshot, pins, session_globals, _track_id) do
+    with {:ok, analysis, _plan, _probe} <- probe_phrase(state, snapshot, pins, session_globals) do
+      {:ok, analysis}
+    end
+  end
+
+  defp probe_phrase(state, snapshot, pins, session_globals) do
     data = %{
       score_plan: %{
         snapshot: snapshot,
@@ -157,8 +192,9 @@ defmodule Neume.Engine.DiffSingerPipeline do
     }
 
     with {:ok, result} <- Oi.execute(state.compiled_analysis, data: data),
+         {:ok, plan} <- Oi.Result.reify(result, {:score_plan, :plan}),
          {:ok, probe} <- Oi.Result.reify(result, {:analysis, :probe}) do
-      {:ok, to_analysis(probe, state.manifest)}
+      {:ok, to_analysis(probe, state.manifest), plan, probe}
     end
   end
 
@@ -191,6 +227,24 @@ defmodule Neume.Engine.DiffSingerPipeline do
   `session_globals` 是会话级全局旋钮（atom key，已过门禁），并入编译期
   globals 后同时进入窗口缓存键与 worker 调用。
   """
+  @spec render_checked(
+          state(),
+          Snapshot.t(),
+          [{Neume.Phrase.t(), Analysis.t(), map()}],
+          map(),
+          term()
+        ) ::
+          {:ok, Neume.RenderArtifact.t()} | {:error, term()}
+  def render_checked(%{} = state, %Snapshot{} = snapshot, checked, session_globals, track_id) do
+    globals = effective_globals(state.globals, session_globals)
+
+    with {:ok, view} <- fetch_vocal_view(snapshot, track_id),
+         windows <- Enum.map(checked, fn {phrase, _analysis, _data} -> phrase end),
+         {:ok, results} <- render_checked_phrases(state, view, checked, globals) do
+      assemble(state, windows, results)
+    end
+  end
+
   @spec render(state(), Snapshot.t(), %{pitch: map(), duration: map()}, map(), term()) ::
           {:ok, Neume.RenderArtifact.t()} | {:error, term()}
   def render(%{} = state, %Snapshot{} = snapshot, pins, session_globals, track_id) do
@@ -221,6 +275,71 @@ defmodule Neume.Engine.DiffSingerPipeline do
   defp split_windows(%{elements: elements}, tpqn) do
     items = Enum.map(elements, fn {id, _note, span} -> {id, span} end)
     {:ok, Neume.Windowing.split(items, tpqn: tpqn)}
+  end
+
+  defp render_checked_phrases(state, view, checked, globals) do
+    Enum.reduce_while(checked, {:ok, []}, fn {phrase, _analysis, data}, {:ok, acc} ->
+      elements =
+        Enum.filter(view.elements, fn {id, _note, _span} -> id in phrase.note_ids end)
+
+      key = render_key(state, elements, phrase.pins, globals, phrase.snapshot)
+
+      result =
+        case cache_fetch(state, cache_dir(state), key) do
+          {:hit, entry} ->
+            hit_result(entry)
+
+          :skip ->
+            with {:ok, rendered} <- execute_checked_phrase(state, data.plan, data.probe) do
+              cache_store(state, cache_dir(state), key, rendered)
+            end
+        end
+
+      case result do
+        {:ok, value} -> {:cont, {:ok, [value | acc]}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, values} -> {:ok, Enum.reverse(values)}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp execute_checked_phrase(state, plan, probe) do
+    with {:ok, result} <-
+           Oi.execute(state.compiled_synthesis,
+             data: %{diffsinger: %{plan: plan, probe: probe}}
+           ),
+         {:ok, artifact} <- Oi.Result.reify(result, {:diffsinger, :artifact}) do
+      {:ok,
+       %{
+         path: artifact.path,
+         sample_rate: artifact.sample_rate,
+         sample_count: artifact.sample_count,
+         frames: artifact.frame_count,
+         lead_in_sec: artifact.lead_in_sec,
+         origin_sec: artifact.origin_sec,
+         boundaries: artifact.phonemes,
+         ph_dur: artifact.phoneme_durations,
+         cache: :miss,
+         intermediate?: true
+       }}
+    end
+  end
+
+  defp render_key(state, elements, pins, globals, snapshot) do
+    Neume.RenderCache.key(%{
+      voicebank_digest: state.manifest.digest,
+      fp_manifest_digest: state.worker_config.fp_manifest_digest,
+      fp_noise_version: state.worker_config.fp_noise_version,
+      seed: state.worker_config.seed,
+      globals: globals,
+      notes: Enum.map(elements, &canonical_note/1),
+      pins: pins,
+      tempo_map: snapshot.tempo_map,
+      tpqn: snapshot.tpqn
+    })
   end
 
   defp render_windows(state, snapshot, view, track_id, windows, pins, globals) do
@@ -449,6 +568,17 @@ defmodule Neume.Engine.DiffSingerPipeline do
       {:ok, items} -> {:ok, Enum.reverse(items)}
       {:error, _} = error -> error
     end
+  end
+
+  defp phrase_error(phrase, reason) do
+    %{
+      kind: :model,
+      track_id: phrase.track_id,
+      phrase_id: phrase.id,
+      span: {phrase.start_tick, phrase.end_tick},
+      note_ids: phrase.note_ids,
+      reason: reason
+    }
   end
 
   defp cache_dir(state), do: Path.join(state.output_dir, "cache")

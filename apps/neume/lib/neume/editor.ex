@@ -16,6 +16,7 @@ defmodule Neume.Editor do
   alias Coconut.Util.ID
   alias Neume.Channels.{DurationPin, PitchPin}
   alias Neume.PitchCurve
+  alias Neume.TrackConfig
   alias Neume.Engine.DiffSingerPipeline
   alias Neume.Engine.MockPipeline
   alias Neume.Identity
@@ -43,6 +44,7 @@ defmodule Neume.Editor do
 
     with {:ok, voicebank, opts} <- prepare_new_voicebank(opts),
          {:ok, track} <- Track.new(%{id: track_id, module: Track.Vocal}),
+         track <- TrackConfig.put_voicebank(track, voicebank),
          {:ok, workspace} <-
            Workspace.new(%{
              id: Keyword.get(opts, :workspace_id, ID.generate_id("WSpc_")),
@@ -52,7 +54,7 @@ defmodule Neume.Editor do
            Project.new(%{
              id: Keyword.get(opts, :project_id, ID.generate_id("Proj_")),
              workspace: workspace,
-             voicebank: voicebank,
+             voicebank: nil,
              metadata: Keyword.get(opts, :metadata, %{})
            }) do
       open(project, opts)
@@ -72,8 +74,11 @@ defmodule Neume.Editor do
     ticks_per_frame = Keyword.get(opts, :ticks_per_frame, @default_ticks_per_frame)
     registry = Keyword.get(opts, :registry, PickleTrack.default_registry())
 
-    with {:ok, opts} <- prepare_selected_open_opts(project, opts),
-         {:ok, project, manifest} <- prepare_open_voicebank(project, opts),
+    with {:ok, %Track{module: Track.Vocal} = selected_track} <-
+           Workspace.fetch_track(project.workspace, track_id),
+         expected_signature <- TrackConfig.voicebank(selected_track),
+         {:ok, opts} <- prepare_selected_open_opts(expected_signature, opts),
+         {:ok, manifest} <- prepare_open_voicebank(expected_signature, opts),
          :ok <- validate_ticks_per_frame(ticks_per_frame),
          {:ok, %Track{module: Track.Vocal} = track} <-
            Workspace.fetch_track(project.workspace, track_id),
@@ -270,7 +275,7 @@ defmodule Neume.Editor do
   """
   @spec export_debug(t(), Path.t(), keyword()) :: {:ok, t(), Path.t()} | {:error, term()}
   def export_debug(%__MODULE__{} = editor, path, opts \\ []) do
-    with {:ok, editor, request, analysis} <- checked_probe(editor),
+    with {:ok, editor, request, analysis, _checked} <- checked_probe(editor),
          {:ok, raw} <- maybe_raw_probe(editor, request, Keyword.get(opts, :raw?, false)),
          {:ok, data} <-
            Neume.DebugExport.build(
@@ -359,17 +364,30 @@ defmodule Neume.Editor do
   """
   @spec render(t()) :: {:ok, t(), Neume.RenderArtifact.t()} | {:error, term()}
   def render(%__MODULE__{} = editor) do
-    with {:ok, editor, request, _analysis} <- checked_probe(editor),
-         {:ok, artifact} <-
-           editor.pipeline.render(
-             editor.pipeline_state,
-             request.snapshot,
-             checked_pins(editor.session),
-             request.globals,
-             editor.track_id
-           ) do
+    with {:ok, editor, request, _analysis, checked_phrases} <- checked_probe(editor),
+         {:ok, artifact} <- render_checked(editor, request, checked_phrases) do
       {:ok, editor, artifact}
     end
+  end
+
+  defp render_checked(%__MODULE__{pipeline: DiffSingerPipeline} = editor, request, checked) do
+    DiffSingerPipeline.render_checked(
+      editor.pipeline_state,
+      request.snapshot,
+      checked,
+      request.globals,
+      editor.track_id
+    )
+  end
+
+  defp render_checked(editor, request, _checked) do
+    editor.pipeline.render(
+      editor.pipeline_state,
+      request.snapshot,
+      checked_pins(editor.session),
+      request.globals,
+      editor.track_id
+    )
   end
 
   @doc """
@@ -378,7 +396,7 @@ defmodule Neume.Editor do
   """
   @spec analyze(t()) :: {:ok, t(), Neume.Analysis.t()} | {:error, term()}
   def analyze(%__MODULE__{} = editor) do
-    with {:ok, editor, _request, analysis} <- checked_probe(editor) do
+    with {:ok, editor, _request, analysis, _checked} <- checked_probe(editor) do
       {:ok, editor, analysis}
     end
   end
@@ -393,7 +411,7 @@ defmodule Neume.Editor do
   """
   @spec check(t()) :: {:ok, t(), map()} | {:error, {:check_failed, [term()]}}
   def check(%__MODULE__{} = editor) do
-    with {:ok, editor, _request, analysis} <- checked_probe(editor) do
+    with {:ok, editor, _request, analysis, _checked} <- checked_probe(editor) do
       {:ok, editor, %{analysis: analysis}}
     end
   end
@@ -412,29 +430,59 @@ defmodule Neume.Editor do
   defp probe_and_adjudicate(%__MODULE__{} = editor) do
     %{request: request} = editor.session.last_round
 
-    with {:ok, analysis} <-
-           editor.pipeline.analyze(
+    with {:ok, phrase_results, model_errors} <-
+           editor.pipeline.analyze_phrases(
              editor.pipeline_state,
              request.snapshot,
              checked_pins(editor.session),
              request.globals,
              editor.track_id
            ),
-         :ok <- adjudicate_identity(editor, analysis) do
-      {:ok, editor, request, analysis}
+         {:ok, analysis} <- merge_phrase_results(phrase_results, model_errors),
+         {:ok, identity_errors} <- adjudicate_identity_errors(editor, analysis),
+         [] <- model_errors ++ identity_errors do
+      {:ok, editor, request, analysis, phrase_results}
     else
+      [_ | _] = entries -> {:error, {:check_failed, entries}}
       {:error, {:check_failed, _entries}} = error -> error
       {:error, reason} -> {:error, {:check_failed, [%{kind: :model, reason: reason}]}}
     end
   end
 
-  defp adjudicate_identity(%__MODULE__{} = editor, %Neume.Analysis{} = analysis) do
+  defp merge_phrase_results([], [_ | _]), do: {:ok, nil}
+  defp merge_phrase_results(results, _errors), do: Neume.Analysis.merge(results)
+
+  defp adjudicate_identity_errors(_editor, nil), do: {:ok, []}
+
+  defp adjudicate_identity_errors(%__MODULE__{} = editor, %Neume.Analysis{} = analysis) do
     with {:ok, track} <- current_track(editor) do
-      case Identity.adjudicate(track, editor.session.channels, analysis.note_phonemes) do
-        [] -> :ok
-        entries -> {:error, {:check_failed, entries}}
-      end
+      entries =
+        track
+        |> Identity.adjudicate(editor.session.channels, analysis.note_phonemes)
+        |> Enum.map(&locate_identity_error(&1, editor.track_id, analysis.phrases))
+
+      {:ok, entries}
     end
+  end
+
+  defp locate_identity_error(entry, track_id, phrases) do
+    note_id = entry[:note_id] || patch_target(entry[:patch])
+    phrase = Enum.find(phrases, &(note_id in &1.note_ids))
+
+    entry
+    |> Map.put_new(:track_id, track_id)
+    |> maybe_put_location(phrase)
+  end
+
+  defp patch_target(%Patch{anchor: %{refs: [note_id | _]}}), do: note_id
+  defp patch_target(_patch), do: nil
+
+  defp maybe_put_location(entry, nil), do: entry
+
+  defp maybe_put_location(entry, phrase) do
+    entry
+    |> Map.put(:phrase_id, phrase.id)
+    |> Map.put(:span, {phrase.start_tick, phrase.end_tick})
   end
 
   # 挂载共用路径：轻量 probe 物化身份底料 → 显式 :base 签名 → 一条历史边。
@@ -640,8 +688,8 @@ defmodule Neume.Editor do
     end
   end
 
-  defp prepare_selected_open_opts(project, opts) do
-    with {:ok, entry} <- resolve_voicebank_entry(opts, project.voicebank) do
+  defp prepare_selected_open_opts(expected_signature, opts) do
+    with {:ok, entry} <- resolve_voicebank_entry(opts, expected_signature) do
       case entry do
         nil -> {:ok, opts}
         %Entry{} -> {:ok, apply_voicebank_entry(opts, entry)}
@@ -649,18 +697,11 @@ defmodule Neume.Editor do
     end
   end
 
-  defp prepare_open_voicebank(project, opts) do
+  defp prepare_open_voicebank(expected_signature, opts) do
     case Keyword.get(opts, :voicebank_entry) do
-      %Entry{} = entry ->
-        with {:ok, project} <- bind_voicebank(project, entry.signature) do
-          {:ok, project, entry.manifest}
-        end
-
-      nil when is_nil(project.voicebank) ->
-        {:ok, project, nil}
-
-      nil ->
-        {:error, {:voicebank_selection_required, project.voicebank}}
+      %Entry{} = entry -> {:ok, entry.manifest}
+      nil when is_nil(expected_signature) -> {:ok, nil}
+      nil -> {:error, {:voicebank_selection_required, expected_signature}}
     end
   end
 
@@ -750,20 +791,6 @@ defmodule Neume.Editor do
     |> Keyword.put(:voicebank_manifest, entry.manifest)
     |> Keyword.put(:fp, entry.fp || false)
   end
-
-  defp bind_voicebank(%Project{voicebank: nil} = project, signature) do
-    Project.new(%{
-      id: project.id,
-      workspace: project.workspace,
-      voicebank: signature,
-      metadata: project.metadata
-    })
-  end
-
-  defp bind_voicebank(%Project{voicebank: signature} = project, signature), do: {:ok, project}
-
-  defp bind_voicebank(%Project{voicebank: expected}, actual),
-    do: {:error, {:voicebank_mismatch, expected, actual}}
 
   defp compare_signature(nil, _actual), do: :ok
   defp compare_signature(signature, signature), do: :ok

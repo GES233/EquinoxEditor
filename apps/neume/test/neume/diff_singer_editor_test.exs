@@ -142,9 +142,11 @@ defmodule Neume.DiffSingerEditorTest do
     assert File.regular?(artifact.path)
 
     assert {:ok, project} = Coconut.project(editor.session)
-    assert project.voicebank.name == "Test Singer (Stock)"
-    assert project.voicebank.engine == :diffsinger_stock
-    assert byte_size(project.voicebank.digest) == 64
+    signature = get_in(project.workspace.tracks["vocal"].extras, [:neume, :voicebank])
+    assert project.voicebank == nil
+    assert signature.name == "Test Singer (Stock)"
+    assert signature.engine == :diffsinger_stock
+    assert byte_size(signature.digest) == 64
   end
 
   @tag tmp_dir: true

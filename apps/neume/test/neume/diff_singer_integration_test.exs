@@ -63,8 +63,13 @@ defmodule Neume.DiffSingerIntegrationTest do
 
     assert {:ok, stock_project} = Coconut.project(stock_editor.session)
     assert {:ok, modified_project} = Coconut.project(modified_editor.session)
-    assert stock_project.voicebank.engine == :diffsinger_stock
-    assert modified_project.voicebank.engine == :diffsinger_modified
+    stock_signature = get_in(stock_project.workspace.tracks["vocal"].extras, [:neume, :voicebank])
+
+    modified_signature =
+      get_in(modified_project.workspace.tracks["vocal"].extras, [:neume, :voicebank])
+
+    assert stock_signature.engine == :diffsinger_stock
+    assert modified_signature.engine == :diffsinger_modified
   end
 
   @tag tmp_dir: "asaritsu"

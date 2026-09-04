@@ -19,16 +19,28 @@ defmodule Neume.Wav do
     end
   end
 
+  @doc "把交错 s16le 采样写成 PCM16 立体声 WAV。"
+  @spec write_stereo(Path.t(), binary(), pos_integer()) :: :ok | {:error, term()}
+  def write_stereo(path, samples, sample_rate)
+      when is_binary(samples) and is_integer(sample_rate) and sample_rate > 0 do
+    write_pcm16(path, samples, sample_rate, 2)
+  end
+
   @doc "把 s16le 采样写成 PCM16 单声道 WAV。"
   @spec write(Path.t(), binary(), pos_integer()) :: :ok | {:error, term()}
   def write(path, samples, sample_rate)
       when is_binary(samples) and is_integer(sample_rate) and sample_rate > 0 do
+    write_pcm16(path, samples, sample_rate, 1)
+  end
+
+  defp write_pcm16(path, samples, sample_rate, channels) do
     data_size = byte_size(samples)
+    block_align = channels * 2
 
     header =
       <<"RIFF", 36 + data_size::little-32, "WAVE", "fmt ", 16::little-32, 1::little-16,
-        1::little-16, sample_rate::little-32, sample_rate * 2::little-32, 2::little-16,
-        16::little-16, "data", data_size::little-32>>
+        channels::little-16, sample_rate::little-32, sample_rate * block_align::little-32,
+        block_align::little-16, 16::little-16, "data", data_size::little-32>>
 
     with :ok <- File.mkdir_p(Path.dirname(path)) do
       File.write(path, header <> samples)

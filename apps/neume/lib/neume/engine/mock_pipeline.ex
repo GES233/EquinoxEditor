@@ -63,6 +63,35 @@ defmodule Neume.Engine.MockPipeline do
     %{score_plan: %{notes: notes, duration_pins: %{}}, pitch: %{pins: %{}}}
   end
 
+  @doc "逐乐句运行 mock analyze，并保留与真实管线一致的定位形状。"
+  @spec analyze_phrases(state(), Snapshot.t(), map(), map(), term()) ::
+          {:ok, [{Neume.Phrase.t(), Analysis.t()}], [map()]} | {:error, term()}
+  def analyze_phrases(state, %Snapshot{} = snapshot, pins, globals, track_id) do
+    with {:ok, phrases} <- Neume.Phrase.split(snapshot, track_id, pins) do
+      {results, errors} =
+        Enum.reduce(phrases, {[], []}, fn phrase, {results, errors} ->
+          case analyze(state, phrase.snapshot, phrase.pins, globals, track_id) do
+            {:ok, analysis} ->
+              {[{phrase, analysis} | results], errors}
+
+            {:error, reason} ->
+              error = %{
+                kind: :model,
+                track_id: track_id,
+                phrase_id: phrase.id,
+                span: {phrase.start_tick, phrase.end_tick},
+                note_ids: phrase.note_ids,
+                reason: reason
+              }
+
+              {results, [error | errors]}
+          end
+        end)
+
+      {:ok, Enum.reverse(results), Enum.reverse(errors)}
+    end
+  end
+
   @doc "无声库环境的确定性 analyze：音符按 ticks_per_frame 投影成帧边界。"
   @spec analyze(state(), Snapshot.t(), map(), map(), term()) ::
           {:ok, Analysis.t()} | {:error, term()}
@@ -178,7 +207,7 @@ defmodule Neume.Engine.MockPipeline do
              pitch_pred_midi: [],
              note_phonemes: phonemes_by_id,
              lead_in_sec: 0.0,
-             origin_sec: 0.0,
+             origin_sec: mock_origin_sec(sorted, ticks_per_frame),
              total_frames: total_frames,
              frame_rate: 480.0 / ticks_per_frame
            }}
@@ -188,6 +217,11 @@ defmodule Neume.Engine.MockPipeline do
       end
     end
   end
+
+  defp mock_origin_sec([{_id, _note, {start_tick, _end}} | _], _ticks_per_frame),
+    do: start_tick / 480.0
+
+  defp mock_origin_sec([], _ticks_per_frame), do: 0.0
 
   # 排序 + 组派生 + mock G2P：analyze 与挂载 probe 的同一份纯派生。
   defp phonemes_by_id(elements) do

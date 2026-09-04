@@ -26,8 +26,10 @@ defmodule Neume.VoicebankSelectionTest do
 
     assert {:ok, editor} = Editor.new(opts)
     assert {:ok, project} = Coconut.project(editor.session)
-    assert project.voicebank == stock.signature
-    assert project.voicebank.engine == :diffsinger_stock
+    assert project.voicebank == nil
+
+    assert get_in(project.workspace.tracks["vocal"].extras, [:neume, :voicebank]) ==
+             stock.signature
 
     assert {:ok, reopened} = Editor.open(project, voicebank_registry: registry)
     assert reopened.pipeline_state.worker_config.fp_manifest == nil
@@ -37,7 +39,8 @@ defmodule Neume.VoicebankSelectionTest do
   test "工程打开时按 signature 自动解析，无需再次提供 id", %{tmp_dir: tmp_dir} do
     VoicebankFixture.diffsinger(tmp_dir)
     assert {:ok, registry} = Registry.discover(tmp_dir)
-    assert [stock] = Registry.list(registry)
+    stock = Enum.find(Registry.list(registry), &(&1.mode == :stock))
+    assert stock
 
     assert {:ok, editor} =
              Editor.new(

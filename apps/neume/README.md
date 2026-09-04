@@ -2,7 +2,9 @@
 
 ~~人类重写版本。~~ 第二轮迭代版本。
 
-当前实现进度、验证基线、限制和后续路线见 [`STATUS.md`](STATUS.md)。
+当前实现进度、验证基线、限制和后续路线见 [`STATUS.md`](STATUS.md)；多轨
+runtime、Oi/NIF 以及 Neume/Neumu/UI 职责见
+[`docs/design-2026-09-multitrack-runtime.md`](docs/design-2026-09-multitrack-runtime.md)。
 
 ## 当前闭环
 
@@ -32,8 +34,8 @@
 Stock 与 Modified 是两个独立声库身份（`:diffsinger_stock` / `:diffsinger_modified`），
 不是同一个声库上的运行期开关。`Neume.Voicebank.Registry.discover/1` 可扫描多个
 根目录或其直接子目录；发现只登记 Stock 和已经存在的 Modified manifest，绝不
-自动修改 ONNX。需要构建时显式调用 `Registry.prepare_modified/3`。工程保存所选
-变体的 `{name, engine, digest}`，重新打开时使用 registry + `voicebank_id` 解析。
+自动修改 ONNX。需要构建时显式调用 `Registry.prepare_modified/3`。工程在每条 Vocal track 的 `extras[:neume][:voicebank]` 保存所选变体的
+`{name, engine, digest}`；重新打开多轨工程时按各轨 signature 自动从 registry 解析。
 
 真实管线使用 OpenUtau 式元音锚定：音符起点对应词内首个元音（C-G-V
 结构对应 glide），此前的一个或多个辅音向前回排并占用前置 SP/间隙；
@@ -75,9 +77,15 @@ debug.json（notes/pitch 帧网/音素边界/tempo/`meta.patches` 铆钉点/pin
 `tools/plot_render.py` 用 matplotlib 画钢琴卷帘 + pitch + 音素时序图
 （`-o out.svg` 出矢量图，依赖 `pip install matplotlib`）。
 
-渲染按乐句分窗增量执行：空档 ≥ 3 拍切窗，窗口级 WAV 缓存按「声库摘要 +
-globals + 窗内音符 + pins + FP/stock 模式 + seed + 噪声算法版本」失效，编辑后只重推内容变化的窗口，各窗音频按
-绝对时间拼接成整轨 `RenderArtifact`。
+analyze/check/render 共用瞬态 `Neume.Phrase`：空档 ≥ 3 拍切窗，逐窗 probe 的
+错误带 track/phrase/span 定位并一次聚合；render 复用同次 check 的 probe，不重复
+模型检查。窗口级 WAV 缓存按「声库摘要 + globals + 窗内音符 + pins + Modified/
+Stock + seed + 修改工艺版本」失效，编辑后只重推内容变化的窗口。
+
+多轨使用 `Neume.MultiTrack`：每条 Vocal track 独立解析声库、检查与渲染，随后
+进入 Neume-owned Oi 图 `TrackGainPan → Mix → Master → Export`。逐轨
+`mute/gain/pan` 存在 track extras 中并经 Coconut History 更新，最终导出 PCM16
+立体声 WAV；任一轨 check 失败时不会执行 master 导出。
 
 ## TODO
 

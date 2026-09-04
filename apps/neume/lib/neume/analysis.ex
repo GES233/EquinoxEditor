@@ -18,6 +18,7 @@ defmodule Neume.Analysis do
 
   @enforce_keys [:frame_rate, :total_frames]
   defstruct notes: [],
+            phrases: [],
             phonemes: [],
             phoneme_durations: [],
             pitch_pred_midi: [],
@@ -37,8 +38,110 @@ defmodule Neume.Analysis do
           required(:phonemes) => [[String.t()]] | nil
         }
 
+  @type phrase_info :: %{
+          required(:id) => {term(), non_neg_integer()},
+          required(:track_id) => term(),
+          required(:start_tick) => non_neg_integer(),
+          required(:end_tick) => non_neg_integer(),
+          required(:note_ids) => [term()],
+          required(:origin_sec) => float(),
+          required(:start_frame) => non_neg_integer(),
+          required(:end_frame) => non_neg_integer()
+        }
+
+  @spec merge([{Neume.Phrase.t(), t()}]) :: {:ok, t()} | {:error, term()}
+  def merge([]), do: {:error, :empty_score}
+
+  def merge(items) do
+    items =
+      Enum.map(items, fn
+        {phrase, analysis} -> {phrase, analysis}
+        {phrase, analysis, _checked} -> {phrase, analysis}
+      end)
+
+    do_merge(items)
+  end
+
+  defp do_merge([{_phrase, first} | _rest] = items) do
+    frame_rate = first.frame_rate
+
+    if Enum.all?(items, fn {_phrase, analysis} -> analysis.frame_rate == frame_rate end) do
+      total_frames =
+        Enum.reduce(items, 0, fn {_phrase, analysis}, total ->
+          max(total, frame_shift(analysis, frame_rate) + analysis.total_frames)
+        end)
+
+      pitch = List.duplicate(0.0, total_frames)
+
+      {notes, boundaries, durations, note_phonemes, pitch, phrases} =
+        Enum.reduce(items, {[], [], [], %{}, pitch, []}, fn {phrase, analysis},
+                                                            {notes, boundaries, durations,
+                                                             phonemes, pitch, phrases} ->
+          shift = frame_shift(analysis, frame_rate)
+
+          shifted_boundaries =
+            Enum.map(analysis.phonemes, fn boundary ->
+              %{
+                boundary
+                | start_frame: boundary.start_frame + shift,
+                  end_frame: boundary.end_frame + shift
+              }
+            end)
+
+          phrase_info = %{
+            id: phrase.id,
+            track_id: phrase.track_id,
+            start_tick: phrase.start_tick,
+            end_tick: phrase.end_tick,
+            note_ids: phrase.note_ids,
+            origin_sec: analysis.origin_sec,
+            start_frame: shift,
+            end_frame: shift + analysis.total_frames
+          }
+
+          {notes ++ analysis.notes, boundaries ++ shifted_boundaries,
+           durations ++ analysis.phoneme_durations, Map.merge(phonemes, analysis.note_phonemes),
+           overlay_pitch(pitch, analysis.pitch_pred_midi, shift), phrases ++ [phrase_info]}
+        end)
+
+      pitch =
+        if Enum.all?(items, fn {_phrase, analysis} -> analysis.pitch_pred_midi == [] end),
+          do: [],
+          else: pitch
+
+      {:ok,
+       %__MODULE__{
+         notes: notes,
+         phrases: phrases,
+         phonemes: boundaries,
+         phoneme_durations: durations,
+         pitch_pred_midi: pitch,
+         note_phonemes: note_phonemes,
+         lead_in_sec: 0.0,
+         origin_sec: 0.0,
+         total_frames: total_frames,
+         frame_rate: frame_rate,
+         sample_rate: first.sample_rate,
+         hop_size: first.hop_size
+       }}
+    else
+      {:error, :inconsistent_phrase_frame_rate}
+    end
+  end
+
+  defp frame_shift(analysis, frame_rate), do: round(analysis.origin_sec * frame_rate)
+
+  defp overlay_pitch(target, [], _shift), do: target
+
+  defp overlay_pitch(target, values, shift) do
+    values
+    |> Enum.with_index(shift)
+    |> Enum.reduce(target, fn {value, index}, acc -> List.replace_at(acc, index, value) end)
+  end
+
   @type t :: %__MODULE__{
           notes: [note()],
+          phrases: [phrase_info()],
           phonemes: [Neume.RenderArtifact.phoneme_boundary()],
           phoneme_durations: [non_neg_integer()],
           pitch_pred_midi: [float()],
