@@ -1,0 +1,53 @@
+defmodule Neume.Analysis do
+  @moduledoc """
+  analyze/align 闭环的结果 VO。
+
+  不运行 acoustic/vocoder 即可取得：按需 G2P 后的逐音符音素、duration 模型
+  预测的逐音素帧长、pitch 预测，以及元音锚定后的音素边界。边界帧号是
+  窗（或全轨）局部时基；**制品音频轴**帧（wav t=0 ↔ 歌曲 −lead_in，与
+  `RenderArtifact.phonemes` 一致）= `local_frame + round(origin_sec * frame_rate)`。
+  要与歌曲时间轴（notes/tick↔sec）对齐需再减 lead_in：
+  `local_frame + round((origin_sec - lead_in_sec) * frame_rate)`
+  （`Neume.DebugExport` 即按此导出）。
+
+  `note_phonemes` 是 probe 物化的逐音符词内音素序列（头=自身 G2P 序列，
+  续音=派生延续元音），即 pin 身份底料（`Neume.Identity`）的裁决输入。
+
+  运行时结果，不进入工程文件和编辑历史。
+  """
+
+  @enforce_keys [:frame_rate, :total_frames]
+  defstruct notes: [],
+            phonemes: [],
+            phoneme_durations: [],
+            pitch_pred_midi: [],
+            note_phonemes: %{},
+            lead_in_sec: 0.0,
+            origin_sec: 0.0,
+            total_frames: 0,
+            frame_rate: nil,
+            sample_rate: nil,
+            hop_size: nil
+
+  @type note :: %{
+          required(:id) => term(),
+          required(:lyric) => String.t() | nil,
+          required(:language) => String.t(),
+          # 生效的 melisma 续音音符为 nil（音素由头的元音派生）
+          required(:phonemes) => [[String.t()]] | nil
+        }
+
+  @type t :: %__MODULE__{
+          notes: [note()],
+          phonemes: [Neume.RenderArtifact.phoneme_boundary()],
+          phoneme_durations: [non_neg_integer()],
+          pitch_pred_midi: [float()],
+          note_phonemes: Neume.Identity.note_phonemes(),
+          lead_in_sec: float(),
+          origin_sec: float(),
+          total_frames: non_neg_integer(),
+          frame_rate: float(),
+          sample_rate: pos_integer() | nil,
+          hop_size: pos_integer() | nil
+        }
+end
