@@ -15,14 +15,12 @@ defmodule Neume.Editor do
   alias Coconut.Project
   alias Coconut.Util.ID
   alias Neume.Channels.{DurationPin, PitchPin}
-  alias Neume.PitchCurve
-  alias Neume.TrackConfig
-  alias Neume.Engine.DiffSingerPipeline
-  alias Neume.Engine.MockPipeline
-  alias Neume.Identity
+  alias Neume.{Identity, PitchCurve, TrackConfig}
+  alias Neume.Engine.{DiffSingerPipeline, MockPipeline}
   alias Neume.Voicebank.{DiffSinger, Entry}
   alias Neume.Voicebank.Registry, as: VoicebankRegistry
 
+  # 后面可以用 Coconut.Util.ID.generate_id("Track_") 来代替
   @default_track_id "vocal"
   @default_ticks_per_frame 10
 
