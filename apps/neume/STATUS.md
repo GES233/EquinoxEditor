@@ -37,7 +37,9 @@ Neume.Editor
   图内随机算子改成 host-noise 输入，worker 按固定 seed 生成 NumPy float32
   噪声；`fp: false` 可显式回退 stock。派生模型只写 gitignored `tmp/`，
   原声库只读，分发与商用权限仍取决于具体声库许可证。
-- 稀疏 pitch 控制点，经 note-local pin 投影到实际帧网格。
+- identity-base pitch intervention：兼容稀疏绝对 tick/MIDI 折线，并支持
+  Coconut Bezier 控制点容器；Bezier 在宿主侧按真实声学帧对应 tick 栅格化，
+  Python worker 只消费逐帧绝对 MIDI，曲线数学不重复实现。
 - 逐音素 duration pin：指定音素固定为给定 tick 时长，其余音素按预测比例
   吸收剩余帧；该 patch 支持 undo/redo。
 - OpenUtau 式元音锚定：支持任意数量的词内音素，首辅音向前回排，首个元音
@@ -94,10 +96,11 @@ Neume.Editor
   0.0–2.0），`Editor.update_globals/2` key 合并（nil 删除）后经
   `Coconut.configure` 直进 render——globals 门禁在 check 聚合
   （`%{kind: :global, ...}`），有效值进入窗口缓存键与 worker 调用
-  （编译期默认在下、会话覆盖在上）。旋钮不持久化、不可 undo；将来若要
-  落工程文件，候选位置是 `Project.metadata`（coconut Track 暂无
-  metadata/extras 字段，届时需要椰子侧开口子）。逐帧曲线干预不属于
-  本路径，另走 channel（§6.6 第三档 output base）。
+  （编译期默认在下、会话覆盖在上）。旋钮不持久化、不可 undo；Coconut
+  Track 已提供受限 plain-map `metadata/extras` 与 History 写入口，但 Neume
+  尚未把 globals 隐式搬入其中。逐帧表现曲线可另走 Patch：普通曲线只做
+  anchor transport/结构冲突；只有 preserve、相对旧值等 payload 才采用
+  §6.6 第三档 output base 做语义裁决。
 
 ## 验证基线
 

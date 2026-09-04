@@ -2,7 +2,8 @@ defmodule Neume.Channels.PitchPin do
   @moduledoc """
   音符级 pitch pin channel（probe 期身份底料，§6.6）。
 
-  payload：`[[tick, midi], ...]` 绝对 tick 稀疏控制点。底料是 probe 物化的
+  payload：兼容旧 `[[tick, midi], ...]` 折线，或 `pitch_curve_v1` 版本化
+  Bezier plain map；二者都是绝对 tick + 绝对 MIDI。底料是 probe 物化的
   词内音素序列 `[[lang, phone], ...]`（见 `Neume.Identity`），静态 check
   不做 digest 裁决；投影与签名归 `Neume.Editor` 的挂载/probe 路径。
   """

@@ -123,6 +123,16 @@ defmodule Neume.Engine.MockPipeline.Steps.Pitch do
     end
   end
 
+  defp rasterize_segment(segment, %{format: :pitch_curve_v1} = payload) do
+    ticks =
+      for frame <- 0..(segment.frame_count - 1) do
+        segment.start_tick +
+          frame * (segment.end_tick - segment.start_tick) / segment.frame_count
+      end
+
+    Neume.PitchCurve.rasterize_ticks(payload, ticks)
+  end
+
   defp rasterize_segment(segment, points) when is_list(points) do
     base = List.duplicate(segment.midi, segment.frame_count)
 

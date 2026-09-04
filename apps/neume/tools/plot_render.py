@@ -240,7 +240,18 @@ def main() -> None:
     midis = [n["midi"] for n in sung if n["midi"] is not None]
     curves = data.get("curves") or []
     curve_vals = [p["value"] for c in curves for p in c.get("points", [])]
-    vals = midis + curve_vals
+    # Bezier handle 可能超出锚点包络，y 轴范围要把 handle 值也算进去。
+    # handle 存储为相对锚点的偏移（coconut ControlPoint 语义），绝对值 = 锚点 + 偏移。
+    handle_vals = [
+        float(p["value"]) + float(h["value"])
+        for patch in meta.get("patches") or []
+        if isinstance(patch.get("payload"), dict)
+        and patch["payload"].get("format") == "pitch_curve_v1"
+        for p in patch["payload"].get("points") or []
+        for h in (p.get("handle_left"), p.get("handle_right"))
+        if h
+    ]
+    vals = midis + curve_vals + handle_vals
     y_lo, y_hi = (min(vals) - 2, max(vals) + 2) if vals else (48, 72)
 
     for n in sung:
@@ -257,7 +268,7 @@ def main() -> None:
                 n["lyric"], ha="center", va="center", fontsize=8, zorder=4,
             )
 
-    # Pin 控制点（pitch pin 的「锚定音符 MIDI + cents/100」投影）。
+    # Pitch intervention 控制点（绝对 tick → 绝对 MIDI；Bezier handle 保留在 meta）。
     seen_labels = set()
     for curve in curves:
         pts = curve.get("points") or []
@@ -270,6 +281,42 @@ def main() -> None:
             seen_labels.add("cps")
             ax_score.plot(xs, ys, "o", ms=7, mfc="white", mec="#238b45",
                           mew=1.6, color="#238b45", zorder=4.5, label=lbl)
+
+    # Bezier handle 可视化：handle 只保留在 meta.patches[].payload（新版
+    # pitch_curve_v1 envelope），curves[].points 只有锚点。画 锚点—handle
+    # 连线 + 空心三角标记，与被撑出的 rendered pitch 鼓包对应。
+    for patch in meta.get("patches") or []:
+        payload = patch.get("payload")
+        if not isinstance(payload, dict):
+            continue
+        if payload.get("format") != "pitch_curve_v1" or payload.get("adapter") != "bezier":
+            continue
+        seg_x: list = []
+        seg_y: list = []
+        hp_x: list = []
+        hp_y: list = []
+        for p in payload.get("points") or []:
+            pt = tick_to_sec(float(p["tick"]), tempos, tpqn, total_sec)
+            pv = float(p["value"])
+            for key in ("handle_left", "handle_right"):
+                h = p.get(key)
+                if not h:
+                    continue
+                # handle 是相对锚点的偏移量（tick / MIDI 半音）。
+                hx = tick_to_sec(float(p["tick"]) + float(h["tick"]),
+                                 tempos, tpqn, total_sec)
+                hv = pv + float(h["value"])
+                seg_x += [pt, hx, None]
+                seg_y += [pv, hv, None]
+                hp_x.append(hx)
+                hp_y.append(hv)
+        if hp_x:
+            ax_score.plot(seg_x, seg_y, lw=0.6, color="#74c476",
+                          alpha=0.8, zorder=2.6)
+            lbl = "bezier handles" if "handles" not in seen_labels else None
+            seen_labels.add("handles")
+            ax_score.plot(hp_x, hp_y, "^", ms=5.5, mfc="white", mec="#238b45",
+                          mew=1.2, color="#238b45", zorder=4.4, label=lbl)
 
     # meta.patches：pin 铆钉点标记（解析出的 tick 区间 → 秒）。
     for patch in meta.get("patches") or []:

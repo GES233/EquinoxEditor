@@ -44,8 +44,10 @@ melisma（一词跨多音符）用显式旗标表达：续音音符携带
 
 音素时长编辑通过 `Editor.mount_phoneme_duration/3` 挂载 Coconut
 `:duration` patch；指定音素固定为给定 tick 时长，其余音素按模型预测比例
-吸收剩余帧。pitch 曲线经 `Editor.mount_pitch/3` 挂载稀疏控制点。两种 pin
-的 digest 都钉在 **probe 物化的词内音素序列**上（身份底料）：改词、
+吸收剩余帧。pitch intervention 可经 `Editor.mount_pitch/3` 挂载兼容折线，
+或经 `Editor.mount_pitch_curve/3` 挂载 Coconut Bezier 控制点容器；Bezier
+在宿主侧按真实声学帧 tick 栅格化，worker 不重复曲线数学。两种 pin 的
+ digest 都钉在 **probe 物化的词内音素序列**上（身份底料）：改词、
 melisma 晋升/断组会让 pin 冲突并进入统一的 `check_failed` 裁决界面，
 `Editor.repatch/2` 把仍可表达的 pin 批量重签（一条历史边，undo 一次全
 还原）；改音高、拖动和邻居编辑不会误伤。所有干预编辑进入 Coconut
@@ -75,8 +77,8 @@ globals + 窗内音符 + pins + FP/stock 模式 + seed + 噪声算法版本」�
 
 ## TODO
 
-- [ ] energy/breathiness/voicing 的逐帧曲线 channel（手绘编辑）；增量型
-  曲线干预走 output base（coconut `design-2026-08-orchid-intervention.md`
-  §6.6 第三档），与全局旋钮复合。
+- [ ] energy/breathiness/voicing 的逐帧曲线 channel（手绘编辑）：普通表现
+  曲线可作为仅结构裁决的 Patch；只有 preserve、相对旧值等增量型干预才走
+  output base（coconut intervention 设计 §6.6），并与全局旋钮复合。
 - [ ] 声库发现/注册表、多轨调度、播放与导出管理。
 - [ ] 最小钢琴卷帘、音素边界编辑和播放 UI。

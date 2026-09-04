@@ -5,14 +5,15 @@ defmodule Neume.DebugExport do
 
   Track 维度 + 可选 `span`（tick 区间）裁剪，为多轨适配预留；`meta.patches`
   携带存活 pin 的锚点投影（kind/refs/at_version + 解析出的 tick 区间）与
-  payload，`curves` 是 pitch pin 控制点的绝对 MIDI 投影（偏移语义见下）。
+  payload，`curves` 是 pitch intervention 控制点的绝对 MIDI 投影。
 
   帧网约定：`frames` / `phonemes` 一律落在**歌曲时间轴**上（与 notes、
   tempos 同轴）。`Analysis`/`RenderArtifact` 内部的「绝对帧」是制品音频轴
   （wav t=0 ↔ 歌曲 −lead_in），导出时按 `origin_sec − lead_in_sec` 平移
   回歌曲轴，因此 `meta.frames_origin_frame` 通常为负（lead-in 段落在歌曲
-  0 点之前）。pitch pin payload 与渲染管线一致，是绝对 tick → MIDI 的
-  稀疏控制点；`curves` 原样投影这些控制点供可视化。
+  0 点之前）。pitch payload 使用绝对 tick → MIDI：既兼容旧稀疏折线，也
+  支持版本化 Bezier 控制点；`curves` 投影 anchor 点供兼容可视化，完整
+  handle 保留在 `meta.patches[].payload`。
 
   运行时产物，不进工程文件和编辑历史。
   """
@@ -323,16 +324,18 @@ defmodule Neume.DebugExport do
 
   defp resolved_span(_anchor, _view), do: nil
 
-  # pitch pin → 可视化曲线：绝对 tick + 绝对 MIDI，与消费端契约一致。
+  # pitch intervention → 可视化控制点：绝对 tick + 绝对 MIDI。Bezier handle
+  # 保留在 meta.patches.payload；现有画图 schema 继续消费兼容的 tick/value 点。
   defp curves_json(patches, view, span) do
     for %{channel: :pitch} = patch <- patches,
-        span_overlaps?(resolved_span(patch.anchor, view), span) do
-      points =
-        for [tick, midi] <- patch.patch.payload, is_number(midi) do
+        span_overlaps?(resolved_span(patch.anchor, view), span),
+        {:ok, points} <- [Neume.PitchCurve.display_points(patch.patch.payload)] do
+      curve_points =
+        Enum.map(points, fn [tick, midi] ->
           %{tick: tick, value: Float.round(midi * 1.0, 3)}
-        end
+        end)
 
-      %{id: patch.id, kind: "pitch_midi", points: points}
+      %{id: patch.id, kind: "pitch_midi", points: curve_points}
     end
   end
 

@@ -121,6 +121,42 @@ defmodule Neume.DebugExportTest do
   end
 
   @tag tmp_dir: true
+  test "Bezier payload 保留 handle，curves 投影兼容控制点", %{
+    editor: editor,
+    tmp_dir: tmp_dir
+  } do
+    editor = two_notes(editor)
+
+    curve = %Coconut.Curve.Adapter.Bezier{
+      points: [
+        %Coconut.Curve.ControlPoint{
+          tick: 0,
+          value: 60.0,
+          handle_right: %{tick: 120, value: 1.0}
+        },
+        %Coconut.Curve.ControlPoint{
+          tick: 479,
+          value: 62.0,
+          handle_left: %{tick: -120, value: -1.0}
+        }
+      ]
+    }
+
+    assert {:ok, editor} = Editor.mount_pitch_curve(editor, "n1", curve)
+    data = export(editor, Path.join(tmp_dir, "bezier.debug.json"))
+
+    assert [%{"payload" => payload}] = data["meta"]["patches"]
+    assert payload["format"] == "pitch_curve_v1"
+
+    assert get_in(payload, ["points", Access.at(0), "handle_right"]) == %{
+             "tick" => 120,
+             "value" => 1.0
+           }
+
+    assert [%{"points" => [%{"tick" => 0}, %{"tick" => 479}]}] = data["curves"]
+  end
+
+  @tag tmp_dir: true
   test "span 之外的 pin 不进 curves 和 meta.patches", %{editor: editor, tmp_dir: tmp_dir} do
     editor = two_notes(editor)
 

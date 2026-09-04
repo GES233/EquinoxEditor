@@ -68,7 +68,9 @@ defmodule Neume.Engine.DiffSingerPipeline do
 
       graph =
         Flowgraph.new_flowchart()
-        |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id, globals: globals])
+        |> Flowgraph.add_step(Steps.ScorePlan,
+          opts: [track_id: track_id, globals: globals, frame_rate: manifest.timing.frame_rate]
+        )
         |> Flowgraph.add_step(Steps.Analysis,
           opts: [client: client, worker_config: worker_config]
         )
@@ -87,7 +89,9 @@ defmodule Neume.Engine.DiffSingerPipeline do
       # analyze 闭环用独立的 Analysis-only 图。
       analysis_graph =
         Flowgraph.new_flowchart()
-        |> Flowgraph.add_step(Steps.ScorePlan, opts: [track_id: track_id, globals: globals])
+        |> Flowgraph.add_step(Steps.ScorePlan,
+          opts: [track_id: track_id, globals: globals, frame_rate: manifest.timing.frame_rate]
+        )
         |> Flowgraph.add_step(Steps.Analysis,
           opts: [client: client, worker_config: worker_config]
         )

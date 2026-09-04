@@ -70,6 +70,31 @@ defmodule Neume.EditorTest do
     assert Enum.count(artifact.midi, &(&1 == 67.0)) == 47
   end
 
+  test "Bezier pitch intervention 经 mock 管线逐帧栅格化", %{editor: editor} do
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    curve = %Coconut.Curve.Adapter.Bezier{
+      points: [
+        %Coconut.Curve.ControlPoint{
+          tick: 0,
+          value: 60.0,
+          handle_right: %{tick: 160, value: 6.0}
+        },
+        %Coconut.Curve.ControlPoint{
+          tick: 479,
+          value: 64.0,
+          handle_left: %{tick: -160, value: 6.0}
+        }
+      ]
+    }
+
+    assert {:ok, editor} = Editor.mount_pitch_curve(editor, "n1", curve)
+    assert {:ok, _editor, artifact} = Editor.render(editor)
+    assert length(artifact.midi) == 48
+    assert Enum.at(artifact.midi, 24) > 64.0
+  end
+
   test "引擎拒绝落在音符范围外的 pitch 控制点", %{editor: editor} do
     assert {:ok, editor} =
              Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})

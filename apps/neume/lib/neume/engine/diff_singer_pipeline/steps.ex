@@ -5,7 +5,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
 
   alias Coconut.Render.Engine.Snapshot
   alias Coconut.Score.{Key, Note, TempoMap}
-  alias Neume.Syllable
+  alias Neume.{PitchCurve, Syllable}
 
   @head_padding_sec 0.5
 
@@ -42,7 +42,14 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
          notes = attach_groups(notes),
          :ok <- validate_monophonic(notes),
          {:ok, origin_sec} <- build_origin(notes),
-         {:ok, pitch_overrides} <- build_pitch_overrides(pitch_pins, notes, snapshot, origin_sec),
+         {:ok, pitch_overrides} <-
+           build_pitch_overrides(
+             pitch_pins,
+             notes,
+             snapshot,
+             origin_sec,
+             Keyword.get(opts, :frame_rate)
+           ),
          {:ok, duration_overrides} <-
            build_duration_overrides(duration_pins, notes, snapshot) do
       {:ok,
@@ -176,12 +183,13 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     end
   end
 
-  defp build_pitch_overrides(pins, notes, snapshot, origin_sec) do
+  defp build_pitch_overrides(pins, notes, snapshot, origin_sec, frame_rate) do
     by_id = Map.new(notes, &{&1.id, &1})
 
-    Enum.reduce_while(pins, {:ok, []}, fn {note_id, points}, {:ok, acc} ->
+    Enum.reduce_while(pins, {:ok, []}, fn {note_id, payload}, {:ok, acc} ->
       with {:ok, note} <- Map.fetch(by_id, note_id),
-           {:ok, converted} <- convert_points(points, note, snapshot, origin_sec) do
+           {:ok, converted} <-
+             PitchCurve.to_worker_points(payload, note, snapshot, origin_sec, frame_rate) do
         override = %{kind: "pitch", note_id: note_id, points: converted}
         {:cont, {:ok, [override | acc]}}
       else
@@ -269,29 +277,6 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
       do: {:ok, durations},
       else: {:error, {:phoneme_duration_overflow, note.id}}
   end
-
-  # pitch 点必须落在 words 时间线上：head_padding + 局部秒。
-  defp convert_points(points, note, snapshot, origin_sec) when is_list(points) do
-    Enum.reduce_while(points, {:ok, []}, fn
-      [tick, midi], {:ok, acc} when is_integer(tick) and is_number(midi) ->
-        if tick >= note.start_tick and tick < note.end_tick do
-          seconds = @head_padding_sec + (tick_to_sec(snapshot, tick) - origin_sec)
-          {:cont, {:ok, [[seconds, midi * 1.0] | acc]}}
-        else
-          {:halt, {:error, {:pitch_point_outside_note, note.id, tick}}}
-        end
-
-      point, _acc ->
-        {:halt, {:error, {:invalid_pitch_point, note.id, point}}}
-    end)
-    |> case do
-      {:ok, converted} -> {:ok, Enum.reverse(converted)}
-      {:error, _} = error -> error
-    end
-  end
-
-  defp convert_points(points, note, _snapshot, _origin_sec),
-    do: {:error, {:invalid_pitch_points, note.id, points}}
 
   defp tick_to_sec(%Snapshot{tempo_map: nil, tpqn: tpqn}, tick), do: tick / (tpqn * 2.0)
 

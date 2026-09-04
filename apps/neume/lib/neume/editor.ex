@@ -14,6 +14,7 @@ defmodule Neume.Editor do
   alias Coconut.Project
   alias Coconut.Util.ID
   alias Neume.Channels.{DurationPin, PitchPin}
+  alias Neume.PitchCurve
   alias Neume.Engine.DiffSingerPipeline
   alias Neume.Engine.MockPipeline
   alias Neume.Identity
@@ -181,9 +182,25 @@ defmodule Neume.Editor do
   """
   @spec mount_pitch(t(), term(), [[number()]]) :: {:ok, t()} | {:error, term()}
   def mount_pitch(%__MODULE__{} = editor, note_id, points) do
-    case mount_pin(editor, note_id, :pitch, points) do
-      {:ok, editor, _patch} -> {:ok, editor}
-      {:error, _} = error -> error
+    with {:ok, points} <- PitchCurve.normalize(points),
+         {:ok, editor, _patch} <- mount_pin(editor, note_id, :pitch, points) do
+      {:ok, editor}
+    end
+  end
+
+  @doc """
+  在音符上挂载 identity-base Bezier pitch intervention。
+
+  控制点使用绝对 tick + 绝对 MIDI；handle 是相对 anchor 的 tick/value 偏移。
+  payload 降为可 Pickle 的版本化 plain map，宿主按真实声学帧网格调用 Coconut
+  Bezier adapter 栅格化，worker 不重复实现曲线数学。
+  """
+  @spec mount_pitch_curve(t(), term(), Coconut.Curve.Adapter.Bezier.t()) ::
+          {:ok, t()} | {:error, term()}
+  def mount_pitch_curve(%__MODULE__{} = editor, note_id, curve) do
+    with {:ok, payload} <- PitchCurve.from_bezier(curve),
+         {:ok, editor, _patch} <- mount_pin(editor, note_id, :pitch, payload) do
+      {:ok, editor}
     end
   end
 
@@ -208,8 +225,9 @@ defmodule Neume.Editor do
   speaker/velocity 等编译期 globals 同一层）。当前声明白名单是
   `:energy` / `:breathiness` / `:voicing`（variance 预测曲线的乘性系数，
   `1.0` 中立，合法范围 0.0–2.0）；未知键或越界值在 `check/1` 的门禁聚合
-  为 `%{kind: :global, ...}` entry。持久化若要落地，候选位置是
-  `Project.metadata`（coconut Track 暂无 metadata/extras 字段）。
+  为 `%{kind: :global, ...}` entry。Coconut Track 已提供 `extras` 作为宿主
+  命名空间工程事实，但当前 Neume globals 仍明确保持会话态；若以后持久化，
+  应由独立 History 手势写入 `track.extras[:neume]`，不能隐式搬运。
   """
   @spec update_globals(t(), map()) :: {:ok, t()} | {:error, term()}
   def update_globals(%__MODULE__{} = editor, knobs) when is_map(knobs) do
