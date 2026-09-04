@@ -77,8 +77,9 @@ globals + 窗内音符 + pins + FP/stock 模式 + seed + 噪声算法版本」�
 
 ## TODO
 
-- [ ] energy/breathiness/voicing 的逐帧曲线 channel（手绘编辑）：普通表现
-  曲线可作为仅结构裁决的 Patch；只有 preserve、相对旧值等增量型干预才走
-  output base（coconut intervention 设计 §6.6），并与全局旋钮复合。
+- [ ] ~~energy/breathiness/voicing 的逐帧曲线 channel（手绘编辑）~~——本版本
+  不做，三旋钮保持轨道级全局系数；未来重启时普通表现曲线可作为仅结构
+  裁决的 Patch，增量型干预（preserve、相对旧值）走 output base
+  （coconut intervention 设计 §6.6），并与全局旋钮复合。
 - [ ] 声库发现/注册表、多轨调度、播放与导出管理。
 - [ ] 最小钢琴卷帘、音素边界编辑和播放 UI。

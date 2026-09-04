@@ -105,7 +105,7 @@ Neume.Editor
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- `apps/neume` 的 `mix test`：`63 passed, 6 excluded`（excluded 为真声库集成测试）。
+- `apps/neume` 的 `mix test`：`68 passed, 6 excluded`（excluded 为真声库集成测试）。
 - Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
   `43.6%`，通过 2× 包络门禁。
@@ -147,9 +147,10 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 下一步
 
-1. 逐帧曲线 channel（energy/breathiness/voicing 的手绘编辑）：走 tamale
-   patch，增量型干预（"抹平这段颤音"）用 output base（钉 stage 输出数值，
-   §6.6 第三档）；与全局旋钮共存（曲线 resolve 后与旋钮系数复合）。
+1. ~~逐帧曲线 channel（energy/breathiness/voicing 的手绘编辑）~~——本版本
+   不做：三旋钮保持轨道级全局系数直进 render，不上 patch；未来若重启，
+   增量型干预（"抹平这段颤音"）走 output base（钉 stage 输出数值，
+   §6.6 第三档），并与全局旋钮复合。
 2. 增加声库发现/注册表、多轨调度、播放和导出管理。
 3. 在 headless API 稳定后接最小钢琴卷帘、音素边界编辑和播放 UI。
 
