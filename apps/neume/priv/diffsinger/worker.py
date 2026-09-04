@@ -467,7 +467,10 @@ class DiffSingerEngine:
         frames = int(ph_dur.sum())
         steps = np.asarray(int(globals_["steps"]), dtype=np.int64)
         pitch_input, retake = self._pitch_input(words, ph_dur, overrides)
-        return self._run(
+
+        # 调试：NEUME_DEBUG_DUMP=/path/prefix 时把 pitch 前向的输入/输出落盘。
+        dump = os.environ.get("NEUME_DEBUG_DUMP")
+        result = self._run(
             self.pitch,
             ["pitch_pred"],
             {
@@ -484,60 +487,21 @@ class DiffSingerEngine:
             },
         )[0]
 
-    def _pitch_input(self, words, ph_dur, overrides):
-        frames = int(ph_dur.sum())
-        pitch_input = np.zeros((1, frames), dtype=np.float32)
-        retake = np.ones((1, frames), dtype=bool)
-        if not overrides:
-            return pitch_input, retake
-
-        ranges = []
-        phoneme_offset = 0
-        frame_offset = 0
-        for word in words:
-            phonemes = word[0]
-            count = len(phonemes)
-            word_frames = int(ph_dur[0, phoneme_offset : phoneme_offset + count].sum())
-            ranges.append((frame_offset, frame_offset + word_frames))
-            phoneme_offset += count
-            frame_offset += word_frames
-
-        for override in overrides:
-            if override.get("kind") != "pitch":
-                continue
-            word_index = int(override["note_index"])
-            start, stop = ranges[word_index]
-            if stop <= start:
-                continue
-            points = sorted(
-                (
-                    min(
-                        max(int(round(seconds * self.frame_rate)), start),
-                        stop - 1,
-                    ),
-                    float(midi),
-                )
-                for seconds, midi in override["points"]
+        if dump:
+            np.savez(
+                dump + "_pitch.npz",
+                pitch_input=pitch_input,
+                retake=retake,
+                ph_dur=ph_dur,
+                note_midi=encoded["note_midi"],
+                note_rest=encoded["note_rest"],
+                pitch_pred=result,
             )
-            if not points:
-                continue
-            anchors = [(start, points[0][1]), *points, (stop - 1, points[-1][1])]
-            anchors.sort(key=lambda item: item[0])
-            for (left_frame, left_midi), (right_frame, right_midi) in zip(
-                anchors, anchors[1:]
-            ):
-                width = right_frame - left_frame
-                for frame in range(left_frame, right_frame):
-                    ratio = 0.0 if width == 0 else (frame - left_frame) / width
-                    pitch_input[0, frame] = left_midi + (
-                        right_midi - left_midi
-                    ) * ratio
-                    retake[0, frame] = False
-            frame, midi = anchors[-1]
-            pitch_input[0, frame] = midi
-            retake[0, frame] = False
 
-        return pitch_input, retake
+        return result
+
+    def _pitch_input(self, words, ph_dur, overrides):
+        return build_pitch_input(words, ph_dur, overrides, self.frame_rate)
 
     def _variance_forward(self, encoded, ph_dur, pitch, globals_):
         encoder_out, _mask = self._linguistic_forward(
@@ -591,6 +555,78 @@ class DiffSingerEngine:
         f0 = 440.0 * np.power(2.0, (midi - 69.0) / 12.0)
         f0[midi < 0] = 0.0
         return f0.astype(np.float32)
+
+
+def build_pitch_input(words, ph_dur, overrides, frame_rate):
+    """构造 pitch 模型的 pitch/retake 输入（纯函数，可脱离 ONNX 测试）。
+
+    `pitch` 是**绝对**逐帧曲线：模型图内会减去自身的平滑基线
+    （Sub(pitch, base_pitch)），所以未 pin 帧必须填该帧的基准 note midi
+    而不是 0——否则基线塌到 0 附近，pin 区相对基线的残差变成 ~64 的
+    出分布值，扩散输出在该区发散（大幅正弦状漂移）。
+    （图追踪结论见 coconut_intervention priv/fp/probe_retake.py，2026-08-29）
+
+    retake=True 帧自由扩散；pin 覆盖帧 retake=False（强引导而非硬钳制，
+    输出贴合 pin 但仍是扩散噪声的函数）。pin 点到词边界之间按端点值
+    平铺延伸。
+    """
+    frames = int(ph_dur.sum())
+    pitch_input = np.zeros((1, frames), dtype=np.float32)
+    retake = np.ones((1, frames), dtype=bool)
+    if not overrides:
+        return pitch_input, retake
+
+    ranges = []
+    phoneme_offset = 0
+    frame_offset = 0
+    for word in words:
+        phonemes = word[0]
+        count = len(phonemes)
+        word_frames = int(ph_dur[0, phoneme_offset : phoneme_offset + count].sum())
+        # 基准曲线：未 pin 帧填该帧的 note midi（SP/休止 midi<=0 填 0，
+        # retake 为真时图内会被掩掉）。
+        midi = float(word[2]) if word[2] and word[2] > 0 else 0.0
+        pitch_input[0, frame_offset : frame_offset + word_frames] = midi
+        ranges.append((frame_offset, frame_offset + word_frames))
+        phoneme_offset += count
+        frame_offset += word_frames
+
+    for override in overrides:
+        if override.get("kind") != "pitch":
+            continue
+        word_index = int(override["note_index"])
+        start, stop = ranges[word_index]
+        if stop <= start:
+            continue
+        points = sorted(
+            (
+                min(
+                    max(int(round(seconds * frame_rate)), start),
+                    stop - 1,
+                ),
+                float(midi),
+            )
+            for seconds, midi in override["points"]
+        )
+        if not points:
+            continue
+        anchors = [(start, points[0][1]), *points, (stop - 1, points[-1][1])]
+        anchors.sort(key=lambda item: item[0])
+        for (left_frame, left_midi), (right_frame, right_midi) in zip(
+            anchors, anchors[1:]
+        ):
+            width = right_frame - left_frame
+            for frame in range(left_frame, right_frame):
+                ratio = 0.0 if width == 0 else (frame - left_frame) / width
+                pitch_input[0, frame] = left_midi + (
+                    right_midi - left_midi
+                ) * ratio
+                retake[0, frame] = False
+        frame, midi = anchors[-1]
+        pitch_input[0, frame] = midi
+        retake[0, frame] = False
+
+    return pitch_input, retake
 
 
 def emit(message):

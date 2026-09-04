@@ -4,8 +4,11 @@ defmodule Neume.Analysis do
 
   不运行 acoustic/vocoder 即可取得：按需 G2P 后的逐音符音素、duration 模型
   预测的逐音素帧长、pitch 预测，以及元音锚定后的音素边界。边界帧号是
-  窗（或全轨）局部时基；歌曲绝对帧（含 lead-in 平移约定，与
+  窗（或全轨）局部时基；**制品音频轴**帧（wav t=0 ↔ 歌曲 −lead_in，与
   `RenderArtifact.phonemes` 一致）= `local_frame + round(origin_sec * frame_rate)`。
+  要与歌曲时间轴（notes/tick↔sec）对齐需再减 lead_in：
+  `local_frame + round((origin_sec - lead_in_sec) * frame_rate)`
+  （`Neume.DebugExport` 即按此导出）。
 
   `note_phonemes` 是 probe 物化的逐音符词内音素序列（头=自身 G2P 序列，
   续音=派生延续元音），即 pin 身份底料（`Neume.Identity`）的裁决输入。

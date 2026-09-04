@@ -57,6 +57,12 @@ tamale patch、不可 undo 也不随工程持久化；越界或未知键在 chec
 聚合为 `%{kind: :global, ...}` entry。逐帧曲线干预是另一条路（tamale
 patch，待落地）。
 
+调试导出：`Editor.export_debug(editor, path, opts)` 把当前轨打包成
+debug.json（notes/pitch 帧网/音素边界/tempo/`meta.patches` 铆钉点/pin
+控制点曲线；`span:` 裁剪 tick 区间，`raw?: true` 附无干预对照），
+`tools/plot_render.py` 用 matplotlib 画钢琴卷帘 + pitch + 音素时序图
+（`-o out.svg` 出矢量图，依赖 `pip install matplotlib`）。
+
 渲染按乐句分窗增量执行：空档 ≥ 3 拍切窗，窗口级 WAV 缓存按「声库摘要 +
 globals + 窗内音符 + pins」失效，编辑后只重推内容变化的窗口，各窗音频按
 绝对时间拼接成整轨 `RenderArtifact`。

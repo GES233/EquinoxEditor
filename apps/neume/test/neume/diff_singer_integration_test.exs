@@ -160,6 +160,43 @@ defmodule Neume.DiffSingerIntegrationTest do
     assert {:ok, "RIFF" <> _rest} = File.read(second.path)
   end
 
+  @tag tmp_dir: "asaritsu"
+  test "调试导出落在歌曲轴：元音锚点 ≈ 音符起点，无发声帧已遮罩", %{tmp_dir: tmp_dir} do
+    assert {:ok, editor} = asaritsu_editor(tmp_dir, "export")
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "啦"})
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n2", "n1", {480, 960}, %{pitch: 62, lyric: "米"})
+
+    assert {:ok, _editor, path} =
+             Editor.export_debug(editor, Path.join(tmp_dir, "e.debug.json"))
+
+    data = Jason.decode!(File.read!(path))
+
+    # 歌曲轴：元音锚在音符起点（120bpm 下 n2 起点 0.5s），而非 +lead_in
+    vowel1 = Enum.find(data["phonemes"], &(&1["note_id"] == "n1" and &1["label"] == "a"))
+    vowel2 = Enum.find(data["phonemes"], &(&1["note_id"] == "n2" and &1["label"] == "i"))
+    assert_in_delta vowel1["start_sec"], 0.0, 0.05
+    assert_in_delta vowel2["start_sec"], 0.5, 0.05
+
+    # lead-in 段在歌曲 0 点之前：origin 为负；SP（note_id 空）覆盖帧的
+    # pitch 被遮罩为 nil——注意首音符辅音会回排到歌曲 0 点之前，属于
+    # 合法发声内容，不在遮罩范围内。
+    origin = data["meta"]["frames_origin_frame"]
+    assert origin < 0
+    fps = data["meta"]["frame_rate"]
+    expected_end_sec = (origin + data["meta"]["total_frames"]) / fps
+    assert_in_delta data["meta"]["total_sec"], expected_end_sec, 0.0001
+
+    for sp <- Enum.filter(data["phonemes"], &is_nil(&1["note_id"])) do
+      lo = round(sp["start_sec"] * fps) - origin
+      hi = round(sp["end_sec"] * fps) - origin
+      assert Enum.all?(Enum.slice(data["frames"]["midi"], lo, hi - lo), &is_nil/1)
+    end
+  end
+
   defp asaritsu_editor(tmp_dir, name) do
     voicebank = System.get_env("DS_VOICEBANK") || @voicebank
     python = System.get_env("DS_PYTHON") || @python

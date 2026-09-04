@@ -229,6 +229,54 @@ defmodule Neume.Editor do
   def globals(%__MODULE__{} = editor), do: editor.session.globals
 
   @doc """
+  导出调试 JSON（`Neume.DebugExport`，`tools/plot_render.py` 可画）。
+
+  Track 维度（当前 editor 的轨）+ 可选 `span: {start_tick, end_tick}` 裁剪；
+  `raw?: true` 时附带一次无 pin 的对照 probe（`frames_raw`/`phonemes_raw`）。
+  导出前跑完整 check + probe（与 render 同一裁决路径），冲突即失败。
+  返回写出的路径。
+  """
+  @spec export_debug(t(), Path.t(), keyword()) :: {:ok, t(), Path.t()} | {:error, term()}
+  def export_debug(%__MODULE__{} = editor, path, opts \\ []) do
+    with {:ok, editor, request, analysis} <- checked_probe(editor),
+         {:ok, raw} <- maybe_raw_probe(editor, request, Keyword.get(opts, :raw?, false)),
+         {:ok, data} <-
+           Neume.DebugExport.build(
+             request.snapshot,
+             editor.track_id,
+             analysis,
+             alive_patches(editor),
+             span: opts[:span],
+             raw: raw
+           ) do
+      {:ok, editor, Neume.DebugExport.write!(data, path)}
+    end
+  end
+
+  # 无干预对照 probe：pins 传空，同一 globals——raw 与 effective 的唯一
+  # 差异就是干预本身。
+  defp maybe_raw_probe(_editor, _request, raw?) when raw? in [nil, false], do: {:ok, nil}
+
+  defp maybe_raw_probe(editor, request, true) do
+    editor.pipeline.analyze(
+      editor.pipeline_state,
+      request.snapshot,
+      %{},
+      request.globals,
+      editor.track_id
+    )
+  end
+
+  defp alive_patches(editor) do
+    workspace = Coconut.Edit.History.current(editor.session.history).workspace
+
+    case Map.fetch(workspace.tracks, editor.track_id) do
+      {:ok, track} -> track.patches
+      :error -> []
+    end
+  end
+
+  @doc """
   批量重挂手势（§6.6 re-patch）：把 check 冲突 entry 里的 pin 在新底料上
   重签。payload 仍可表达（下标在界内等）则保留重签；否则降级报告为
   `:degraded`（旧 patch 原样保留，由调用方修改后重新挂载）。

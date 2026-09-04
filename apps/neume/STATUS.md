@@ -74,6 +74,16 @@ Neume.Editor
   界内等）则保留重签，否则降级报告 `:degraded`（旧 patch 原样保留）；
   整批经 coconut `Command.repatch_patches` 落**一条历史边**（undo 一次
   全还原）。
+- 调试导出（`Editor.export_debug/2` → `Neume.DebugExport`）：Track 维度 +
+  可选 `span` tick 裁剪（多轨适配预留），打包 `neume-debug/1` schema 的
+  debug.json——notes（秒轴）、帧级 pitch（有效/可选 `raw?: true` 无干预
+  对照）、音素绝对边界、tempo 段，以及 `meta.patches`（存活 pin 的锚点
+  投影：kind/refs/at_version + 解析出的 tick 区间 + payload）和 `curves`
+  （pitch pin 控制点的「锚定音符 MIDI + cents/100」可视化投影）。
+  `tools/plot_render.py`（vendored 自 coconut_intervention，扩展了
+  frames_origin/span 默认缩放/pin 铆钉标记）用 matplotlib 画钢琴卷帘 +
+  pitch + 音素时序，`-o` 扩展名决定 PNG/SVG/PDF。导出前走完整
+  check+probe，冲突即失败。
 - 全局表现旋钮（会话态，不经 tamale patch）：`:energy` / `:breathiness`
   / `:voicing` 是 variance 预测曲线的乘性系数（`1.0` 中立，合法范围
   0.0–2.0），`Editor.update_globals/2` key 合并（nil 删除）后经
@@ -87,7 +97,7 @@ Neume.Editor
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- 根目录 `mix test`：`53 passed, 5 excluded`（excluded 为真声库集成测试）。
+- 根目录 `mix test`：`61 passed, 5 excluded`（excluded 为真声库集成测试）。
 - `mix dialyzer`：`Total errors: 0`。
 - Python 纯对齐测试：10 项通过，覆盖 V/CV/CCV/CVC、C-G-V、休止、melisma
   组展开/多 slot 锚定与 `note_phonemes` 按 owner 归并。
