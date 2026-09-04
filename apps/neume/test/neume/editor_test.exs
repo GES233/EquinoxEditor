@@ -201,6 +201,40 @@ defmodule Neume.EditorTest do
            ] = analysis.phonemes
   end
 
+  @tag tmp_dir: true
+  test "全局旋钮挂载轨道 extras：undo/redo、随工程往返、无变化不落边", %{
+    editor: editor,
+    tmp_dir: tmp_dir
+  } do
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: 1.5})
+    assert Editor.globals(editor) == %{energy: 1.5}
+    assert track_extras(editor) == %{neume: %{globals: %{energy: 1.5}}}
+
+    # 重复同样值不落新历史边：一次 undo 即回到无旋钮状态。
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: 1.5})
+    assert {:ok, editor} = Editor.undo(editor)
+    assert Editor.globals(editor) == %{}
+    assert track_extras(editor) == %{}
+
+    assert {:ok, editor} = Editor.redo(editor)
+    assert Editor.globals(editor) == %{energy: 1.5}
+
+    # 随工程保存/加载往返。
+    path = Path.join(tmp_dir, "globals.coconut")
+    assert {:ok, ^path} = Editor.save(editor, path)
+    assert {:ok, loaded} = Editor.load(path, ticks_per_frame: 10)
+    assert Editor.globals(loaded) == %{energy: 1.5}
+    assert {:ok, _loaded, _artifact} = Editor.render(loaded)
+
+    # nil 删空后 extras 恢复干净（不留空壳）。
+    assert {:ok, editor} = Editor.update_globals(editor, %{energy: nil})
+    assert Editor.globals(editor) == %{}
+    assert track_extras(editor) == %{}
+  end
+
   test "全局旋钮：会话合并、nil 删除、门禁聚合（mock 不消费旋钮值）", %{editor: editor} do
     assert {:ok, editor} =
              Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
@@ -229,5 +263,14 @@ defmodule Neume.EditorTest do
   defp notes(editor) do
     {:ok, notes} = Editor.notes(editor)
     notes
+  end
+
+  defp track_extras(editor) do
+    {:ok, track} =
+      editor.session
+      |> Coconut.workspace()
+      |> Coconut.Edit.Workspace.fetch_track("vocal")
+
+    track.extras
   end
 end

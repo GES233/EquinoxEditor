@@ -91,21 +91,19 @@ Neume.Editor
   frames_origin/span 默认缩放/pin 铆钉标记）用 matplotlib 画钢琴卷帘 +
   pitch + 音素时序，`-o` 扩展名决定 PNG/SVG/PDF。导出前走完整
   check+probe，冲突即失败。
-- 全局表现旋钮（会话态，不经 tamale patch）：`:energy` / `:breathiness`
+- 全局表现旋钮（轨道挂载，不经 tamale patch）：`:energy` / `:breathiness`
   / `:voicing` 是 variance 预测曲线的乘性系数（`1.0` 中立，合法范围
-  0.0–2.0），`Editor.update_globals/2` key 合并（nil 删除）后经
-  `Coconut.configure` 直进 render——globals 门禁在 check 聚合
-  （`%{kind: :global, ...}`），有效值进入窗口缓存键与 worker 调用
-  （编译期默认在下、会话覆盖在上）。旋钮不持久化、不可 undo；Coconut
-  Track 已提供受限 plain-map `metadata/extras` 与 History 写入口，但 Neume
-  尚未把 globals 隐式搬入其中。逐帧表现曲线可另走 Patch：普通曲线只做
-  anchor transport/结构冲突；只有 preserve、相对旧值等 payload 才采用
-  §6.6 第三档 output base 做语义裁决。
+  0.0–2.0），`Editor.update_globals/2` key 合并（nil 删除）后写入
+  `track.extras[:neume][:globals]`——经 `Command.put_track_extras` 落一条
+  可 undo 历史边，随工程持久化；读档与 undo/redo 后从 extras 重新派生
+  会话 render 配置（编译期默认在下、轨道旋钮在上）。globals 门禁在 check
+  聚合（`%{kind: :global, ...}`），有效值进入窗口缓存键与 worker 调用。
+  逐帧表现曲线本版本不做（见"下一步"）。
 
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- `apps/neume` 的 `mix test`：`68 passed, 6 excluded`（excluded 为真声库集成测试）。
+- `apps/neume` 的 `mix test`：`69 passed, 6 excluded`（excluded 为真声库集成测试）。
 - Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
   `43.6%`，通过 2× 包络门禁。

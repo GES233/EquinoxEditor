@@ -39,8 +39,8 @@ defmodule Neume.Engine.DiffSingerWorker do
   defp worker_key(config) do
     {Map.get(config, :python, ["python"]), Map.fetch!(config, :voicebank_root),
      Map.get(config, :voicebank_digest), Map.get(config, :fp_manifest),
-     Map.get(config, :fp_manifest_digest), Map.get(config, :fp_noise_version), Map.get(config, :seed, 0),
-     Map.get(config, :worker, default_worker())}
+     Map.get(config, :fp_manifest_digest), Map.get(config, :fp_noise_version),
+     Map.get(config, :seed, 0), Map.get(config, :worker, default_worker())}
   end
 
   defp default_worker do

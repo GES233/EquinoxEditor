@@ -60,10 +60,10 @@ History，支持 undo/redo，最终仍经过上述元音锚定，因此 artifact
 `{:error, {:check_failed, entries}}`）。
 
 全局表现旋钮（`energy`/`breathiness`/`voicing`，variance 预测曲线的乘性
-系数，1.0 中立）走 `Editor.update_globals/2` 直进 render：会话态、不经
-tamale patch、不可 undo 也不随工程持久化；越界或未知键在 check 的门禁
-聚合为 `%{kind: :global, ...}` entry。逐帧曲线干预是另一条路（tamale
-patch，待落地）。
+系数，1.0 中立）是轨道挂载的工程事实：`Editor.update_globals/2` 写入
+`track.extras[:neume][:globals]`（一条可 undo 的历史边），随工程保存/
+加载往返，读档与 undo/redo 后自动重新派生到会话 render 配置；越界或
+未知键在 check 的门禁聚合为 `%{kind: :global, ...}` entry。
 
 调试导出：`Editor.export_debug(editor, path, opts)` 把当前轨打包成
 debug.json（notes/pitch 帧网/音素边界/tempo/`meta.patches` 铆钉点/pin

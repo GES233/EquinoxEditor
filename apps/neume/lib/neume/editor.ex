@@ -66,14 +66,17 @@ defmodule Neume.Editor do
 
     with {:ok, project, manifest} <- prepare_open_voicebank(project, opts),
          :ok <- validate_ticks_per_frame(ticks_per_frame),
-         {:ok, %Track{module: Track.Vocal}} <- Workspace.fetch_track(project.workspace, track_id),
+         {:ok, %Track{module: Track.Vocal} = track} <-
+           Workspace.fetch_track(project.workspace, track_id),
+         {:ok, mounted} <- mounted_globals(track),
          {:ok, pipeline, pipeline_state} <-
            compile_pipeline(manifest, track_id, ticks_per_frame, opts),
          engine_config <- pipeline.engine_config(pipeline_state, track_id),
          {:ok, session} <-
            Coconut.new(project,
              channels: %{duration: DurationPin, pitch: PitchPin},
-             engine: {CoconutOi.OrchidAdapter, engine_config}
+             engine: {CoconutOi.OrchidAdapter, engine_config},
+             globals: mounted
            ) do
       {:ok,
        %__MODULE__{
@@ -219,30 +222,27 @@ defmodule Neume.Editor do
   end
 
   @doc """
-  更新会话级全局旋钮（key 合并，nil 删除该键）。
+  更新轨道级全局旋钮（key 合并，nil 删除该键）。
 
-  旋钮直接进 render，不经 tamale patch，也不进工程文件/undo 历史（与
-  speaker/velocity 等编译期 globals 同一层）。当前声明白名单是
-  `:energy` / `:breathiness` / `:voicing`（variance 预测曲线的乘性系数，
-  `1.0` 中立，合法范围 0.0–2.0）；未知键或越界值在 `check/1` 的门禁聚合
-  为 `%{kind: :global, ...}` entry。Coconut Track 已提供 `extras` 作为宿主
-  命名空间工程事实，但当前 Neume globals 仍明确保持会话态；若以后持久化，
-  应由独立 History 手势写入 `track.extras[:neume]`，不能隐式搬运。
+  旋钮是轨道挂载的工程事实：存于 `track.extras[:neume][:globals]`，经
+  `Command.put_track_extras` 落一条历史边（undo/redo 生效），随工程
+  保存/加载往返；写入后同步派生到会话 render 配置，直进 render，不经
+  tamale patch。当前声明白名单是 `:energy` / `:breathiness` / `:voicing`
+  （variance 预测曲线的乘性系数，`1.0` 中立，合法范围 0.0–2.0）；未知键
+  或越界值在 `check/1` 的门禁聚合为 `%{kind: :global, ...}` entry。
+  无变化的调用不落历史边。
   """
   @spec update_globals(t(), map()) :: {:ok, t()} | {:error, term()}
   def update_globals(%__MODULE__{} = editor, knobs) when is_map(knobs) do
-    globals =
-      Enum.reduce(knobs, editor.session.globals, fn
-        {key, nil}, acc -> Map.delete(acc, key)
-        {key, value}, acc -> Map.put(acc, key, value)
-      end)
-
-    with {:ok, session} <- Coconut.configure(editor.session, globals: globals) do
+    with {:ok, track} <- current_track(editor),
+         {:ok, current} <- mounted_globals(track),
+         merged <- merge_knobs(current, knobs),
+         {:ok, session} <- put_globals(editor.session, track, merged) do
       {:ok, %{editor | session: session}}
     end
   end
 
-  @doc "当前会话级全局旋钮（不含管线编译期默认值）。"
+  @doc "当前轨道挂载的全局旋钮（不含管线编译期默认值）。"
   @spec globals(t()) :: map()
   def globals(%__MODULE__{} = editor), do: editor.session.globals
 
@@ -515,6 +515,79 @@ defmodule Neume.Editor do
     end
   end
 
+  # ---- 轨道挂载的 globals（extras 是持久化事实，session.globals 是派生视图）----
+
+  # extras 的宿主命名空间键。
+  @globals_ns :neume
+
+  defp mounted_globals(%Track{extras: extras}) do
+    with {:ok, ns} <- fetch_extras_ns(extras),
+         {:ok, globals} <- fetch_ns_globals(ns) do
+      {:ok, globals}
+    end
+  end
+
+  defp fetch_extras_ns(extras) do
+    case Map.fetch(extras, @globals_ns) do
+      :error -> {:ok, %{}}
+      {:ok, ns} when is_map(ns) and not is_struct(ns) -> {:ok, ns}
+      {:ok, other} -> {:error, {:invalid_track_extras, @globals_ns, other}}
+    end
+  end
+
+  defp fetch_ns_globals(ns) do
+    case Map.fetch(ns, :globals) do
+      :error -> {:ok, %{}}
+      {:ok, globals} when is_map(globals) and not is_struct(globals) -> {:ok, globals}
+      {:ok, other} -> {:error, {:invalid_track_globals, other}}
+    end
+  end
+
+  defp merge_knobs(globals, knobs) do
+    Enum.reduce(knobs, globals, fn
+      {key, nil}, acc -> Map.delete(acc, key)
+      {key, value}, acc -> Map.put(acc, key, value)
+    end)
+  end
+
+  # 无变化不落历史边；有变化先经 History 写轨道事实，再同步会话 render 配置。
+  defp put_globals(session, %Track{} = track, merged) do
+    extras = put_ns_globals(track.extras, merged)
+
+    if extras == track.extras do
+      {:ok, session}
+    else
+      with {:ok, session} <-
+             Coconut.run(session, Command.put_track_extras(track.id, extras)) do
+        Coconut.configure(session, globals: merged)
+      end
+    end
+  end
+
+  # 写回 extras 的 neume 命名空间；globals 清空时摘除 :globals，命名空间
+  # 清空时整个摘除，保持 extras 干净（空写不留壳）。
+  defp put_ns_globals(extras, globals) do
+    ns = Map.get(extras, @globals_ns, %{})
+
+    ns =
+      if globals == %{},
+        do: Map.delete(ns, :globals),
+        else: Map.put(ns, :globals, globals)
+
+    if ns == %{},
+      do: Map.delete(extras, @globals_ns),
+      else: Map.put(extras, @globals_ns, ns)
+  end
+
+  # undo/redo 后 extras 可能变化：会话 globals 从轨道事实重新派生。
+  defp sync_mounted_globals(%__MODULE__{} = editor) do
+    with {:ok, track} <- current_track(editor),
+         {:ok, globals} <- mounted_globals(track),
+         {:ok, session} <- Coconut.configure(editor.session, globals: globals) do
+      {:ok, %{editor | session: session}}
+    end
+  end
+
   defp current_track(editor) do
     editor.session
     |> Coconut.workspace()
@@ -537,7 +610,7 @@ defmodule Neume.Editor do
 
   defp move_history(editor, move) do
     case move.(editor.session) do
-      {:ok, session} -> {:ok, %{editor | session: session}}
+      {:ok, session} -> sync_mounted_globals(%{editor | session: session})
       {:error, _} = error -> error
     end
   end
