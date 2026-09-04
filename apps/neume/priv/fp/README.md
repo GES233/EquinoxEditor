@@ -1,12 +1,13 @@
-# DiffSinger Pure-FP 手术
+# DiffSinger Modified 声库的 Pure-FP 修改工艺
 
 `freeze_noise.py` 把 DiffSinger ONNX 图内无 seed 的随机算子替换为显式的
 host-noise 输入，并把派生 ONNX 与 `fp_manifest.json` 写入独立目录。原声库
 始终只读。
 
-Neume 默认在 `tmp/onnx_fp/<声库短名>/` 构建并使用 FP 模型；传入
-`fp: false` 可退回原始 stock 模型。`seed` 决定 host noise：相同输入、声库、
-运行时与 seed 应逐比特复现，改变 seed 会得到不同 take。
+Neume 在 `tmp/onnx_fp/<声库摘要>/` 构建修改模型。Stock 与 Modified 是
+注册表中的两个独立声库 entry；Pure-FP 是当前 Modified entry 使用的内部工艺。`seed` 决定
+host noise：相同输入、声库、运行时与 seed 应逐比特复现，改变 seed 会得到
+不同 take。
 
 ## 许可证
 

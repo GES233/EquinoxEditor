@@ -75,12 +75,6 @@ defmodule Neume.Voicebank.DiffSinger do
 
   def scan(root), do: {:error, {:invalid_voicebank_root, root}}
 
-  @doc "生成 Coconut 工程中可持久化的声库签名。"
-  @spec signature(t()) :: Coconut.Project.voicebank()
-  def signature(%__MODULE__{} = manifest) do
-    %{name: manifest.name, engine: :diffsinger, digest: manifest.digest}
-  end
-
   defp ensure_directory(root) do
     if File.dir?(root), do: :ok, else: {:error, {:voicebank_not_found, root}}
   end

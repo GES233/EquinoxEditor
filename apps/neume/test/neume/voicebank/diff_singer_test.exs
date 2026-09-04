@@ -1,7 +1,7 @@
 defmodule Neume.Voicebank.DiffSingerTest do
   use ExUnit.Case, async: true
 
-  alias Neume.Voicebank.DiffSinger
+  alias Neume.Voicebank.{DiffSinger, Entry}
 
   @tag tmp_dir: true
   test "扫描完整声库并用语义资产生成稳定签名", %{tmp_dir: tmp_dir} do
@@ -16,9 +16,9 @@ defmodule Neume.Voicebank.DiffSingerTest do
     assert MapSet.member?(first.capabilities, :breathiness)
     assert MapSet.member?(first.capabilities, :predict_tension)
 
-    signature = DiffSinger.signature(first)
-    assert signature.name == "Test Singer"
-    assert signature.engine == :diffsinger
+    signature = Entry.stock(first).signature
+    assert signature.name == "Test Singer (Stock)"
+    assert signature.engine == :diffsinger_stock
     assert byte_size(signature.digest) == 64
 
     assert :ok = File.write(first.models.acoustic, "acoustic-v2")

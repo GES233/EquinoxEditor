@@ -36,11 +36,12 @@ defmodule Neume.Engine.DiffSingerFp do
   def load_manifest(path) do
     with {:ok, bytes} <- File.read(path),
          {:ok, manifest} when is_map(manifest) <- Jason.decode(bytes),
-         :ok <- validate_manifest(manifest, path) do
+         :ok <- validate_manifest(manifest, path),
+         {:ok, digest} <- digest_manifest(bytes, manifest) do
       {:ok,
        %{
          manifest_path: Path.expand(path),
-         manifest_digest: :crypto.hash(:sha256, bytes) |> Base.encode16(case: :lower),
+         manifest_digest: digest,
          models: Map.new(manifest, fn {key, entry} -> {key, entry["path"]} end),
          noise: Map.new(manifest, fn {key, entry} -> {key, entry["noise"]} end),
          noise_version: @noise_version
@@ -66,6 +67,33 @@ defmodule Neume.Engine.DiffSingerFp do
     end
   rescue
     error -> {:error, {:fp_surgery_failed, Exception.message(error)}}
+  end
+
+  defp digest_manifest(bytes, manifest) do
+    @model_keys
+    |> Enum.sort()
+    |> Enum.reduce_while({:ok, :crypto.hash_update(:crypto.hash_init(:sha256), bytes)}, fn key,
+                                                                                           {:ok,
+                                                                                            context} ->
+      path = manifest[key]["path"]
+
+      case File.read(path) do
+        {:ok, model} ->
+          context =
+            context
+            |> :crypto.hash_update(<<byte_size(key)::unsigned-big-64, key::binary>>)
+            |> :crypto.hash_update(<<byte_size(model)::unsigned-big-64, model::binary>>)
+
+          {:cont, {:ok, context}}
+
+        {:error, reason} ->
+          {:halt, {:error, {:fp_model_digest_failed, path, reason}}}
+      end
+    end)
+    |> case do
+      {:ok, context} -> {:ok, context |> :crypto.hash_final() |> Base.encode16(case: :lower)}
+      {:error, _} = error -> error
+    end
   end
 
   defp validate_manifest(manifest, path) do

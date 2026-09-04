@@ -13,23 +13,27 @@
 {:ok, editor} =
   Neume.Editor.new(
     voicebank_path: "E:/ProgramAssets/OpenUTAUSingers/Asaritsu",
+    voicebank_mode: :modified,
     python: ["D:/path/to/python.exe"],
     output_dir: "D:/temp/neume-renders",
     speaker: "Normal",
     steps: 8,
     seed: 0
-    # fp: false # 显式退回原始 stock 模型
   )
 ```
 
 推理 Python 环境需要 `onnxruntime`、`numpy`、`soundfile`、`pyyaml`；中文歌词的
-自动音素化还需要 `pypinyin`。真实 worker 默认启用 Pure-FP：首次使用时由
-`fp_python`（默认系统 `python`，需额外安装 `onnx`）把图内随机算子改为 host
-noise 输入，派生 ONNX 写到 gitignored 的 `tmp/onnx_fp/<声库摘要>/`，原声库
-始终只读。相同输入与 `seed` 不依赖缓存也逐比特复现；换 seed 产生新 take；
-`fp: false` 显式使用 stock 模型。派生模型的分发/商用仍服从具体声库许可证。
-工程只保存 `{name, engine, digest}`，重新打开时必须再次提供 `voicebank_path`
-并通过摘要核对。
+自动音素化还需要 `pypinyin`。Modified 变体当前采用 Pure-FP 工艺，首次显式构建时由 `fp_python`（默认系统
+`python`，需额外安装 `onnx`）把图内随机算子改为 host noise 输入，派生 ONNX
+写到 gitignored 的 `tmp/onnx_fp/<声库摘要>/`，原声库始终只读。相同输入与
+`seed` 不依赖缓存也逐比特复现；换 seed 产生新 take。派生模型的分发/商用仍
+服从具体声库许可证。
+
+Stock 与 Modified 是两个独立声库身份（`:diffsinger_stock` / `:diffsinger_modified`），
+不是同一个声库上的运行期开关。`Neume.Voicebank.Registry.discover/1` 可扫描多个
+根目录或其直接子目录；发现只登记 Stock 和已经存在的 Modified manifest，绝不
+自动修改 ONNX。需要构建时显式调用 `Registry.prepare_modified/3`。工程保存所选
+变体的 `{name, engine, digest}`，重新打开时使用 registry + `voicebank_id` 解析。
 
 真实管线使用 OpenUtau 式元音锚定：音符起点对应词内首个元音（C-G-V
 结构对应 glide），此前的一个或多个辅音向前回排并占用前置 SP/间隙；

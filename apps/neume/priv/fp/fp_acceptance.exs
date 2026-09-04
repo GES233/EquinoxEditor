@@ -13,9 +13,9 @@ render = fn mode, seed, name ->
   {:ok, editor} =
     Neume.Editor.new(
       voicebank_path: voicebank,
+      voicebank_mode: if(mode, do: :modified, else: :stock),
       python: worker_python,
       fp_python: fp_python,
-      fp: mode,
       seed: seed,
       cache: false,
       steps: 4,

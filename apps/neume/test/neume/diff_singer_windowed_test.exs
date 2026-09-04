@@ -99,6 +99,7 @@ defmodule Neume.DiffSingerWindowedTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: CountingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders")
@@ -154,6 +155,7 @@ defmodule Neume.DiffSingerWindowedTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: CountingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders")
@@ -183,6 +185,7 @@ defmodule Neume.DiffSingerWindowedTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: CountingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders")

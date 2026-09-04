@@ -122,6 +122,7 @@ defmodule Neume.DiffSingerEditorTest do
                project_id: "project-diffsinger",
                workspace_id: "workspace-diffsinger",
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                output_dir: output_dir,
                diffsinger_client: FakeClient
              )
@@ -141,8 +142,8 @@ defmodule Neume.DiffSingerEditorTest do
     assert File.regular?(artifact.path)
 
     assert {:ok, project} = Coconut.project(editor.session)
-    assert project.voicebank.name == "Test Singer"
-    assert project.voicebank.engine == :diffsinger
+    assert project.voicebank.name == "Test Singer (Stock)"
+    assert project.voicebank.engine == :diffsinger_stock
     assert byte_size(project.voicebank.digest) == 64
   end
 
@@ -153,6 +154,7 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: FakeClient,
                output_dir: Path.join(tmp_dir, "renders")
              )
@@ -163,6 +165,7 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:error, {:voicebank_mismatch, expected, actual}} =
              Editor.open(project,
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: FakeClient,
                output_dir: Path.join(tmp_dir, "renders")
              )
@@ -178,6 +181,7 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: RecordingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders")
@@ -211,6 +215,7 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: RecordingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders"),
@@ -259,6 +264,7 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: RecordingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders")
@@ -304,6 +310,7 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: RecordingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders")
@@ -343,6 +350,7 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: RecordingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders")
@@ -389,6 +397,7 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: RecordingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders")
@@ -431,6 +440,7 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :stock,
                diffsinger_client: RecordingClient,
                diffsinger_client_config: %{test_pid: self()},
                output_dir: Path.join(tmp_dir, "renders")

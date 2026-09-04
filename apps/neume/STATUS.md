@@ -28,16 +28,18 @@ Neume.Editor
 - 无声库时使用确定性的 mock 管线。
 - OpenUtau DiffSinger 声库严格扫描：配置、八个 ONNX 模型、语言/音素
   字典、speaker embedding、统一帧网格和路径逃逸检查。
-- 声库是仓库外资产；工程仅保存 `{name, engine, digest}`，打开时重新扫描并
-  核对摘要。
+- 声库是仓库外资产；多根目录发现由 `Neume.Voicebank.Registry` 负责。Stock
+  与 Modified 是两个独立 entry/工程身份（`:diffsinger_stock` /
+  `:diffsinger_modified`）；发现只读取已有修改 manifest，不执行模型修改，构建
+  必须显式调用 `Registry.prepare_modified/3`。工程保存 `{name, engine, digest}`，打开时由注册表解析。
 - 中文歌词通过声库 `dsdict-zh.yaml` 和 `pypinyin` 自动音素化，也支持音符
   metadata 中的显式 `[[language, phoneme]]`。
 - 常驻 NDJSON Python worker；ONNX session 按 Python、声库路径/摘要、
   FP manifest/噪声版本/seed 和 worker 路径隔离，摘要或渲染上下文变化后
   不会复用旧 session。
-- DiffSinger Pure-FP 默认路径：本地手术把 pitch/variance/acoustic/vocoder
+- DiffSinger Modified 变体当前采用 Pure-FP 工艺：本地手术把 pitch/variance/acoustic/vocoder
   图内随机算子改成 host-noise 输入，worker 按固定 seed 生成 NumPy float32
-  噪声；`fp: false` 可显式回退 stock。派生模型只写 gitignored `tmp/`，
+  噪声；Stock 需作为另一个声库 entry 显式选择。派生模型只写 gitignored `tmp/`，
   原声库只读，分发与商用权限仍取决于具体声库许可证。
 - identity-base pitch intervention：兼容稀疏绝对 tick/MIDI 折线，并支持
   Coconut Bezier 控制点容器；Bezier 在宿主侧按真实声学帧对应 tick 栅格化，

@@ -19,7 +19,8 @@ defmodule Neume.Editor do
   alias Neume.Engine.DiffSingerPipeline
   alias Neume.Engine.MockPipeline
   alias Neume.Identity
-  alias Neume.Voicebank.DiffSinger
+  alias Neume.Voicebank.{DiffSinger, Entry}
+  alias Neume.Voicebank.Registry, as: VoicebankRegistry
 
   @default_track_id "vocal"
   @default_ticks_per_frame 10
@@ -71,7 +72,8 @@ defmodule Neume.Editor do
     ticks_per_frame = Keyword.get(opts, :ticks_per_frame, @default_ticks_per_frame)
     registry = Keyword.get(opts, :registry, PickleTrack.default_registry())
 
-    with {:ok, project, manifest} <- prepare_open_voicebank(project, opts),
+    with {:ok, opts} <- prepare_selected_open_opts(project, opts),
+         {:ok, project, manifest} <- prepare_open_voicebank(project, opts),
          :ok <- validate_ticks_per_frame(ticks_per_frame),
          {:ok, %Track{module: Track.Vocal} = track} <-
            Workspace.fetch_track(project.workspace, track_id),
@@ -631,44 +633,122 @@ defmodule Neume.Editor do
   defp validate_ticks_per_frame(value), do: {:error, {:invalid_ticks_per_frame, value}}
 
   defp prepare_new_voicebank(opts) do
-    case Keyword.get(opts, :voicebank_path) do
-      nil ->
-        {:ok, Keyword.get(opts, :voicebank), opts}
+    case resolve_voicebank_entry(opts, nil) do
+      {:ok, nil} -> {:ok, nil, opts}
+      {:ok, %Entry{} = entry} -> {:ok, entry.signature, apply_voicebank_entry(opts, entry)}
+      {:error, _} = error -> error
+    end
+  end
 
-      path ->
-        with {:ok, manifest} <- DiffSinger.scan(path),
-             signature = DiffSinger.signature(manifest),
-             :ok <- compare_signature(Keyword.get(opts, :voicebank), signature) do
-          {:ok, signature, Keyword.put(opts, :voicebank_manifest, manifest)}
-        end
+  defp prepare_selected_open_opts(project, opts) do
+    with {:ok, entry} <- resolve_voicebank_entry(opts, project.voicebank) do
+      case entry do
+        nil -> {:ok, opts}
+        %Entry{} -> {:ok, apply_voicebank_entry(opts, entry)}
+      end
     end
   end
 
   defp prepare_open_voicebank(project, opts) do
-    case Keyword.get(opts, :voicebank_manifest) do
-      %DiffSinger{} = manifest ->
-        with {:ok, project} <- bind_voicebank(project, DiffSinger.signature(manifest)) do
-          {:ok, project, manifest}
+    case Keyword.get(opts, :voicebank_entry) do
+      %Entry{} = entry ->
+        with {:ok, project} <- bind_voicebank(project, entry.signature) do
+          {:ok, project, entry.manifest}
         end
 
-      nil ->
-        scan_open_voicebank(project.voicebank, Keyword.get(opts, :voicebank_path), project)
+      nil when is_nil(project.voicebank) ->
+        {:ok, project, nil}
 
-      other ->
-        {:error, {:invalid_voicebank_manifest, other}}
+      nil ->
+        {:error, {:voicebank_selection_required, project.voicebank}}
     end
   end
 
-  defp scan_open_voicebank(nil, nil, project), do: {:ok, project, nil}
+  defp resolve_voicebank_entry(opts, expected_signature) do
+    case Keyword.get(opts, :voicebank_entry) do
+      %Entry{} = entry ->
+        with :ok <- compare_signature(expected_signature, entry.signature), do: {:ok, entry}
 
-  defp scan_open_voicebank(signature, nil, _project),
-    do: {:error, {:voicebank_path_required, signature}}
+      nil ->
+        resolve_voicebank_selection(opts, expected_signature)
 
-  defp scan_open_voicebank(_signature, path, project) do
-    with {:ok, manifest} <- DiffSinger.scan(path),
-         {:ok, project} <- bind_voicebank(project, DiffSinger.signature(manifest)) do
-      {:ok, project, manifest}
+      other ->
+        {:error, {:invalid_voicebank_entry, other}}
     end
+  end
+
+  defp resolve_voicebank_selection(opts, expected_signature) do
+    case {Keyword.get(opts, :voicebank_registry), Keyword.get(opts, :voicebank_id),
+          Keyword.get(opts, :voicebank_path)} do
+      {%VoicebankRegistry{} = registry, id, nil} when is_binary(id) ->
+        with {:ok, entry} <- VoicebankRegistry.fetch(registry, id),
+             :ok <- compare_signature(expected_signature, entry.signature) do
+          {:ok, entry}
+        end
+
+      {%VoicebankRegistry{} = registry, nil, nil} when not is_nil(expected_signature) ->
+        VoicebankRegistry.resolve(registry, expected_signature)
+
+      {nil, nil, path} when is_binary(path) ->
+        with {:ok, mode} <- fetch_voicebank_mode(opts),
+             {:ok, entry} <- entry_from_path(path, mode, opts),
+             :ok <- compare_signature(expected_signature, entry.signature) do
+          {:ok, entry}
+        end
+
+      {nil, nil, nil} when is_nil(expected_signature) ->
+        {:ok, nil}
+
+      {nil, nil, nil} ->
+        {:error, {:voicebank_selection_required, expected_signature}}
+
+      {nil, id, _path} when not is_nil(id) ->
+        {:error, {:voicebank_registry_required, id}}
+
+      {%VoicebankRegistry{}, nil, _path} ->
+        {:error, :voicebank_id_required}
+
+      {registry, _id, _path} when not is_nil(registry) ->
+        {:error, {:invalid_voicebank_registry, registry}}
+
+      {_registry, _id, _path} ->
+        {:error, :ambiguous_voicebank_selection}
+    end
+  end
+
+  defp fetch_voicebank_mode(opts) do
+    case Keyword.fetch(opts, :voicebank_mode) do
+      {:ok, mode} when mode in [:stock, :modified] -> {:ok, mode}
+      {:ok, mode} -> {:error, {:invalid_voicebank_mode, mode}}
+      :error -> {:error, :voicebank_mode_required}
+    end
+  end
+
+  defp entry_from_path(path, :stock, _opts) do
+    with {:ok, manifest} <- DiffSinger.scan(path), do: {:ok, Entry.stock(manifest)}
+  end
+
+  defp entry_from_path(path, :modified, opts) do
+    with {:ok, manifest} <- DiffSinger.scan(path) do
+      fp_opts = [
+        voicebank_digest: manifest.digest,
+        build?: Keyword.get(opts, :fp_build, true),
+        python: Keyword.get(opts, :fp_python, ["python"])
+      ]
+
+      fp_opts = if opts[:fp_dir], do: Keyword.put(fp_opts, :dir, opts[:fp_dir]), else: fp_opts
+
+      with {:ok, fp} <- Neume.Engine.DiffSingerFp.for_voicebank(manifest.root, fp_opts) do
+        {:ok, Entry.modified(manifest, fp)}
+      end
+    end
+  end
+
+  defp apply_voicebank_entry(opts, %Entry{} = entry) do
+    opts
+    |> Keyword.put(:voicebank_entry, entry)
+    |> Keyword.put(:voicebank_manifest, entry.manifest)
+    |> Keyword.put(:fp, entry.fp || false)
   end
 
   defp bind_voicebank(%Project{voicebank: nil} = project, signature) do

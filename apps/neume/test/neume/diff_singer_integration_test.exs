@@ -10,11 +10,62 @@ defmodule Neume.DiffSingerIntegrationTest do
   use ExUnit.Case, async: false
 
   alias Neume.Editor
+  alias Neume.Voicebank.Registry
 
   @moduletag :integration
   @moduletag timeout: 600_000
   @voicebank "E:/ProgramAssets/OpenUTAUSingers/Asaritsu"
   @python "D:/CodeRepo/Qy/coconut/.venv/Scripts/python.exe"
+
+  @tag tmp_dir: "asaritsu"
+  test "同一 Asaritsu 的 Stock/Modified 是独立可渲染声库且缓存不串", %{tmp_dir: tmp_dir} do
+    voicebank = System.get_env("DS_VOICEBANK") || @voicebank
+    python = System.get_env("DS_PYTHON") || @python
+
+    assert File.dir?(voicebank), "声库目录不存在：#{voicebank}"
+    assert File.regular?(python), "Python 不存在：#{python}"
+    assert {:ok, registry} = Registry.discover(voicebank)
+
+    entries = Registry.list(registry)
+    stock = Enum.find(entries, &(&1.mode == :stock))
+    modified = Enum.find(entries, &(&1.mode == :modified))
+    assert stock && modified
+    refute stock.signature == modified.signature
+
+    render = fn entry ->
+      assert {:ok, editor} =
+               Editor.new(
+                 voicebank_registry: registry,
+                 voicebank_id: entry.id,
+                 python: [python],
+                 output_dir: Path.join(tmp_dir, "renders"),
+                 speaker: "Normal",
+                 steps: 2,
+                 seed: 0
+               )
+
+      assert {:ok, editor} =
+               Editor.insert_note(editor, "n1", :head, {0, 480}, %{
+                 pitch: 60,
+                 lyric: "啦",
+                 language: "zh"
+               })
+
+      assert {:ok, editor, artifact} = Editor.render(editor)
+      assert [%{cache: :miss}] = artifact.windows
+      assert File.regular?(artifact.path)
+      {editor, artifact}
+    end
+
+    {stock_editor, stock_artifact} = render.(stock)
+    {modified_editor, modified_artifact} = render.(modified)
+    assert stock_artifact.sample_rate == modified_artifact.sample_rate
+
+    assert {:ok, stock_project} = Coconut.project(stock_editor.session)
+    assert {:ok, modified_project} = Coconut.project(modified_editor.session)
+    assert stock_project.voicebank.engine == :diffsinger_stock
+    assert modified_project.voicebank.engine == :diffsinger_modified
+  end
 
   @tag tmp_dir: "asaritsu"
   test "Asaritsu 从音符渲染出 WAV", %{tmp_dir: tmp_dir} do
@@ -27,6 +78,7 @@ defmodule Neume.DiffSingerIntegrationTest do
     assert {:ok, editor} =
              Editor.new(
                voicebank_path: voicebank,
+               voicebank_mode: :modified,
                python: [python],
                output_dir: tmp_dir,
                speaker: "Normal",
@@ -206,6 +258,7 @@ defmodule Neume.DiffSingerIntegrationTest do
 
     Editor.new(
       voicebank_path: voicebank,
+      voicebank_mode: :modified,
       python: [python],
       output_dir: Path.join(tmp_dir, name),
       speaker: "Normal",

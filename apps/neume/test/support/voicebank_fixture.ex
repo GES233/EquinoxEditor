@@ -4,14 +4,15 @@ defmodule Neume.VoicebankFixture do
   # 测试用 OpenUtau 格式 DiffSinger 声库目录：配置、八个模型占位、
   # 字典与 speaker embedding 齐全，供 DiffSinger.scan/1 严格校验通过。
 
-  def diffsinger(parent) do
-    root = Path.join(parent, "voicebank")
+  def diffsinger(parent, opts \\ []) do
+    root = Path.join(parent, Keyword.get(opts, :directory, "voicebank"))
 
     for directory <- ["dsdur", "dspitch", "dsvariance", "dsvocoder", "linguistic", "embeds"] do
       File.mkdir_p!(Path.join(root, directory))
     end
 
-    write(root, "character.txt", "name=Test Singer\nauthor=Test Author\n")
+    name = Keyword.get(opts, :name, "Test Singer")
+    write(root, "character.txt", "name=#{name}\nauthor=Test Author\n")
     write(root, "languages.json", ~s({"zh":1}))
     write(root, "phonemes.json", ~s({"SP":1,"zh/a":2}))
     write(root, "dsdict-zh.yaml", "entries: []\n")
