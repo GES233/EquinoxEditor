@@ -22,7 +22,9 @@ Neume.Editor
 
 - 单人声轨音符插入、内容修改、拖动和删除。
 - Coconut History 驱动的 undo/redo；所有音符和 patch 写入均经过 Coconut。
-- 工程保存/加载；History 和最近一次 check 不持久化。
+- 工程保存/加载（v2 信封）：undo/redo 历史随档恢复（`Coconut.Pickle.History`
+  + `History.restore/1`，present 不入档、restore 时从最近 checkpoint 重
+  fold 派生；v1 旧档读入为新鲜历史）；最近一次 check 不持久化。
 - 无声库时使用确定性的 mock 管线。
 - OpenUtau DiffSinger 声库严格扫描：配置、八个 ONNX 模型、语言/音素
   字典、speaker embedding、统一帧网格和路径逃逸检查。
@@ -134,7 +136,6 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
   probe 是曲目变长后的后备优化）。
 - 当前只有 pitch 和 phoneme duration 两种生成参数编辑。
 - 分窗规则不含 slice_flag 手动覆盖（音符 metadata 覆盖未移植）。
-- 工程读档后 History 从空树重新开始。
 - 没有声库注册表、多轨混音、播放/导出管理或 UI。
 
 ## 声库处置

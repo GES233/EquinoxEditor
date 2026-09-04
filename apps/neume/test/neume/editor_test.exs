@@ -35,7 +35,7 @@ defmodule Neume.EditorTest do
   end
 
   @tag tmp_dir: true
-  test "保存和加载保留当前工程，但重置会话历史", %{editor: editor, tmp_dir: tmp_dir} do
+  test "保存和加载保留当前工程与 undo/redo 历史", %{editor: editor, tmp_dir: tmp_dir} do
     path = Path.join(tmp_dir, "roundtrip.coconut")
 
     assert {:ok, editor} =
@@ -48,7 +48,15 @@ defmodule Neume.EditorTest do
     assert note.lyric == "la"
     assert {:ok, _loaded, artifact} = Editor.render(loaded)
     assert Enum.at(artifact.midi, 12) == 72.0
-    assert {:error, :nothing_to_undo} = Editor.undo(loaded)
+
+    # 历史随档恢复：undo 撤销 pin 挂载，redo 还原；跨档 traversal 可用。
+    assert {:ok, undone} = Editor.undo(loaded)
+    assert {:ok, _undone, artifact} = Editor.render(undone)
+    assert Enum.at(artifact.midi, 12) == 60.0
+
+    assert {:ok, redone} = Editor.redo(undone)
+    assert {:ok, _redone, artifact} = Editor.render(redone)
+    assert Enum.at(artifact.midi, 12) == 72.0
   end
 
   test "分数与 pitch patch 经 CoconutOi 和 Oi 产出 mock 帧制品", %{editor: editor} do

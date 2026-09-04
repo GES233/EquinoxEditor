@@ -3,8 +3,9 @@ defmodule Neume.Editor do
   Neume 的无界面编辑入口。
 
   编辑状态由 `Coconut.Session` 持有；Neume 只负责把具名编辑动作、工程
-  存取和固定的合成图收束成一个宿主 API。历史与最近一次检查结果是会话
-  状态，不写入工程文件。
+  存取和固定的合成图收束成一个宿主 API。undo/redo 历史随工程存档（v2
+  信封，`Coconut.Pickle.File`）保存与恢复；最近一次检查结果是会话状态，
+  不写入工程文件。
   """
 
   alias Coconut.Edit.{Command, Patch, Track, Workspace}
@@ -57,7 +58,13 @@ defmodule Neume.Editor do
     end
   end
 
-  @doc "从内存中的 Coconut 工程打开一个新会话。"
+  @doc """
+  从内存中的 Coconut 工程打开一个新会话。
+
+  `opts[:history]` 给出恢复的 `Coconut.Edit.History`（如
+  `Coconut.Pickle.File.read_with_history/2` 的产物）时挂载它，否则从
+  空树开始。
+  """
   @spec open(Project.t(), keyword()) :: {:ok, t()} | {:error, term()}
   def open(%Project{} = project, opts \\ []) when is_list(opts) do
     track_id = Keyword.get(opts, :track_id, @default_track_id)
@@ -76,7 +83,8 @@ defmodule Neume.Editor do
            Coconut.new(project,
              channels: %{duration: DurationPin, pitch: PitchPin},
              engine: {CoconutOi.OrchidAdapter, engine_config},
-             globals: mounted
+             globals: mounted,
+             history: Keyword.get(opts, :history, [])
            ) do
       {:ok,
        %__MODULE__{
@@ -92,21 +100,25 @@ defmodule Neume.Editor do
     end
   end
 
-  @doc "从工程文件打开会话；读档后的 undo/redo 历史从空树重新开始。"
+  @doc """
+  从工程文件打开会话；v2 档恢复存档的 undo/redo 历史，v1 旧档（无
+  `history` 字段）从空树开始。
+  """
   @spec load(Path.t(), keyword()) :: {:ok, t()} | {:error, term()}
   def load(path, opts \\ []) when is_list(opts) do
     registry = Keyword.get(opts, :registry, PickleTrack.default_registry())
 
-    with {:ok, project} <- File.read(path, registry) do
-      open(project, Keyword.put(opts, :registry, registry))
+    with {:ok, project, history} <- File.read_with_history(path, registry) do
+      opts = opts |> Keyword.put(:registry, registry) |> Keyword.put(:history, history || [])
+      open(project, opts)
     end
   end
 
-  @doc "保存当前工程快照，不持久化会话历史和 render check 状态。"
+  @doc "保存当前工程快照（含 undo/redo 历史）；最近一次 render check 状态不持久化。"
   @spec save(t(), Path.t()) :: {:ok, Path.t()} | {:error, term()}
   def save(%__MODULE__{} = editor, path) do
     with {:ok, project} <- Coconut.project(editor.session) do
-      File.write(project, editor.registry, path)
+      File.write(project, editor.registry, path, history: editor.session.history)
     end
   end
 
