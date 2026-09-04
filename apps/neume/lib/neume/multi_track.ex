@@ -1,58 +1,91 @@
 defmodule Neume.MultiTrack do
   @moduledoc """
-  Neume 多轨运行时。
+  Neume 多轨工程运行时。
 
-  每条 Vocal track 独立打开 `Neume.Editor`，因而拥有独立声库 pipeline、worker
-  与乐句缓存；混音图只消费各轨 WAV，不理解音素或 intervention。
+  整个工程只有一个 `Coconut.Session`/History；每条 Vocal track 只保存独立
+  `Neume.TrackRuntime`（声库 pipeline、worker 与乐句缓存）。逐轨 check/render
+  临时把运行态绑定到根 Session 的同一当前快照，混音图只消费各轨 WAV。
   """
 
-  alias Coconut.Edit.{Track, Workspace}
-  alias Neume.{Editor, MixPipeline, TrackConfig}
-  alias Neume.Voicebank.Registry
+  alias Coconut.Edit.{Command, Track, Workspace}
+  alias Coconut.Pickle.File
+  alias Coconut.Pickle.Track, as: PickleTrack
+  alias Neume.{Editor, MixPipeline, TrackConfig, TrackRuntime}
+  alias Neume.Voicebank.{Entry, Registry}
 
-  @enforce_keys [:project, :voicebank_registry, :tracks, :mix_pipeline, :output_dir]
-  defstruct [:project, :voicebank_registry, :tracks, :mix_pipeline, :output_dir]
+  @enforce_keys [
+    :session,
+    :pickle_registry,
+    :voicebank_registry,
+    :tracks,
+    :mix_pipeline,
+    :output_dir,
+    :open_opts
+  ]
+  defstruct @enforce_keys
 
   @type t :: %__MODULE__{
-          project: Coconut.Project.t(),
+          session: Coconut.Session.t(),
+          pickle_registry: Coconut.Pickle.Registry.t(),
           voicebank_registry: Registry.t(),
-          tracks: %{Track.track_id() => Editor.t()},
+          tracks: %{Track.track_id() => TrackRuntime.t()},
           mix_pipeline: Oi.Compiled.t(),
-          output_dir: Path.t()
+          output_dir: Path.t(),
+          open_opts: keyword()
         }
 
   @spec open(Coconut.Project.t(), keyword()) :: {:ok, t()} | {:error, term()}
-  def open(%Coconut.Project{} = project, opts) do
-    registry = Keyword.fetch!(opts, :voicebank_registry)
+  def open(%Coconut.Project{} = project, opts) when is_list(opts) do
+    voicebank_registry = Keyword.fetch!(opts, :voicebank_registry)
+    pickle_registry = Keyword.get(opts, :registry, PickleTrack.default_registry())
     output_dir = Keyword.get(opts, :output_dir, "tmp/renders")
+    open_opts = Keyword.drop(opts, [:history, :voicebank_entry])
 
-    with {:ok, tracks} <- open_tracks(project, registry, opts),
+    with {:ok, session} <-
+           Coconut.new(project,
+             channels: track_channels(),
+             history: Keyword.get(opts, :history, [])
+           ),
+         {:ok, tracks} <- open_tracks(project, voicebank_registry, open_opts),
          {:ok, mix_pipeline} <- MixPipeline.compile(output_dir: output_dir) do
       {:ok,
        %__MODULE__{
-         project: project,
-         voicebank_registry: registry,
+         session: session,
+         pickle_registry: pickle_registry,
+         voicebank_registry: voicebank_registry,
          tracks: tracks,
          mix_pipeline: mix_pipeline,
-         output_dir: output_dir
+         output_dir: output_dir,
+         open_opts: open_opts
        }}
     end
   end
 
-  @spec add_vocal_track(Coconut.Project.t(), Track.track_id(), Neume.Voicebank.Entry.t(), map()) ::
-          {:ok, Coconut.Project.t()} | {:error, term()}
-  def add_vocal_track(%Coconut.Project{} = project, track_id, entry, attrs \\ %{}) do
-    mix = Map.get(attrs, :mix, %{})
+  @doc "从工程文件恢复唯一 Session 及其完整 undo/redo History。"
+  @spec load(Path.t(), keyword()) :: {:ok, t()} | {:error, term()}
+  def load(path, opts) when is_list(opts) do
+    registry = Keyword.get(opts, :registry, PickleTrack.default_registry())
 
-    with {:ok, track} <-
-           Track.new(%{
-             id: track_id,
-             module: Track.Vocal,
-             name: Map.get(attrs, :name),
-             extras: %{}
-           }),
-         track <- TrackConfig.put_voicebank(track, entry.signature),
-         {:ok, track} <- TrackConfig.put_mix(track, mix),
+    with {:ok, project, history} <- File.read_with_history(path, registry) do
+      opts = opts |> Keyword.put(:registry, registry) |> Keyword.put(:history, history || [])
+      open(project, opts)
+    end
+  end
+
+  @doc "保存当前工程快照和唯一 History。逐轨 runtime 与渲染制品不入档。"
+  @spec save(t(), Path.t()) :: {:ok, Path.t()} | {:error, term()}
+  def save(%__MODULE__{} = runtime, path) do
+    with {:ok, project} <- Coconut.project(runtime.session) do
+      File.write(project, runtime.pickle_registry, path, history: runtime.session.history)
+    end
+  end
+
+  @spec add_vocal_track(Coconut.Project.t(), Track.track_id(), Entry.t(), map()) ::
+          {:ok, Coconut.Project.t()} | {:error, term()}
+  def add_vocal_track(source, track_id, entry, attrs \\ %{})
+
+  def add_vocal_track(%Coconut.Project{} = project, track_id, %Entry{} = entry, attrs) do
+    with {:ok, track} <- build_vocal_track(track_id, entry, attrs),
          {:ok, workspace} <- Workspace.add_track(project.workspace, track) do
       Coconut.Project.new(%{
         id: project.id,
@@ -63,37 +96,154 @@ defmodule Neume.MultiTrack do
     end
   end
 
+  @spec add_vocal_track(t(), Track.track_id(), Entry.t(), map()) ::
+          {:ok, t()} | {:error, term()}
+  def add_vocal_track(%__MODULE__{} = runtime, track_id, %Entry{} = entry, attrs) do
+    with {:ok, track} <- build_vocal_track(track_id, entry, attrs),
+         {:ok, session} <- Coconut.run(runtime.session, %Command{op: :add_track, payload: track}),
+         {:ok, runtime} <- replace_session(runtime, session) do
+      {:ok, runtime}
+    end
+  end
+
+  @doc "删除一条轨道并记入工程唯一 History。"
+  @spec remove_track(t(), Track.track_id()) :: {:ok, t()} | {:error, term()}
+  def remove_track(%__MODULE__{} = runtime, track_id),
+    do: run(runtime, Command.remove_track(track_id))
+
+  @doc "通过工程唯一 Session 提交 Coconut 编辑手势，包括原子跨轨手势。"
+  @spec edit(t(), Coconut.Edit.Operation.request(), keyword()) :: {:ok, t()} | {:error, term()}
+  def edit(%__MODULE__{} = runtime, request, opts \\ []) do
+    with {:ok, session} <- Coconut.edit(runtime.session, request, opts),
+         {:ok, runtime} <- replace_session(runtime, session) do
+      {:ok, runtime}
+    end
+  end
+
+  @doc "通过工程唯一 Session 提交已解析结构命令。"
+  @spec run(t(), Command.t(), keyword()) :: {:ok, t()} | {:error, term()}
+  def run(%__MODULE__{} = runtime, %Command{} = command, opts \\ []) do
+    with {:ok, session} <- Coconut.run(runtime.session, command, opts),
+         {:ok, runtime} <- replace_session(runtime, session) do
+      {:ok, runtime}
+    end
+  end
+
+  @doc "撤销工程中的上一条历史边，无论它来自哪条轨道。"
+  @spec undo(t()) :: {:ok, t()} | {:error, term()}
+  def undo(%__MODULE__{} = runtime), do: move_history(runtime, &Coconut.undo/1)
+
+  @doc "重做工程中的下一条历史边。"
+  @spec redo(t()) :: {:ok, t()} | {:error, term()}
+  def redo(%__MODULE__{} = runtime), do: move_history(runtime, &Coconut.redo/1)
+
+  @spec notes(t(), Track.track_id()) :: {:ok, Track.view()} | {:error, term()}
+  def notes(%__MODULE__{} = runtime, track_id) do
+    with {:ok, editor} <- attach_editor(runtime, track_id), do: Editor.notes(editor)
+  end
+
+  @spec insert_note(t(), Track.track_id(), term(), term() | :head, Track.span(), map()) ::
+          {:ok, t()} | {:error, term()}
+  def insert_note(runtime, track_id, note_id, after_id, span, attrs) do
+    invoke_track(runtime, track_id, fn editor ->
+      Editor.insert_note(editor, note_id, after_id, span, attrs)
+    end)
+  end
+
+  @spec edit_note(t(), Track.track_id(), term(), map()) :: {:ok, t()} | {:error, term()}
+  def edit_note(runtime, track_id, note_id, changes),
+    do: invoke_track(runtime, track_id, &Editor.edit_note(&1, note_id, changes))
+
+  @spec drag_note(t(), Track.track_id(), term(), term() | :head, Track.span()) ::
+          {:ok, t()} | {:error, term()}
+  def drag_note(runtime, track_id, note_id, after_id, span),
+    do: invoke_track(runtime, track_id, &Editor.drag_note(&1, note_id, after_id, span))
+
+  @spec delete_note(t(), Track.track_id(), term()) :: {:ok, t()} | {:error, term()}
+  def delete_note(runtime, track_id, note_id),
+    do: invoke_track(runtime, track_id, &Editor.delete_note(&1, note_id))
+
+  @spec split_note(t(), Track.track_id(), term(), integer(), term()) ::
+          {:ok, t()} | {:error, term()}
+  def split_note(runtime, track_id, note_id, at_tick, new_id),
+    do: invoke_track(runtime, track_id, &Editor.split_note(&1, note_id, at_tick, new_id))
+
+  @spec mount_pitch(t(), Track.track_id(), term(), term()) :: {:ok, t()} | {:error, term()}
+  def mount_pitch(runtime, track_id, note_id, points),
+    do: invoke_track(runtime, track_id, &Editor.mount_pitch(&1, note_id, points))
+
+  @spec mount_pitch_curve(t(), Track.track_id(), term(), term()) ::
+          {:ok, t()} | {:error, term()}
+  def mount_pitch_curve(runtime, track_id, note_id, curve),
+    do: invoke_track(runtime, track_id, &Editor.mount_pitch_curve(&1, note_id, curve))
+
+  @spec mount_phoneme_duration(t(), Track.track_id(), term(), term()) ::
+          {:ok, t()} | {:error, term()}
+  def mount_phoneme_duration(runtime, track_id, note_id, durations),
+    do: invoke_track(runtime, track_id, &Editor.mount_phoneme_duration(&1, note_id, durations))
+
+  @spec update_globals(t(), Track.track_id(), map()) :: {:ok, t()} | {:error, term()}
+  def update_globals(runtime, track_id, knobs),
+    do: invoke_track(runtime, track_id, &Editor.update_globals(&1, knobs))
+
+  @spec globals(t(), Track.track_id()) :: {:ok, map()} | {:error, term()}
+  def globals(%__MODULE__{} = runtime, track_id) do
+    with {:ok, editor} <- attach_editor(runtime, track_id), do: {:ok, Editor.globals(editor)}
+  end
+
+  @spec repatch(t(), Track.track_id(), [map()]) :: {:ok, t(), [map()]} | {:error, term()}
+  def repatch(runtime, track_id, entries),
+    do: invoke_track(runtime, track_id, &Editor.repatch(&1, entries))
+
+  @spec export_debug(t(), Track.track_id(), Path.t(), keyword()) ::
+          {:ok, t(), Path.t()} | {:error, term()}
+  def export_debug(runtime, track_id, path, opts \\ []),
+    do: invoke_track(runtime, track_id, &Editor.export_debug(&1, path, opts))
+
+  @spec put_mix(t(), Track.track_id(), map()) :: {:ok, t()} | {:error, term()}
+  def put_mix(%__MODULE__{} = runtime, track_id, attrs) do
+    with {:ok, track} <- Workspace.fetch_track(Coconut.workspace(runtime.session), track_id),
+         {:ok, track} <- TrackConfig.put_mix(track, attrs),
+         {:ok, session} <-
+           Coconut.run(runtime.session, Command.put_track_extras(track_id, track.extras)),
+         {:ok, runtime} <- replace_session(runtime, session) do
+      {:ok, runtime}
+    end
+  end
+
+  @doc "重绑定轨道声库并重建该轨运行态；修改记入唯一 History。"
+  @spec put_voicebank(t(), Track.track_id(), Entry.t()) :: {:ok, t()} | {:error, term()}
+  def put_voicebank(%__MODULE__{} = runtime, track_id, %Entry{} = entry) do
+    with {:ok, track} <- Workspace.fetch_track(Coconut.workspace(runtime.session), track_id),
+         track <- TrackConfig.put_voicebank(track, entry.signature),
+         {:ok, session} <-
+           Coconut.run(runtime.session, Command.put_track_extras(track_id, track.extras)),
+         {:ok, runtime} <- replace_session(runtime, session) do
+      {:ok, runtime}
+    end
+  end
+
   @spec check(t()) :: {:ok, t(), map()} | {:error, {:check_failed, [map()]}}
   def check(%__MODULE__{} = runtime) do
     {tracks, reports, errors} =
-      Enum.reduce(runtime.tracks, {%{}, %{}, []}, fn {track_id, editor},
+      Enum.reduce(runtime.tracks, {%{}, %{}, []}, fn {track_id, track_runtime},
                                                      {tracks, reports, errors} ->
-        case Editor.check(editor) do
-          {:ok, editor, report} ->
-            {Map.put(tracks, track_id, editor), Map.put(reports, track_id, report), errors}
-
+        with {:ok, editor} <- attach_editor(runtime, track_id),
+             {:ok, editor, report} <- Editor.check(editor),
+             {:ok, track_runtime} <- Editor.detach_runtime(editor) do
+          {Map.put(tracks, track_id, track_runtime), Map.put(reports, track_id, report), errors}
+        else
           {:error, {:check_failed, entries}} ->
-            {Map.put(tracks, track_id, editor), reports, errors ++ entries}
+            {Map.put(tracks, track_id, track_runtime), reports, errors ++ entries}
+
+          {:error, reason} ->
+            entry = %{kind: :track, track_id: track_id, reason: reason}
+            {Map.put(tracks, track_id, track_runtime), reports, errors ++ [entry]}
         end
       end)
 
     runtime = %{runtime | tracks: tracks}
     if errors == [], do: {:ok, runtime, reports}, else: {:error, {:check_failed, errors}}
-  end
-
-  @spec put_mix(t(), Track.track_id(), map()) :: {:ok, t()} | {:error, term()}
-  def put_mix(%__MODULE__{} = runtime, track_id, attrs) do
-    with {:ok, editor} <- Map.fetch(runtime.tracks, track_id),
-         {:ok, track} <- editor.session |> Coconut.workspace() |> Workspace.fetch_track(track_id),
-         {:ok, track} <- TrackConfig.put_mix(track, attrs),
-         command <- Coconut.Edit.Command.put_track_extras(track_id, track.extras),
-         {:ok, session} <- Coconut.run(editor.session, command) do
-      editor = %{editor | session: session}
-      {:ok, %{runtime | tracks: Map.put(runtime.tracks, track_id, editor)}}
-    else
-      :error -> {:error, {:unknown_track, track_id}}
-      {:error, _} = error -> error
-    end
   end
 
   @spec render(t()) :: {:ok, t(), Neume.MixArtifact.t()} | {:error, term()}
@@ -105,47 +255,152 @@ defmodule Neume.MultiTrack do
     end
   end
 
+  defp build_vocal_track(track_id, entry, attrs) do
+    mix = Map.get(attrs, :mix, %{})
+
+    with {:ok, track} <-
+           Track.new(%{
+             id: track_id,
+             module: Track.Vocal,
+             name: Map.get(attrs, :name),
+             extras: %{}
+           }),
+         track <- TrackConfig.put_voicebank(track, entry.signature),
+         {:ok, track} <- TrackConfig.put_mix(track, mix) do
+      {:ok, track}
+    end
+  end
+
+  defp track_channels do
+    %{duration: Neume.Channels.DurationPin, pitch: Neume.Channels.PitchPin}
+  end
+
   defp open_tracks(project, registry, opts) do
     project.workspace.tracks
     |> Enum.filter(fn {_id, track} -> track.module == Track.Vocal end)
     |> Enum.reduce_while({:ok, %{}}, fn {track_id, track}, {:ok, acc} ->
-      case TrackConfig.voicebank(track) do
-        nil ->
-          {:halt, {:error, {:track_voicebank_required, track_id}}}
-
-        signature ->
-          with {:ok, entry} <- Registry.resolve(registry, signature),
-               {:ok, editor} <-
-                 Editor.open(
-                   project,
-                   opts
-                   |> Keyword.put(:track_id, track_id)
-                   |> Keyword.put(:voicebank_entry, entry)
-                 ) do
-            {:cont, {:ok, Map.put(acc, track_id, editor)}}
-          else
-            {:error, reason} -> {:halt, {:error, {:track_open_failed, track_id, reason}}}
-          end
+      case open_track(project, track_id, track, registry, opts) do
+        {:ok, track_runtime} -> {:cont, {:ok, Map.put(acc, track_id, track_runtime)}}
+        {:error, reason} -> {:halt, {:error, {:track_open_failed, track_id, reason}}}
       end
     end)
   end
 
-  defp render_tracks(runtime) do
-    Enum.reduce_while(runtime.tracks, {:ok, %{}, []}, fn {track_id, editor},
-                                                         {:ok, tracks, artifacts} ->
-      case Editor.render(editor) do
-        {:ok, editor, artifact} ->
-          case editor.session |> Coconut.workspace() |> Workspace.fetch_track(track_id) do
-            {:ok, track} ->
-              item = %{track_id: track_id, artifact: artifact, mix: TrackConfig.mix(track)}
-              {:cont, {:ok, Map.put(tracks, track_id, editor), [item | artifacts]}}
+  defp open_track(project, track_id, track, registry, opts) do
+    case TrackConfig.voicebank(track) do
+      nil ->
+        {:error, :voicebank_required}
 
-            {:error, reason} ->
-              {:halt, {:error, {:track_missing_after_render, track_id, reason}}}
+      signature ->
+        with {:ok, entry} <- Registry.resolve(registry, signature),
+             {:ok, editor} <-
+               Editor.open(
+                 project,
+                 opts
+                 |> Keyword.put(:track_id, track_id)
+                 |> Keyword.put(:voicebank_entry, entry)
+               ),
+             {:ok, track_runtime} <- Editor.detach_runtime(editor) do
+          {:ok, track_runtime}
+        end
+    end
+  end
+
+  defp attach_editor(runtime, track_id) do
+    with {:ok, track_runtime} <- fetch_runtime(runtime, track_id) do
+      Editor.attach_runtime(track_runtime, runtime.session, runtime.pickle_registry)
+    end
+  end
+
+  defp fetch_runtime(runtime, track_id) do
+    case Map.fetch(runtime.tracks, track_id) do
+      {:ok, track_runtime} -> {:ok, track_runtime}
+      :error -> {:error, {:unknown_track, track_id}}
+    end
+  end
+
+  defp invoke_track(%__MODULE__{} = runtime, track_id, fun) when is_function(fun, 1) do
+    with {:ok, editor} <- attach_editor(runtime, track_id) do
+      case fun.(editor) do
+        {:ok, %Editor{} = editor} ->
+          adopt_editor(runtime, editor)
+
+        {:ok, %Editor{} = editor, value} ->
+          with {:ok, runtime} <- adopt_editor(runtime, editor) do
+            {:ok, runtime, value}
           end
 
-        {:error, reason} ->
-          {:halt, {:error, {:track_render_failed, track_id, reason}}}
+        {:error, _} = error ->
+          error
+      end
+    end
+  end
+
+  defp adopt_editor(runtime, editor) do
+    with {:ok, track_runtime} <- Editor.detach_runtime(editor) do
+      session = %{runtime.session | history: editor.session.history, last_round: nil}
+
+      runtime = %{
+        runtime
+        | session: session,
+          tracks: Map.put(runtime.tracks, editor.track_id, track_runtime)
+      }
+
+      sync_tracks(runtime)
+    end
+  end
+
+  defp move_history(runtime, move) do
+    with {:ok, session} <- move.(runtime.session),
+         {:ok, runtime} <- replace_session(runtime, session) do
+      {:ok, runtime}
+    end
+  end
+
+  defp replace_session(runtime, session), do: sync_tracks(%{runtime | session: session})
+
+  defp sync_tracks(runtime) do
+    with {:ok, project} <- Coconut.project(runtime.session) do
+      project.workspace.tracks
+      |> Enum.filter(fn {_id, track} -> track.module == Track.Vocal end)
+      |> Enum.reduce_while({:ok, %{}}, fn {track_id, track}, {:ok, acc} ->
+        signature = TrackConfig.voicebank(track)
+
+        case runtime.tracks do
+          %{^track_id => %TrackRuntime{voicebank: ^signature} = track_runtime} ->
+            {:cont, {:ok, Map.put(acc, track_id, track_runtime)}}
+
+          _ ->
+            case open_track(
+                   project,
+                   track_id,
+                   track,
+                   runtime.voicebank_registry,
+                   runtime.open_opts
+                 ) do
+              {:ok, track_runtime} -> {:cont, {:ok, Map.put(acc, track_id, track_runtime)}}
+              {:error, reason} -> {:halt, {:error, {:track_open_failed, track_id, reason}}}
+            end
+        end
+      end)
+      |> case do
+        {:ok, tracks} -> {:ok, %{runtime | tracks: tracks}}
+        {:error, _} = error -> error
+      end
+    end
+  end
+
+  defp render_tracks(runtime) do
+    Enum.reduce_while(runtime.tracks, {:ok, %{}, []}, fn {track_id, _track_runtime},
+                                                         {:ok, tracks, artifacts} ->
+      with {:ok, editor} <- attach_editor(runtime, track_id),
+           {:ok, editor, artifact} <- Editor.render(editor),
+           {:ok, track_runtime} <- Editor.detach_runtime(editor),
+           {:ok, track} <- Workspace.fetch_track(Coconut.workspace(runtime.session), track_id) do
+        item = %{track_id: track_id, artifact: artifact, mix: TrackConfig.mix(track)}
+        {:cont, {:ok, Map.put(tracks, track_id, track_runtime), [item | artifacts]}}
+      else
+        {:error, reason} -> {:halt, {:error, {:track_render_failed, track_id, reason}}}
       end
     end)
     |> case do

@@ -55,9 +55,12 @@ Neume.Editor
   `Neume.Analysis.merge/1` 把逐窗音符、预测和音素边界投影回整曲绝对帧轴。
   同一次 `render/1` 直接把已检查的 plan/probe 交给独立 Synthesis Oi 图，
   不再重复模型 probe。
-- 多轨 runtime（`Neume.MultiTrack`）：声库签名从工程级下移到各 Vocal track 的
-  `extras[:neume][:voicebank]`，每轨按 registry signature 创建独立 pipeline、
-  worker 与乐句缓存；多轨 check 聚合所有轨道/乐句错误。
+- 多轨 runtime（`Neume.MultiTrack`）：整个工程只持有一个 Coconut
+  Session/History；音符、pin、mix、globals、声库重绑定和增删轨都进入同一全局
+  History，undo/redo 跨轨按提交顺序工作，工程文件一并保存/恢复该 History。
+  声库签名保存在各 Vocal track 的 `extras[:neume][:voicebank]`；每轨只保留
+  可重建的 `Neume.TrackRuntime`（独立 pipeline、worker 与乐句缓存），多轨
+  check 聚合所有轨道/乐句错误。
 - Neume-owned Oi 混音图（`Neume.MixPipeline`）：`TrackGainPan → Mix → Master →
   Export`，支持逐轨 mute/gain/pan、sample-rate 门禁、PCM16 master 限幅与立体声
   WAV 导出；mix 配置保存在 track extras，并经 Coconut History 更新。
@@ -110,7 +113,7 @@ Neume.Editor
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- `apps/neume` 的 `mix test`：`69 passed, 6 excluded`（excluded 为真声库集成测试）。
+- `apps/neume` 的 `mix test`：`84 passed, 7 excluded`（excluded 为真声库集成测试）。
 - Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
   `43.6%`，通过 2× 包络门禁。
@@ -135,8 +138,6 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 ## 当前限制
 
-- `Neume.MultiTrack` 已可逐轨 check/render/mix，但当前每轨暂持独立 Editor/
-  Coconut session；下一步收束为整个工程唯一的 session/history。
 - 同一 Vocal track 仍是单声部；同轨重叠音符会明确报错。
 - 当前只有 pitch 和 phoneme duration 两种生成参数编辑。
 - 分窗规则不含 slice_flag 手动覆盖（音符 metadata 覆盖未移植）。
@@ -155,14 +156,13 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 
 详细职责决定见 [`docs/design-2026-09-multitrack-runtime.md`](docs/design-2026-09-multitrack-runtime.md)。
 
-1. 将多轨 runtime 收束为整个工程唯一的 Coconut session/history。
-2. 多轨并发/取消、solo 路由和 phrase/track/mix/master 缓存交给 Oi；Neume
+1. 多轨并发/取消、solo 路由和 phrase/track/mix/master 缓存交给 Oi；Neume
    只声明业务图、identity、veto 与 artifact 契约。
-3. 增加 `Neume.Audio` facade，以当前纯 Elixir 算法为 reference backend，
+2. 增加 `Neume.Audio` facade，以当前纯 Elixir 算法为 reference backend，
    引入 Rust NIF 承担 PCM 解码/增益/equal-power pan/混合/限幅等热路径。
-4. 先定义 Neume job/event 与 playback/export 契约，再建立 Neumu application
+3. 先定义 Neume job/event 与 playback/export 契约，再建立 Neumu application
    service；UI 只提交意图并展示权威状态，不复制音频、check 或任务语义。
-5. ~~逐帧曲线 channel（energy/breathiness/voicing 的手绘编辑）~~本版本不做。
+4. ~~逐帧曲线 channel（energy/breathiness/voicing 的手绘编辑）~~本版本不做。
 
 ## 不变量
 

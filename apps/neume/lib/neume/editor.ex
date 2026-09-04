@@ -15,7 +15,7 @@ defmodule Neume.Editor do
   alias Coconut.Project
   alias Coconut.Util.ID
   alias Neume.Channels.{DurationPin, PitchPin}
-  alias Neume.{Identity, PitchCurve, TrackConfig}
+  alias Neume.{Identity, PitchCurve, TrackConfig, TrackRuntime}
   alias Neume.Engine.{DiffSingerPipeline, MockPipeline}
   alias Neume.Voicebank.{DiffSinger, Entry}
   alias Neume.Voicebank.Registry, as: VoicebankRegistry
@@ -103,6 +103,49 @@ defmodule Neume.Editor do
       {:ok, %Track{module: module}} -> {:error, {:not_vocal_track, track_id, module}}
       {:error, _} = error -> error
     end
+  end
+
+  @doc false
+  @spec detach_runtime(t()) :: {:ok, TrackRuntime.t()} | {:error, term()}
+  def detach_runtime(%__MODULE__{} = editor) do
+    with {:ok, track} <- current_track(editor) do
+      {:ok,
+       %TrackRuntime{
+         track_id: editor.track_id,
+         voicebank: TrackConfig.voicebank(track),
+         pipeline: editor.pipeline,
+         pipeline_state: editor.pipeline_state,
+         engine: editor.session.engine,
+         channels: editor.session.channels,
+         interventions: editor.session.interventions
+       }}
+    end
+  end
+
+  @doc false
+  @spec attach_runtime(TrackRuntime.t(), Coconut.Session.t(), Coconut.Pickle.Registry.t()) ::
+          {:ok, t()} | {:error, term()}
+  def attach_runtime(
+        %TrackRuntime{} = runtime,
+        %Coconut.Session{} = canonical_session,
+        %Coconut.Pickle.Registry{} = registry
+      ) do
+    session = %{
+      canonical_session
+      | engine: runtime.engine,
+        channels: runtime.channels,
+        interventions: runtime.interventions,
+        globals: %{},
+        last_round: nil
+    }
+
+    sync_mounted_globals(%__MODULE__{
+      session: session,
+      registry: registry,
+      track_id: runtime.track_id,
+      pipeline: runtime.pipeline,
+      pipeline_state: runtime.pipeline_state
+    })
   end
 
   @doc """

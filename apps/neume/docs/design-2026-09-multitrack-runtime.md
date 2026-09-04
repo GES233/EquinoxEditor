@@ -76,17 +76,19 @@ Neume 提供业务 key、节点输入和策略；Oi 决定何时、在哪个执�
 
 ## 多轨 Session 与 History
 
-当前 `Neume.MultiTrack` 为每轨打开一个 `Neume.Editor`，因此每个 runtime 暂时
-持有独立的 Coconut session 视图。长期目标是：
+`Neume.MultiTrack` 已收束为整个工程唯一的 Coconut session/history：
 
 - 一个工程只有一个 Coconut session/history；
 - 多轨编辑、mix 参数和声库重绑定都写入这一 session；
 - Neume track runtime 只持有可重建的 pipeline/worker/cache handle；
 - undo/redo 后，以同一工程快照刷新所有受影响 runtime；
-- Oi 根据变化后的业务 identity 只失效相关 track/phrase 和下游 mix/master。
+- 多轨工程文件保存并恢复这份唯一 History。
 
-该调整属于 Neume session facade 与 Coconut 已有多轨 batch 能力的接线；不把
-渲染或混音语义加入 Coconut。
+逐轨 check/render 时，`Neume.Editor` 只在调用期间把 `Neume.TrackRuntime`
+临时绑定到根 Session 的当前 History 快照和该轨 engine 配置；调用结束后不保留
+第二份可写 Session。该实现属于 Neume session facade 与 Coconut 已有多轨 batch
+能力的接线，没有把渲染或混音语义加入 Coconut。Oi 后续根据变化后的业务
+identity 只失效相关 track/phrase 和下游 mix/master。
 
 ## 缓存层次
 
@@ -213,13 +215,12 @@ UI 不直接启动 Task、不直接调用 NIF、不把浏览器本地播放状�
 
 ## 下一实现顺序
 
-1. 把 `Neume.MultiTrack` 收束为单一 Coconut session；
-2. 为 Oi 定义/补齐可取消 fan-out/fan-in execution 与节点缓存；
-3. 将现有 TrackGainPan/Mix/Master 的纯 Elixir 实现保留为 reference backend，
+1. 为 Oi 定义/补齐可取消 fan-out/fan-in execution 与节点缓存；
+2. 将现有 TrackGainPan/Mix/Master 的纯 Elixir 实现保留为 reference backend，
    增加 `Neume.Audio` facade 和 Rust NIF backend；
-4. 由 Oi graph 实现 solo 路由和 mix/master cache；
-5. 定义 Neume job/event 协议后，再建立 Neumu application service；
-6. 最后让 UI 只消费命令、查询和事件接口。
+3. 由 Oi graph 实现 solo 路由和 mix/master cache；
+4. 定义 Neume job/event 协议后，再建立 Neumu application service；
+5. 最后让 UI 只消费命令、查询和事件接口。
 
 ## 非目标
 

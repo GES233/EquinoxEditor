@@ -82,10 +82,11 @@ analyze/check/render 共用瞬态 `Neume.Phrase`：空档 ≥ 3 拍切窗，逐�
 模型检查。窗口级 WAV 缓存按「声库摘要 + globals + 窗内音符 + pins + Modified/
 Stock + seed + 修改工艺版本」失效，编辑后只重推内容变化的窗口。
 
-多轨使用 `Neume.MultiTrack`：每条 Vocal track 独立解析声库、检查与渲染，随后
-进入 Neume-owned Oi 图 `TrackGainPan → Mix → Master → Export`。逐轨
-`mute/gain/pan` 存在 track extras 中并经 Coconut History 更新，最终导出 PCM16
-立体声 WAV；任一轨 check 失败时不会执行 master 导出。
+多轨使用 `Neume.MultiTrack`：整个工程只持有一个 Coconut Session/History，
+每条 Vocal track 只保留可重建的 `Neume.TrackRuntime`，独立解析声库、检查与
+渲染，随后进入 Neume-owned Oi 图 `TrackGainPan → Mix → Master → Export`。
+音符、pin、声库重绑定和 `mute/gain/pan` 都写入同一 History；多轨工程文件会
+一并保存、恢复该 History。任一轨 check 失败时不会执行 master 导出。
 
 ## TODO
 
@@ -93,5 +94,5 @@ Stock + seed + 修改工艺版本」失效，编辑后只重推内容变化的�
   不做，三旋钮保持轨道级全局系数；未来重启时普通表现曲线可作为仅结构
   裁决的 Patch，增量型干预（preserve、相对旧值）走 output base
   （coconut intervention 设计 §6.6），并与全局旋钮复合。
-- [ ] 声库发现/注册表、多轨调度、播放与导出管理。
+- [ ] Oi 多轨并发调度、播放与导出管理。
 - [ ] 最小钢琴卷帘、音素边界编辑和播放 UI。

@@ -39,6 +39,21 @@ defmodule Neume.MultiTrackTest do
 
     assert runtime.tracks["backing"].pipeline_state.worker_config.fp_manifest ==
              modified.fp.manifest_path
+
+    assert {:ok, runtime} = MultiTrack.put_voicebank(runtime, "lead", modified)
+
+    assert TrackConfig.voicebank(Coconut.workspace(runtime.session).tracks["lead"]) ==
+             modified.signature
+
+    assert runtime.tracks["lead"].pipeline_state.worker_config.fp_manifest ==
+             modified.fp.manifest_path
+
+    assert {:ok, runtime} = MultiTrack.undo(runtime)
+
+    assert TrackConfig.voicebank(Coconut.workspace(runtime.session).tracks["lead"]) ==
+             stock.signature
+
+    assert runtime.tracks["lead"].pipeline_state.worker_config.fp_manifest == nil
   end
 
   @tag tmp_dir: true
@@ -65,7 +80,7 @@ defmodule Neume.MultiTrackTest do
   end
 
   @tag tmp_dir: true
-  test "多轨 mix 参数经 Coconut History 更新", %{tmp_dir: tmp_dir} do
+  test "多轨共享唯一 Coconut Session，mix 参数进入全局 History", %{tmp_dir: tmp_dir} do
     root = VoicebankFixture.diffsinger(tmp_dir)
     assert {:ok, registry} = Registry.discover(root)
     assert [stock] = Enum.filter(Registry.list(registry), &(&1.mode == :stock))
@@ -79,21 +94,129 @@ defmodule Neume.MultiTrackTest do
              )
 
     assert {:ok, runtime} = MultiTrack.put_mix(runtime, "lead", %{gain: 0.25, pan: -0.5})
-    editor = runtime.tracks["lead"]
 
-    assert TrackConfig.mix(Coconut.workspace(editor.session).tracks["lead"]) == %{
+    assert %Neume.TrackRuntime{} = runtime.tracks["lead"]
+
+    assert TrackConfig.mix(Coconut.workspace(runtime.session).tracks["lead"]) == %{
              gain: 0.25,
              pan: -0.5,
              mute: false
            }
 
-    assert {:ok, session} = Coconut.undo(editor.session)
+    assert {:ok, runtime} = MultiTrack.undo(runtime)
 
-    assert TrackConfig.mix(Coconut.workspace(session).tracks["lead"]) == %{
+    assert TrackConfig.mix(Coconut.workspace(runtime.session).tracks["lead"]) == %{
              gain: 1.0,
              pan: 0.0,
              mute: false
            }
+  end
+
+  @tag tmp_dir: true
+  test "不同轨编辑按同一 History 的全局顺序 undo/redo", %{tmp_dir: tmp_dir} do
+    root = VoicebankFixture.diffsinger(tmp_dir)
+    assert {:ok, registry} = Registry.discover(root)
+    assert [stock] = Enum.filter(Registry.list(registry), &(&1.mode == :stock))
+    assert {:ok, project} = empty_project()
+    assert {:ok, project} = MultiTrack.add_vocal_track(project, "lead", stock)
+    assert {:ok, project} = MultiTrack.add_vocal_track(project, "backing", stock)
+
+    assert {:ok, runtime} =
+             MultiTrack.open(project,
+               voicebank_registry: registry,
+               diffsinger_client: Neume.VoicebankSelectionTest.UnusedClient
+             )
+
+    assert {:ok, runtime} =
+             MultiTrack.insert_note(runtime, "lead", "l1", :head, {0, 480}, %{
+               pitch: 60,
+               lyric: "la"
+             })
+
+    assert {:ok, runtime} =
+             MultiTrack.insert_note(runtime, "backing", "b1", :head, {0, 480}, %{
+               pitch: 55,
+               lyric: "ba"
+             })
+
+    assert {:ok, [{"l1", _, {0, 480}}]} = MultiTrack.notes(runtime, "lead")
+    assert {:ok, [{"b1", _, {0, 480}}]} = MultiTrack.notes(runtime, "backing")
+
+    assert {:ok, runtime} = MultiTrack.undo(runtime)
+    assert {:ok, [{"l1", _, {0, 480}}]} = MultiTrack.notes(runtime, "lead")
+    assert {:ok, []} = MultiTrack.notes(runtime, "backing")
+
+    assert {:ok, runtime} = MultiTrack.undo(runtime)
+    assert {:ok, []} = MultiTrack.notes(runtime, "lead")
+
+    assert {:ok, runtime} = MultiTrack.redo(runtime)
+    assert {:ok, [{"l1", _, {0, 480}}]} = MultiTrack.notes(runtime, "lead")
+  end
+
+  @tag tmp_dir: true
+  test "运行时增删轨可 undo，并同步重建逐轨 runtime", %{tmp_dir: tmp_dir} do
+    root = VoicebankFixture.diffsinger(tmp_dir)
+    assert {:ok, registry} = Registry.discover(root)
+    assert [stock] = Enum.filter(Registry.list(registry), &(&1.mode == :stock))
+    assert {:ok, project} = empty_project()
+    assert {:ok, project} = MultiTrack.add_vocal_track(project, "lead", stock)
+
+    assert {:ok, runtime} =
+             MultiTrack.open(project,
+               voicebank_registry: registry,
+               diffsinger_client: Neume.VoicebankSelectionTest.UnusedClient
+             )
+
+    assert {:ok, runtime} = MultiTrack.add_vocal_track(runtime, "backing", stock)
+    assert Map.keys(runtime.tracks) |> Enum.sort() == ["backing", "lead"]
+
+    assert {:ok, runtime} = MultiTrack.remove_track(runtime, "lead")
+    assert Map.keys(runtime.tracks) == ["backing"]
+
+    assert {:ok, runtime} = MultiTrack.undo(runtime)
+    assert Map.keys(runtime.tracks) |> Enum.sort() == ["backing", "lead"]
+  end
+
+  @tag tmp_dir: true
+  test "唯一多轨 History 随工程文件保存并恢复", %{tmp_dir: tmp_dir} do
+    root = VoicebankFixture.diffsinger(tmp_dir)
+    assert {:ok, registry} = Registry.discover(root)
+    assert [stock] = Enum.filter(Registry.list(registry), &(&1.mode == :stock))
+    assert {:ok, project} = empty_project()
+    assert {:ok, project} = MultiTrack.add_vocal_track(project, "lead", stock)
+    assert {:ok, project} = MultiTrack.add_vocal_track(project, "backing", stock)
+
+    opts = [
+      voicebank_registry: registry,
+      diffsinger_client: Neume.VoicebankSelectionTest.UnusedClient
+    ]
+
+    assert {:ok, runtime} = MultiTrack.open(project, opts)
+
+    assert {:ok, runtime} =
+             MultiTrack.insert_note(runtime, "lead", "l1", :head, {0, 480}, %{
+               pitch: 60,
+               lyric: "la"
+             })
+
+    assert {:ok, runtime} = MultiTrack.put_mix(runtime, "backing", %{gain: 0.4})
+    path = Path.join(tmp_dir, "multi-track.coconut")
+    assert {:ok, ^path} = MultiTrack.save(runtime, path)
+    assert {:ok, loaded} = MultiTrack.load(path, opts)
+
+    assert loaded.session.history.cursor == runtime.session.history.cursor
+    assert Coconut.workspace(loaded.session) == Coconut.workspace(runtime.session)
+
+    assert {:ok, loaded} = MultiTrack.undo(loaded)
+
+    assert TrackConfig.mix(Coconut.workspace(loaded.session).tracks["backing"]) == %{
+             gain: 1.0,
+             pan: 0.0,
+             mute: false
+           }
+
+    assert {:ok, loaded} = MultiTrack.undo(loaded)
+    assert {:ok, []} = MultiTrack.notes(loaded, "lead")
   end
 
   @tag tmp_dir: true
