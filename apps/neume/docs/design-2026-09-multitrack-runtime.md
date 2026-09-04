@@ -194,6 +194,34 @@ UI 不计算最终左右声道增益，也不拥有一套独立 pan law。
 - seek、loop、playhead 与渲染版本之间的一致性规则；
 - 导出路径、格式、覆盖和失败语义。
 
+### 最小 Job/Event 契约
+
+`Neume.RenderJob` 是纯值状态机，不是进程，也不拥有 Oi execution handle：
+
+```text
+queued -> running -> completed
+                  \-> failed
+```
+
+任务创建时保存 `project_id` 与 Coconut History cursor node id（`source_pin`）。
+后续编辑不改写该 pin；完成态持有实际 `RenderArtifact` 或 `MixArtifact`，失败态
+持有原因，终态不能再次转换。调度失败若需进入任务生命周期，应先把任务标记为
+running，再以明确原因结束为 failed；当前不提前加入 cancellation 状态。
+
+`Neume.Event` 的公开事件固定为三个小 tuple：
+
+```elixir
+{:project_changed, project_id, history_pin}
+{:render_changed, job_id, status}
+{:artifact_ready, job_id, artifact_id, source_pin}
+```
+
+事件只负责通知订阅者重新查询权威状态，不携带工程快照、制品内容、Orchid step
+路径、report stream、进度 payload 或 UI 展示数据。`artifact_ready` 的
+`source_pin` 从已完成 job 取得，`artifact_id` 由未来 application service 的制品
+存储分配。Oi/Orchid 的内部进度以后可以聚合成 `render_changed`，无需改变事件
+形状。
+
 ### Neumu application service 拥有
 
 - 把 Neume job/event 映射到产品级会话；
@@ -219,7 +247,8 @@ UI 不直接启动 Task、不直接调用 NIF、不把浏览器本地播放状�
 2. 将现有 TrackGainPan/Mix/Master 的纯 Elixir 实现保留为 reference backend，
    增加 `Neume.Audio` facade 和 Rust NIF backend；
 3. 由 Oi graph 实现 solo 路由和 mix/master cache；
-4. 定义 Neume job/event 协议后，再建立 Neumu application service；
+4. 补齐 playback/export 请求契约，在已有 Neume job/event 协议上建立 Neumu
+   application service；
 5. 最后让 UI 只消费命令、查询和事件接口。
 
 ## 非目标

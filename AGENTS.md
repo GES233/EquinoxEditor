@@ -11,6 +11,7 @@ The source of truth for implementation status is `apps/neume/STATUS.md`.
 - `apps/coconut/` — engine-agnostic editor core. It owns score/edit state, History, Patch/Resolve, and persistence. It was imported from the archived standalone Coconut repository and is now maintained as part of this umbrella.
 - `apps/coconut_oi/` — intentionally small bridge from `Coconut.Render.Engine` requests and interventions to Oi data and `Oi.execute/2`.
 - `apps/neume/` — product and engine layer: editor facade, DiffSinger scanning, probe/alignment, inference, windowed cache, debug export, and render artifacts.
+- `apps/neumu/` — OTP application service over Neume: per-project `ProjectServer` processes (one `Neume.MultiTrack` value each), async render via `Task.Supervisor`, runtime `ArtifactStore`, and the three small event shapes. No playback device, export requests, cancellation, persistence, or UI.
 - `config/` — shared umbrella configuration.
 
 The repository must build without sibling Coconut or CoconutOi checkouts. Tamale, Oi, and Orchid packages remain external dependencies resolved by Mix.
