@@ -9,10 +9,16 @@ defmodule Neumu.ProjectServer do
 
   公开事件严格只有三种 payload（见 `Neume.Event`），由订阅机制派发：
 
-  - `{:project_changed, project_id, history_pin}`（本阶段尚无编辑 facade，
-    暂不发送）
+  - `{:project_changed, project_id, history_pin}`：编辑命令实际产生
+    History 边（含 undo/redo 移动 cursor）后派发一次；无变化的编辑
+    （如无改动的 globals 合并）不派发。
   - `{:render_changed, job_id, status}`
   - `{:artifact_ready, job_id, artifact_id, source_pin}`
+
+  所有编辑都经 `{:edit, command}` 在本进程内串行应用到唯一的
+  `Neume.MultiTrack` 值上；命令集是封闭分派（见 `apply_edit/2`），
+  调用方不能注入任意函数。查询（snapshot/history_pin/job）是只读的，
+  不产生 History 边。
   """
 
   use GenServer
@@ -148,7 +154,42 @@ defmodule Neumu.ProjectServer do
   end
 
   def handle_call(:history_pin, _from, state) do
-    {:reply, {:ok, History.current(state.multi_track.session.history).node_id}, state}
+    {:reply, {:ok, current_pin(state.multi_track)}, state}
+  end
+
+  # UI 只读快照：纯投影，不产生 History 边、不派发事件。
+  def handle_call(:snapshot, _from, state) do
+    snapshot = Neumu.ProjectSnapshot.build(state.multi_track, state.project_id)
+    {:reply, {:ok, snapshot}, state}
+  end
+
+  # 保存是只读快照的持久化，不改变工程状态，不派发事件。
+  def handle_call({:save, path}, _from, state) do
+    case Neume.MultiTrack.save(state.multi_track, path) do
+      {:ok, path} -> {:reply, {:ok, path}, state}
+      {:error, _} = error -> {:reply, error, state}
+    end
+  end
+
+  # 编辑命令串行落账：只有实际产生 History 边（pin 变化）的成功编辑才
+  # 派发一次 project_changed；失败编辑不改状态、不派发事件。
+  def handle_call({:edit, command}, _from, state) do
+    old_pin = current_pin(state.multi_track)
+
+    case apply_edit(state.multi_track, command) do
+      {:ok, multi_track} ->
+        state = %{state | multi_track: multi_track}
+        new_pin = current_pin(multi_track)
+
+        if new_pin != old_pin do
+          broadcast(state, Event.project_changed(state.project_id, new_pin))
+        end
+
+        {:reply, {:ok, new_pin}, state}
+
+      {:error, reason} ->
+        {:reply, {:error, reason}, state}
+    end
   end
 
   # 渲染任务正常返回。
@@ -244,6 +285,59 @@ defmodule Neumu.ProjectServer do
     end)
 
     :ok
+  end
+
+  defp current_pin(multi_track), do: History.current(multi_track.session.history).node_id
+
+  # --- 编辑命令的封闭分派 ---
+
+  defp apply_edit(multi_track, {:insert_note, track_id, note_id, after_id, span, attrs}) do
+    Neume.MultiTrack.insert_note(multi_track, track_id, note_id, after_id, span, attrs)
+  end
+
+  defp apply_edit(multi_track, {:edit_note, track_id, note_id, changes}) do
+    Neume.MultiTrack.edit_note(multi_track, track_id, note_id, changes)
+  end
+
+  defp apply_edit(multi_track, {:move_note, track_id, note_id, after_id, span}) do
+    Neume.MultiTrack.drag_note(multi_track, track_id, note_id, after_id, span)
+  end
+
+  defp apply_edit(multi_track, {:delete_note, track_id, note_id}) do
+    Neume.MultiTrack.delete_note(multi_track, track_id, note_id)
+  end
+
+  defp apply_edit(multi_track, {:add_track, track_id, voicebank_id, attrs}) do
+    with {:ok, entry} <- fetch_voicebank(multi_track, voicebank_id) do
+      Neume.MultiTrack.add_vocal_track(multi_track, track_id, entry, attrs)
+    end
+  end
+
+  defp apply_edit(multi_track, {:remove_track, track_id}) do
+    Neume.MultiTrack.remove_track(multi_track, track_id)
+  end
+
+  defp apply_edit(multi_track, {:rebind_voicebank, track_id, voicebank_id}) do
+    with {:ok, entry} <- fetch_voicebank(multi_track, voicebank_id) do
+      Neume.MultiTrack.put_voicebank(multi_track, track_id, entry)
+    end
+  end
+
+  defp apply_edit(multi_track, {:update_mix, track_id, attrs}) do
+    Neume.MultiTrack.put_mix(multi_track, track_id, attrs)
+  end
+
+  defp apply_edit(multi_track, {:update_globals, track_id, knobs}) do
+    Neume.MultiTrack.update_globals(multi_track, track_id, knobs)
+  end
+
+  defp apply_edit(multi_track, :undo), do: Neume.MultiTrack.undo(multi_track)
+  defp apply_edit(multi_track, :redo), do: Neume.MultiTrack.redo(multi_track)
+
+  defp apply_edit(_multi_track, other), do: {:error, {:unknown_edit_command, other}}
+
+  defp fetch_voicebank(multi_track, voicebank_id) do
+    Neume.Voicebank.Registry.fetch(multi_track.voicebank_registry, voicebank_id)
   end
 
   # 生产默认渲染路径：现有 Neume.MultiTrack render API。

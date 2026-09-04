@@ -77,6 +77,17 @@ Neume.Editor
   job 返回 `{:error, {:job_not_found, job_id}}`；订阅幂等（同一进程
   重复订阅每个事件只投递一次）；关闭工程时在途渲染任务随
   `ProjectServer` 终止一并回收，不泄漏到应用级 `RenderSupervisor`。
+- Neumu UI-facing backend facade（`Neumu` 模块）：`create_project` /
+  `load_project` / `save_project` 复用 `Neume.MultiTrack` 与 Coconut
+  Pickle 持久化（不另造文件格式）；`snapshot/1` 返回当前 History cursor
+  下的权威只读投影（`Neumu.ProjectSnapshot`：轨道、音符、mix/globals、
+  `history_pin`），只含 plain data，不泄露 PID、worker、Session 或
+  Oi compiled graph。编辑命令（音符增删改移、轨道增删、声库重绑定、
+  mix/globals 更新、undo/redo）以封闭命令集串行进入对应
+  `ProjectServer`；成功且实际产生 History 边时返回新 `history_pin`
+  并派发一次 `{:project_changed, project_id, history_pin}`，无变化的
+  编辑（如无改动的 globals 合并）不落边也不派发，失败编辑返回
+  tagged error、不改状态、不派发事件。查询不产生 History 边。
 - Neume-owned Oi 混音图（`Neume.MixPipeline`）：`TrackGainPan → Mix → Master →
   Export`，支持逐轨 mute/gain/pan、sample-rate 门禁、PCM16 master 限幅与立体声
   WAV 导出；mix 配置保存在 track extras，并经 Coconut History 更新。
@@ -130,10 +141,14 @@ Neume.Editor
 
 - `mix compile --force --warnings-as-errors`：通过。
 - `apps/neume` 的 `mix test`：`92 passed, 7 excluded`（excluded 为真声库集成测试）。
-- `apps/neumu` 的 `mix test`：`19 passed`（工程开闭、渲染成功/失败/崩溃、
+- `apps/neumu` 的 `mix test`：`31 passed`（工程开闭、渲染成功/失败/崩溃、
   渲染期间查询、source_pin 保留、制品存取、事件订阅幂等与退订、重复
   job_id 拒绝、未知 job tagged error、nil project_id 拒绝、关闭工程终止
-  在途渲染）。
+  在途渲染；facade：快照与 pin 一致且无运行时对象泄露、查询不产生历史边、
+  音符增删改移与 mix/globals/轨道增删/声库重绑定落权威状态、成功编辑
+  只发一次 `project_changed`、失败编辑不改状态不发事件、undo/redo 更新
+  pin 并发事件、globals 无变化不落边、保存重开恢复工程与 History、渲染
+  期间编辑不改 `job.source_pin`、并发编辑不丢更新、未知工程 tagged error）。
 - Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
   `43.6%`，通过 2× 包络门禁。
@@ -164,11 +179,13 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 - Oi 尚未接管多轨 fan-out/fan-in 的并发、取消、solo 路由与 mix/master
   节点缓存；当前图已声明混音步骤，但轨道调度仍是同步 facade。
 - PCM 热路径仍是纯 Elixir reference 实现，尚未引入 Rust NIF。
-- Neumu 已有最小 application service（`apps/neumu`）：工程按 `project_id`
-  注册、一工程一 `ProjectServer` 持有唯一 `Neume.MultiTrack`、渲染经
-  `Task.Supervisor` 在 GenServer 外执行、制品入运行时 `ArtifactStore` 并
-  分配不透明 `artifact_id`；事件订阅已就位但尚不发送 `project_changed`
-  （无编辑 facade）。仍无播放设备适配、export 请求或 UI。
+- Neumu application service（`apps/neumu`）：工程按 `project_id` 注册、
+  一工程一 `ProjectServer` 持有唯一 `Neume.MultiTrack`、渲染经
+  `Task.Supervisor` 在 GenServer 外执行、制品入运行时 `ArtifactStore`；
+  UI-facing facade 已就位（只读快照、封闭编辑命令集、`project_changed`
+  派发、工程创建/加载/保存入口），但尚未暴露 split_note、pitch/duration
+  pin 挂载与 repatch 等高级编辑命令。仍无播放设备适配、export 请求、
+  渲染取消或 UI。
 
 ## 声库处置
 
@@ -184,8 +201,8 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
    只声明业务图、identity、veto 与 artifact 契约。
 2. 增加 `Neume.Audio` facade，以当前纯 Elixir 算法为 reference backend，
    引入 Rust NIF 承担 PCM 解码/增益/equal-power pan/混合/限幅等热路径。
-3. 在 Neumu application service 上补齐 playback/export 请求契约与编辑
-   facade（届时派发 `project_changed`）；UI 只提交意图并展示权威状态，
+3. 在 Neumu application service 上补齐 playback/export 请求契约（编辑
+   facade 与 `project_changed` 派发已完成）；UI 只提交意图并展示权威状态，
    不复制音频、check 或任务语义。
 4. ~~逐帧曲线 channel（energy/breathiness/voicing 的手绘编辑）~~本版本不做。
 

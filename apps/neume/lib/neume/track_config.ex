@@ -53,6 +53,15 @@ defmodule Neume.TrackConfig do
 
   def validate_mix(value), do: {:error, {:invalid_mix, value}}
 
+  @doc "读取轨道挂载的全局表现旋钮；未挂载或形状非法时返回空 map。"
+  @spec globals(Track.t()) :: map()
+  def globals(%Track{extras: extras}) do
+    case get_in(extras, [@namespace, :globals]) do
+      globals when is_map(globals) and not is_struct(globals) -> globals
+      _other -> %{}
+    end
+  end
+
   defp normalize_mix(mix) do
     %{gain: mix.gain * 1.0, pan: mix.pan * 1.0, mute: mix.mute}
   end
