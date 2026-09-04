@@ -156,7 +156,8 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 ## 不变量
 
 - Coconut 是编辑状态、History、patch 与序列化的事实来源。
-- CoconutOi 只翻译 Coconut intervention 与 Oi data，不拥有音素对齐语义。
+- CoconutOi 只翻译 Coconut intervention 与 Oi data，不拥有音素对齐、轨道调度或混音语义。
+- 多轨调度、混音、总线和导出汇聚由 Neume 声明的 Oi graph/steps 实现。
 - 音素类型、帧网格、G2P 和元音锚定属于 DiffSinger adapter/worker。
 - pin 底料是 probe 物化的音素序列（身份底料）；其物化与 digest 裁决在
   引擎 probe 期，Coconut 静态 check 不过问。
