@@ -269,6 +269,55 @@ defmodule Neume.DiffSingerWindowedTest do
     assert length(drain_checked_phrases()) == 2
   end
 
+  @tag tmp_dir: true
+  test "tempo 编辑使所有窗口缓存失效（render_key 含 tempo_map）", %{tmp_dir: tmp_dir} do
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
+
+    assert {:ok, editor} =
+             Editor.new(
+               voicebank_path: voicebank,
+               voicebank_mode: :stock,
+               diffsinger_client: CountingClient,
+               diffsinger_client_config: %{test_pid: self()},
+               output_dir: Path.join(tmp_dir, "renders")
+             )
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "啊"})
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n2", "n1", {4800, 5280}, %{pitch: 62, lyric: "吧"})
+
+    assert {:ok, editor, artifact} = Editor.render(editor)
+    assert Enum.all?(artifact.windows, &(&1.cache == :miss))
+
+    # 排空首次渲染的 worker 调用，后续断言才有意义。
+    _ = drain_worker_calls()
+
+    # 无编辑再渲染：全部命中
+    assert {:ok, editor, artifact2} = Editor.render(editor)
+    assert Enum.all?(artifact2.windows, &(&1.cache == :hit))
+    assert drain_calls("render") == []
+
+    # tempo 台阶属于全局轨，手势在 MultiTrack/facade 层（本测试直达 session
+    # 只为验证 render_key 对 tempo_map 的敏感性）：插入后所有窗口 miss。
+    {:ok, session} =
+      Coconut.edit(editor.session, %Coconut.Edit.Operations.InsertNote{
+        track_id: "global:tempo",
+        note_id: "t0",
+        after_id: :head,
+        span: {0, 1},
+        attrs: %{bpm: 60}
+      })
+
+    editor = %{editor | session: session}
+
+    assert {:ok, _editor, artifact3} = Editor.render(editor)
+    assert length(artifact3.windows) == 2
+    assert Enum.all?(artifact3.windows, &(&1.cache == :miss))
+    assert Enum.count(drain_calls("render")) == 2
+  end
+
   defp drain_checked_phrases do
     receive do
       {:checked_phrase, count} -> [count | drain_checked_phrases()]

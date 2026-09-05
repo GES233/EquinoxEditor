@@ -127,6 +127,138 @@ defmodule Neume.MultiTrack do
   def set_time_sigs(%__MODULE__{} = runtime, events),
     do: run(runtime, Command.set_time_sigs(events))
 
+  # --- 阶梯式 tempo 事件（全局 tempo 轨，2026-09-05 第四批） ---
+
+  # tempo 手势的语义决定（详见 docs/plan-2026-09-ui-facade-gestures.md
+  # "第四批语义决定"）：台阶 span 端点名义化（消费侧只读起点）；同 tick
+  # 台阶拒绝；首事件禁删沿用 Coconut 校验；tempo 不进 pin 输入底料。
+  @tempo_track_id "global:tempo"
+  # 与引擎空 tempo 轨回退一致（Coconut.Render.Engine.Snapshot：flat 120 BPM）。
+  @default_bpm 120
+
+  @doc "当前 tempo 阶梯（tick 升序）：`[%{id, tick, milli_bpm}]`；空轨为 `[]`。只读。"
+  @spec tempo_steps(t()) :: [%{id: term(), tick: non_neg_integer(), milli_bpm: pos_integer()}]
+  def tempo_steps(%__MODULE__{} = runtime) do
+    case fetch_tempo_track(runtime) do
+      {:ok, track} ->
+        track
+        |> Track.view()
+        |> Enum.map(fn {id, element, {start, _end}} ->
+          %{id: id, tick: start, milli_bpm: element.bpm}
+        end)
+        |> Enum.sort_by(fn %{tick: tick} -> tick end)
+
+      :error ->
+        []
+    end
+  end
+
+  @doc """
+  在 `tick` 处插入一个 tempo 台阶（`bpm` 为每四分音符拍数，cast 时归一为
+  精确 milli-bpm；`{num, den}` 有理数形式也接受）。
+
+  同 tick 已有台阶返回 `{:error, {:tempo_tick_occupied, tick}}`（阶梯语义
+  下同 tick 两台阶无意义）。
+  """
+  @spec insert_tempo_step(
+          t(),
+          term(),
+          non_neg_integer(),
+          number() | {pos_integer(), pos_integer()}
+        ) ::
+          {:ok, t()} | {:error, term()}
+  def insert_tempo_step(%__MODULE__{} = runtime, step_id, tick, bpm)
+      when is_integer(tick) and tick >= 0 do
+    with :ok <- check_tempo_tick_free(runtime, tick) do
+      edit(runtime, %Coconut.Edit.Operations.InsertNote{
+        track_id: @tempo_track_id,
+        note_id: step_id,
+        after_id: tempo_step_after(runtime, tick),
+        span: {tick, tick + 1},
+        attrs: %{bpm: bpm}
+      })
+    end
+  end
+
+  # 公开边界不落异常：非法 tick 返回 tagged error。
+  def insert_tempo_step(%__MODULE__{}, _step_id, tick, _bpm),
+    do: {:error, {:invalid_tick, tick}}
+
+  @doc "改台阶 bpm（内容编辑，一条历史边）。"
+  @spec edit_tempo_step(t(), term(), number() | {pos_integer(), pos_integer()}) ::
+          {:ok, t()} | {:error, term()}
+  def edit_tempo_step(%__MODULE__{} = runtime, step_id, bpm) do
+    edit(runtime, %Coconut.Edit.Operations.EditNote{
+      track_id: @tempo_track_id,
+      note_id: step_id,
+      changes: %{bpm: bpm}
+    })
+  end
+
+  @doc "删台阶；首事件受 Coconut 保护（`{:error, {:tempo_first_protected, id}}`）。"
+  @spec delete_tempo_step(t(), term()) :: {:ok, t()} | {:error, term()}
+  def delete_tempo_step(%__MODULE__{} = runtime, step_id) do
+    edit(runtime, %Coconut.Edit.Operations.DeleteNote{
+      track_id: @tempo_track_id,
+      note_id: step_id
+    })
+  end
+
+  @doc """
+  区间物理时长（秒）：当前 tempo 阶梯下 `[start_tick, end_tick)` 的换算
+  （`Coconut.Edit.Workspace.region_duration_sec/3` 的包装）。空 tempo 轨
+  回退到引擎同款 flat 120 BPM——查询总是可回答。
+  """
+  @spec region_duration_sec(t(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, float()} | {:error, term()}
+  def region_duration_sec(%__MODULE__{} = runtime, start_tick, end_tick) do
+    workspace = Coconut.workspace(runtime.session)
+
+    case Workspace.region_duration_sec(workspace, start_tick, end_tick) do
+      {:ok, sec} ->
+        {:ok, sec}
+
+      {:error, :missing_tempo_track} ->
+        {:ok, (end_tick - start_tick) * 60 / (@default_bpm * workspace.tpqn)}
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  defp fetch_tempo_track(runtime) do
+    case Workspace.fetch_track(Coconut.workspace(runtime.session), @tempo_track_id) do
+      {:ok, track} -> {:ok, track}
+      {:error, _} -> :error
+    end
+  end
+
+  defp check_tempo_tick_free(runtime, tick) do
+    if Enum.any?(tempo_steps(runtime), &(&1.tick == tick)) do
+      {:error, {:tempo_tick_occupied, tick}}
+    else
+      :ok
+    end
+  end
+
+  # 插入锚：space 序中起点严格小于 tick 的最后一个台阶，否则 :head。
+  defp tempo_step_after(runtime, tick) do
+    case fetch_tempo_track(runtime) do
+      {:ok, track} ->
+        track
+        |> Track.view()
+        |> Enum.filter(fn {_id, _element, {start, _end}} -> start < tick end)
+        |> List.last(:head)
+        |> case do
+          :head -> :head
+          {id, _element, _span} -> id
+        end
+
+      :error ->
+        :head
+    end
+  end
+
   @doc "通过工程唯一 Session 提交 Coconut 编辑手势，包括原子跨轨手势。"
   @spec edit(t(), Coconut.Edit.Operation.request(), keyword()) :: {:ok, t()} | {:error, term()}
   def edit(%__MODULE__{} = runtime, request, opts \\ []) do

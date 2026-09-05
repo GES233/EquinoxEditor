@@ -2,7 +2,7 @@
 
 > 用户：临时文档
 
-状态：第一至三批已完成（2026-09-05）；第四批（tempo）单独立项，未动
+状态：全部四批已完成（2026-09-05）
 范围：Neumu UI-facing facade 的手势/schema 扩展；不动 Coconut/Neume 内核语义
 
 ## 已拍板的决定
@@ -96,6 +96,31 @@ snapshot 投影对应缺口：pins（存活 patch 的 id/channel/anchor/payload�
   留着是死信；目标落点恰贴接时保留会意外成组）。fresh id、pin 不
   迁移（Coconut 底座语义，源音符上的 pin 死进源轨墓地，由快照投影
   与 repatch 流程兜住）。
+
+## 第四批语义决定（2026-09-05 拍板，同日落账）
+
+- **tempo 不进 `pin_input_v1` 底料**：pitch/duration pin 都是 tick 域
+  事实，tempo 变化改变的是渲染结果而非 pin 身份；duration pin 的秒
+  预算在消费边界（ScorePlan step）按当前 tempo 自然重算，超预算走
+  check 裁决，与既有"手势期不拒绝"约定一致。
+- **台阶 span 端点名义化**：`insert_tempo_step` 只收 `(step_id, tick,
+  bpm)`，内部落 `{tick, tick+1}`——消费侧（`TempoMap.compile`、
+  `tempo_steps_at`、view）只读起点，洞继承由 TempoMap 处理。
+- **同 tick 台阶拒绝** `{:error, {:tempo_tick_occupied, tick}}`（阶梯
+  语义下同 tick 两台阶无意义）；首事件禁删沿用 Coconut 的
+  `{:tempo_first_protected, id}`；非法 bpm 沿用 `{:invalid_bpm, _}`；
+  非负整数之外的 tick 返回 `{:invalid_tick, tick}`（公开边界不落
+  guard 异常）。
+- **空 tempo 轨的时长查询回退 flat 120 BPM**（与
+  `Coconut.Render.Engine.Snapshot` 的引擎回退同款），查询总可回答。
+- **快照新增 `tempo_steps: [%{id, tick, milli_bpm}]`**：milli-bpm 整数
+  保精确（÷1000 的展示换算归壳层），`id` 供改/删手势定位。
+- **缓存波及面实测为零**：`render_key` 已含 `tempo_map`（
+  `diff_singer_pipeline.ex`），tempo 编辑 → tempo_map 变 → 全部窗口
+  miss；有回归测试钉住（`diff_singer_windowed_test.exs`）。
+- 手势经通用 Operation（InsertNote/EditNote/DeleteNote）落在
+  `"global:tempo"` 轨（`track_context` 对 `"global:"` 前缀路由到
+  globals），无新增 Coconut command。
 
 ## 每个手势的标准测试矩阵（照抄即可）
 

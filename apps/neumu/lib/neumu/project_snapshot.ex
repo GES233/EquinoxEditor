@@ -49,6 +49,12 @@ defmodule Neumu.ProjectSnapshot do
           pins: [pin()]
         }
 
+  @typedoc """
+  tempo 台阶投影（plain data，tick 升序）：台阶 id、起点 tick 与精确
+  milli-bpm 整数（展示换算 ÷1000 归壳层，保精确值不喂 float）。
+  """
+  @type tempo_step :: %{id: term(), tick: non_neg_integer(), milli_bpm: pos_integer()}
+
   @typedoc "工程只读快照。"
   @type t :: %{
           project_id: Neume.RenderJob.project_id(),
@@ -56,6 +62,7 @@ defmodule Neumu.ProjectSnapshot do
           can_undo: boolean(),
           can_redo: boolean(),
           time_sigs: [term()],
+          tempo_steps: [tempo_step()],
           tracks: [track()]
         }
 
@@ -71,6 +78,7 @@ defmodule Neumu.ProjectSnapshot do
       can_undo: history.cursor > history.base_seq,
       can_redo: history.cursor < history.seq,
       time_sigs: deep_lists(workspace.time_sigs),
+      tempo_steps: Neume.MultiTrack.tempo_steps(multi_track),
       tracks:
         workspace.tracks
         |> Enum.sort_by(fn {track_id, _track} -> track_id end)

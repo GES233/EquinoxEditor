@@ -38,6 +38,8 @@
   time_sigs: [[bar, sig]],          # JSON-safe：[1, [4, 4]]；sig 另有
                                     # [:standard, n, d] / [:compound, g, d] / :san
                                     #（atom 保留，JSON 中即字符串）
+  tempo_steps: [%{id, tick, milli_bpm}],  # 阶梯式 tempo（tick 升序）；
+                                    # milli-bpm 整数保精确，÷1000 归壳层
   tracks: [%{
     id, name: String.t() | nil,
     voicebank: %{name, engine, digest} | nil,
@@ -61,6 +63,7 @@
 | `merge_notes/3` | `{:ok, pin, %{moved_pins: [%{id, channel, from_note_id, note_id}]}}` |
 | `drag_note_across_tracks/7` | `{:ok, pin}` |
 | `add_track/4` `remove_track/2` `rename_track/3` `set_time_sigs/2` `rebind_voicebank/3` `update_mix/3` `update_globals/3` | `{:ok, pin}` |
+| `insert_tempo_step/4` `edit_tempo_step/3` `delete_tempo_step/2` | `{:ok, pin}`；`{:error, {:tempo_tick_occupied, tick}}` / `{:tempo_first_protected, id}` / `{:invalid_bpm, _}` / `{:invalid_tick, _}` |
 | `undo/1` `redo/1` | `{:ok, pin}`；空栈 `{:error, :nothing_to_undo|:nothing_to_redo}` |
 | `mount_pitch/5` `mount_pitch_curve/5` `mount_phoneme_duration/5` | `{:ok, pin}`；`{:error, {:stale_pin, _}}` 见下 |
 | `unmount_pin/4` | `{:ok, pin}`；无存活 pin `{:error, {:pin_not_found, _, _}}` |
@@ -76,6 +79,8 @@
 - `list_render_jobs/1` → `{:ok, [%{job_id, source_pin, status,
   artifact_id, error}]}`
 - `artifact/1` → `{:ok, artifact}`（含 WAV `path`、采样率、时长等）
+- `region_duration_sec/3` → `{:ok, float}`：`[start_tick, end_tick)` 在
+  当前 tempo 阶梯下的物理秒数；空 tempo 轨回退 flat 120 BPM
 
 ## 事件（`Neumu.subscribe/1` 订阅，幂等）
 

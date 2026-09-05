@@ -374,6 +374,45 @@ defmodule Neumu do
     edit(project_id, {:set_time_sigs, events})
   end
 
+  @doc """
+  在 `tick` 处插入一个 tempo 台阶（阶梯式；`bpm` 为每四分音符拍数）。
+
+  同 tick 已有台阶返回 `{:error, {:tempo_tick_occupied, tick}}`；非法 bpm
+  返回 `{:error, {:invalid_bpm, _}}`。当前阶梯见快照的 `tempo_steps` 投影。
+  """
+  @spec insert_tempo_step(RenderJob.project_id(), term(), non_neg_integer(), number()) ::
+          {:ok, history_pin()} | {:error, term()}
+  def insert_tempo_step(project_id, step_id, tick, bpm) do
+    edit(project_id, {:insert_tempo_step, step_id, tick, bpm})
+  end
+
+  @doc "改台阶 bpm（内容编辑，一条历史边）。"
+  @spec edit_tempo_step(RenderJob.project_id(), term(), number()) ::
+          {:ok, history_pin()} | {:error, term()}
+  def edit_tempo_step(project_id, step_id, bpm) do
+    edit(project_id, {:edit_tempo_step, step_id, bpm})
+  end
+
+  @doc """
+  删台阶；首事件受保护，返回 `{:error, {:tempo_first_protected, step_id}}`
+  （不落历史边）。
+  """
+  @spec delete_tempo_step(RenderJob.project_id(), term()) ::
+          {:ok, history_pin()} | {:error, term()}
+  def delete_tempo_step(project_id, step_id) do
+    edit(project_id, {:delete_tempo_step, step_id})
+  end
+
+  @doc """
+  区间物理时长（秒）：当前 tempo 阶梯下 `[start_tick, end_tick)` 的换算。
+  空 tempo 轨回退 flat 120 BPM。只读查询，不产生历史边、不派发事件。
+  """
+  @spec region_duration_sec(RenderJob.project_id(), non_neg_integer(), non_neg_integer()) ::
+          {:ok, float()} | {:error, term()}
+  def region_duration_sec(project_id, start_tick, end_tick) do
+    call_project(project_id, {:region_duration_sec, start_tick, end_tick})
+  end
+
   @doc "重绑定轨道声库；`voicebank_id` 经工程的声库注册表解析。"
   @spec rebind_voicebank(RenderJob.project_id(), Coconut.Edit.Track.track_id(), String.t()) ::
           {:ok, history_pin()} | {:error, term()}

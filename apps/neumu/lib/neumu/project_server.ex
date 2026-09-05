@@ -188,6 +188,12 @@ defmodule Neumu.ProjectServer do
     {:reply, {:ok, snapshot}, state}
   end
 
+  # 区间物理时长查询：只读，不产生 History 边、不派发事件；空 tempo 轨
+  # 回退 flat 120 BPM（见 Neume.MultiTrack.region_duration_sec/3）。
+  def handle_call({:region_duration_sec, start_tick, end_tick}, _from, state) do
+    {:reply, Neume.MultiTrack.region_duration_sec(state.multi_track, start_tick, end_tick), state}
+  end
+
   # 保存是只读快照的持久化，不改变工程状态，不派发事件。
   def handle_call({:save, path}, _from, state) do
     case Neume.MultiTrack.save(state.multi_track, path) do
@@ -412,6 +418,18 @@ defmodule Neumu.ProjectServer do
 
   defp apply_edit(multi_track, {:set_time_sigs, events}) do
     Neume.MultiTrack.set_time_sigs(multi_track, events)
+  end
+
+  defp apply_edit(multi_track, {:insert_tempo_step, step_id, tick, bpm}) do
+    Neume.MultiTrack.insert_tempo_step(multi_track, step_id, tick, bpm)
+  end
+
+  defp apply_edit(multi_track, {:edit_tempo_step, step_id, bpm}) do
+    Neume.MultiTrack.edit_tempo_step(multi_track, step_id, bpm)
+  end
+
+  defp apply_edit(multi_track, {:delete_tempo_step, step_id}) do
+    Neume.MultiTrack.delete_tempo_step(multi_track, step_id)
   end
 
   defp apply_edit(multi_track, {:rebind_voicebank, track_id, voicebank_id}) do

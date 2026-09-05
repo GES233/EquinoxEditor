@@ -176,8 +176,8 @@ Neume.Editor
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- `apps/neume` 的 `mix test`：`98 passed, 7 excluded`（excluded 为真声库集成测试）。
-- `apps/neumu` 的 `mix test`：`62 passed`（工程开闭、渲染成功/失败/崩溃、
+- `apps/neume` 的 `mix test`：`102 passed, 7 excluded`（excluded 为真声库集成测试）。
+- `apps/neumu` 的 `mix test`：`68 passed`（工程开闭、渲染成功/失败/崩溃、
   渲染期间查询、source_pin 保留、制品存取、事件订阅幂等与退订、重复
   job_id 拒绝、未知 job tagged error、nil project_id 拒绝、关闭工程终止
   在途渲染；facade：快照与 pin 一致且无运行时对象泄露、查询不产生历史边、
@@ -192,7 +192,9 @@ Neume.Editor
   兜回 :ok、按 pin 渲染历史状态且 source_pin 钉住、非法/未知 pin 拒绝、
   list_render_jobs 枚举 source_pin/artifact_id 并净化失败原因、check 条目
   深扫无 tuple（`phrase_id` 等结构化字段降为 list，`:reason` 例外保持
-  tagged term）；契约回路：
+  tagged term）；tempo 族：台阶插/改/删与快照 `tempo_steps` 投影、同
+  tick 拒绝、首事件保护、非法输入 tagged error、undo/redo、保存重开、
+  时长查询空轨回退 flat 120 BPM 且只读无副作用；契约回路：
   参考客户端跑通 建工程→编辑→stale 重放→冲突 check→repatch→按 pin
   渲染对比→导出落盘；黄金向量钉住替身与真身的 expand 一致性）。
 - `apps/neume_lab` 的 `mix test`：`8 passed`（Kino.Test 驱动实验台面板：
@@ -236,8 +238,9 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
   `Task.Supervisor` 在 GenServer 外执行、制品入运行时 `ArtifactStore`；
   UI-facing facade 已就位（只读快照含 time_sigs/can_undo/can_redo/pins
   投影、封闭编辑命令集含拆音/修剪/合并/跨轨拖拽与 pin 族两阶段挂载、
-  `project_changed` 派发、工程创建/加载/保存入口、制品导出落盘）。仍无
-  播放设备适配、渲染取消或 tempo 编辑；交互界面目前只有
+  `project_changed` 派发、工程创建/加载/保存入口、制品导出落盘、
+  阶梯式 tempo 台阶手势与区间时长查询）。仍无
+  播放设备适配或渲染取消；交互界面目前只有
   `apps/neume_lab` 的 Livebook 实验台（`Kino.JS.Live` 面板 + fixture
   声库/假 client/正弦演示渲染，notebook 需 Attached Node 运行），无产品级
   UI。
