@@ -29,10 +29,6 @@ defmodule Neumu.ProjectServer do
   @type state :: %{
           project_id: RenderJob.project_id(),
           multi_track: Neume.MultiTrack.t(),
-          renderer: (Neume.MultiTrack.t() -> renderer_result()),
-          render_supervisor: Supervisor.supervisor(),
-          artifact_store: GenServer.server(),
-          event_registry: Registry.registry(),
           jobs: %{RenderJob.id() => RenderJob.t()},
           artifacts: %{RenderJob.id() => Neumu.ArtifactStore.artifact_id()},
           tasks: %{reference() => render_task()}
@@ -44,21 +40,14 @@ defmodule Neumu.ProjectServer do
           pid: pid()
         }
 
-  @type renderer_result ::
-          {:ok, RenderJob.artifact()}
-          | {:ok, Neume.MultiTrack.t(), RenderJob.artifact()}
-          | {:error, term()}
-
   # --- 进程生命周期 ---
 
   @doc """
   在 `Neumu.ProjectSupervisor` 下启动一个工程进程。
 
-  选项：
-
-  - `:renderer` — 渲染函数，默认走 `Neume.MultiTrack.render/1` 的生产路径；
-  - `:render_supervisor` / `:artifact_store` / `:event_registry` — 依赖注入，
-    默认使用应用级命名进程。
+  依赖应用级命名进程 `Neumu.RenderSupervisor` / `Neumu.ArtifactStore` /
+  `Neumu.EventRegistry`；渲染默认走 `Neume.MultiTrack.render/1` 的生产
+  路径（单次渲染可经 `Neumu.submit_render/2` 的 `:renderer` 覆盖）。
   """
   @spec start_link(keyword()) :: GenServer.on_start()
   def start_link(opts) do
@@ -66,9 +55,7 @@ defmodule Neumu.ProjectServer do
     GenServer.start_link(__MODULE__, opts, name: via(project_id))
   end
 
-  @doc "按 `project_id` 定位工程进程的 via tuple。"
-  @spec via(RenderJob.project_id()) :: {:via, Registry, {Registry.registry(), term()}}
-  def via(project_id), do: {:via, Registry, {Neumu.ProjectRegistry, project_id}}
+  defp via(project_id), do: {:via, Registry, {Neumu.ProjectRegistry, project_id}}
 
   @doc "按 `project_id` 查找工程进程 pid；未打开（或已终止待清理）时返回 `nil`。"
   @spec whereis(RenderJob.project_id()) :: pid() | nil
@@ -102,10 +89,6 @@ defmodule Neumu.ProjectServer do
          %{
            project_id: Keyword.fetch!(opts, :project_id),
            multi_track: multi_track,
-           renderer: Keyword.get(opts, :renderer, &default_renderer/1),
-           render_supervisor: Keyword.get(opts, :render_supervisor, Neumu.RenderSupervisor),
-           artifact_store: Keyword.get(opts, :artifact_store, Neumu.ArtifactStore),
-           event_registry: Keyword.get(opts, :event_registry, Neumu.EventRegistry),
            jobs: %{},
            artifacts: %{},
            tasks: %{}
@@ -128,10 +111,10 @@ defmodule Neumu.ProjectServer do
              render_target(state.multi_track, Keyword.get(opts, :pin)),
            {:ok, job} <- RenderJob.new(job_id, state.project_id, source_pin),
            {:ok, job} <- RenderJob.start(job) do
-        renderer = Keyword.get(opts, :renderer, state.renderer)
+        renderer = Keyword.get(opts, :renderer, &default_renderer/1)
 
         task =
-          Task.Supervisor.async_nolink(state.render_supervisor, fn -> renderer.(render_target) end)
+          Task.Supervisor.async_nolink(Neumu.RenderSupervisor, fn -> renderer.(render_target) end)
 
         state = %{
           state
@@ -272,7 +255,7 @@ defmodule Neumu.ProjectServer do
   @impl true
   def terminate(_reason, state) do
     for {_ref, %{pid: pid}} <- state.tasks do
-      Task.Supervisor.terminate_child(state.render_supervisor, pid)
+      Task.Supervisor.terminate_child(Neumu.RenderSupervisor, pid)
     end
 
     :ok
@@ -303,7 +286,7 @@ defmodule Neumu.ProjectServer do
   end
 
   defp complete_render(state, job_id, artifact) do
-    with {:ok, artifact_id} <- Neumu.ArtifactStore.put(state.artifact_store, artifact),
+    with {:ok, artifact_id} <- Neumu.ArtifactStore.put(artifact),
          {:ok, job} <- RenderJob.complete(Map.fetch!(state.jobs, job_id), artifact) do
       state = %{
         state
@@ -332,7 +315,7 @@ defmodule Neumu.ProjectServer do
   end
 
   defp broadcast(state, event) do
-    Registry.dispatch(state.event_registry, state.project_id, fn entries ->
+    Registry.dispatch(Neumu.EventRegistry, state.project_id, fn entries ->
       for {pid, _} <- entries, do: send(pid, event)
     end)
 

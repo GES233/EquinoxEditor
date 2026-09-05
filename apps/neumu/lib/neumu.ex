@@ -25,9 +25,6 @@ defmodule Neumu do
   @type artifact_id :: Neumu.ArtifactStore.artifact_id()
   @type history_pin :: Coconut.Edit.History.node_id()
 
-  # 透传给 ProjectServer 的选项键；其余选项交给 Neume.MultiTrack.open/load。
-  @server_opts [:renderer, :render_supervisor, :artifact_store, :event_registry]
-
   # --- 工程生命周期 ---
 
   @doc """
@@ -40,8 +37,7 @@ defmodule Neumu do
     `add_track/4` / `rebind_voicebank/3` 用它解析 `voicebank_id`；
   - `:metadata` — 写入 `Coconut.Project` 的元数据；
   - 其余选项（如 `:output_dir`、`:diffsinger_client`）透传给
-    `Neume.MultiTrack.open/2`；`@server_opts` 中的选项透传给
-    `Neumu.ProjectServer`。
+    `Neume.MultiTrack.open/2`。
   """
   @spec create_project(RenderJob.project_id(), keyword()) :: {:ok, pid()} | {:error, term()}
   def create_project(project_id, opts \\ [])
@@ -49,9 +45,7 @@ defmodule Neumu do
   def create_project(nil, _opts), do: {:error, {:invalid_project_id, nil}}
 
   def create_project(project_id, opts) do
-    {server_opts, open_opts} = Keyword.split(opts, @server_opts)
-
-    with {:ok, registry} <- voicebank_registry(open_opts),
+    with {:ok, registry} <- voicebank_registry(opts),
          {:ok, workspace} <-
            Workspace.new(%{id: ID.generate_id("WSpc_"), tracks: %{}}),
          {:ok, project} <-
@@ -59,11 +53,11 @@ defmodule Neumu do
              id: project_id,
              workspace: workspace,
              voicebank: nil,
-             metadata: Keyword.get(open_opts, :metadata, %{})
+             metadata: Keyword.get(opts, :metadata, %{})
            }),
          {:ok, multi_track} <-
-           Neume.MultiTrack.open(project, prepare_open_opts(open_opts, registry)) do
-      open_project(project_id, multi_track, server_opts)
+           Neume.MultiTrack.open(project, prepare_open_opts(opts, registry)) do
+      open_project(project_id, multi_track)
     end
   end
 
@@ -80,12 +74,10 @@ defmodule Neumu do
   def load_project(nil, _path, _opts), do: {:error, {:invalid_project_id, nil}}
 
   def load_project(project_id, path, opts) do
-    {server_opts, load_opts} = Keyword.split(opts, @server_opts)
-
-    with {:ok, registry} <- voicebank_registry(load_opts),
+    with {:ok, registry} <- voicebank_registry(opts),
          {:ok, multi_track} <-
-           Neume.MultiTrack.load(path, prepare_open_opts(load_opts, registry)) do
-      open_project(project_id, multi_track, server_opts)
+           Neume.MultiTrack.load(path, prepare_open_opts(opts, registry)) do
+      open_project(project_id, multi_track)
     end
   end
 
@@ -103,20 +95,19 @@ defmodule Neumu do
   打开工程并启动对应的 `Neumu.ProjectServer`。
 
   `multi_track` 必须是已经 `Neume.MultiTrack.open/2` 好的工程值；本服务
-  不复制 Neume 的打开/声库解析语义。`:renderer` 等选项透传给
-  `Neumu.ProjectServer.start_link/1`。`project_id` 为 `nil` 时返回
+  不复制 Neume 的打开/声库解析语义。`project_id` 为 `nil` 时返回
   `{:error, {:invalid_project_id, nil}}`。
   """
-  @spec open_project(RenderJob.project_id(), Neume.MultiTrack.t(), keyword()) ::
+  @spec open_project(RenderJob.project_id(), Neume.MultiTrack.t()) ::
           {:ok, pid()} | {:error, term()}
-  def open_project(project_id, multi_track, opts \\ [])
+  def open_project(project_id, multi_track)
 
-  def open_project(nil, %Neume.MultiTrack{}, _opts) do
+  def open_project(nil, %Neume.MultiTrack{}) do
     {:error, {:invalid_project_id, nil}}
   end
 
-  def open_project(project_id, %Neume.MultiTrack{} = multi_track, opts) do
-    opts = opts |> Keyword.put(:project_id, project_id) |> Keyword.put(:multi_track, multi_track)
+  def open_project(project_id, %Neume.MultiTrack{} = multi_track) do
+    opts = [project_id: project_id, multi_track: multi_track]
 
     case DynamicSupervisor.start_child(Neumu.ProjectSupervisor, {Neumu.ProjectServer, opts}) do
       {:ok, pid} ->
