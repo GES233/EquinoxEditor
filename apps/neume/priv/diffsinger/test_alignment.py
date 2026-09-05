@@ -186,5 +186,42 @@ class MelismaTest(unittest.TestCase):
         )
 
 
+class ExpandVectorsTest(unittest.TestCase):
+    """黄金向量（test/fixtures/expand_vectors.json）钉住 expand 的真身行为。
+
+    mock pipeline 与测试假 client 的 Elixir 侧测试消费同一份 fixture；
+    替身近似不成立的情形（`within_fake_approximation: false`）由替身
+    侧的前置断言 loudly 报错覆盖。
+    """
+
+    def test_vectors(self):
+        import json
+        from pathlib import Path
+
+        fixture = (
+            Path(__file__).resolve().parents[2]
+            / "test"
+            / "fixtures"
+            / "expand_vectors.json"
+        )
+        vectors = json.loads(fixture.read_text(encoding="utf-8"))
+
+        for case in vectors["cases"]:
+            with self.subTest(case=case["name"]):
+                expect = case["expect"]
+
+                if "error_contains" in expect:
+                    with self.assertRaises(ValueError) as ctx:
+                        expand_groups(case["words"], case["groups"], case["types"])
+                    self.assertIn(expect["error_contains"], str(ctx.exception))
+                else:
+                    expanded, owners, _remap = expand_groups(
+                        case["words"], case["groups"], case["types"]
+                    )
+                    self.assertEqual(
+                        note_phonemes(expanded, owners), expect["note_phonemes"]
+                    )
+
+
 if __name__ == "__main__":
     unittest.main()

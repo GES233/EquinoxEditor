@@ -161,6 +161,10 @@ defmodule Neumu.ProjectStub.PhonemesClient do
 
   def call(_payload, _config), do: {:error, :not_used}
 
+  # 拼音韵母近似表：只用于判断替身近似是否成立（黄金向量
+  # apps/neume/test/fixtures/expand_vectors.json 钉住一致性）。
+  @approx_vowels ~w(a o e i u v ü ai ei ao ou an en ang eng ong er)
+
   # 按原 words 下标（字符串 key）归并逐词音素序列。
   defp note_phonemes(words, groups) do
     member_vowels =
@@ -168,7 +172,7 @@ defmodule Neumu.ProjectStub.PhonemesClient do
           member <- members,
           into: %{} do
         [phonemes | _rest] = Enum.at(words, head)
-        {member, [List.last(phonemes)]}
+        {member, [last_vowel!(phonemes, head)]}
       end
 
     words
@@ -182,5 +186,17 @@ defmodule Neumu.ProjectStub.PhonemesClient do
 
       {to_string(index), phonemes}
     end)
+  end
+
+  # 近似前置断言：末音素必须是已知元音，否则替身与真身必然分歧。
+  defp last_vowel!(phonemes, head_index) do
+    [language, phone] = List.last(phonemes)
+
+    if phone in @approx_vowels do
+      [language, phone]
+    else
+      raise ArgumentError,
+            "fake expand 近似不成立：头词 #{head_index} 末音素 #{inspect(phone)} 不是已知元音"
+    end
   end
 end

@@ -1,0 +1,61 @@
+{
+  "schema": "neume-expand-vectors/1",
+  "purpose": "组展开（expand_groups）一致性黄金向量：真 worker（Python）、mock pipeline 与测试假 client 共用。words 为 worker 线上格式 [phonemes, duration_sec, midi]；types 为声库音素类型表（expand 的显式输入）。within_fake_approximation=false 的情形超出 mock/fake 的'末音素当延续元音'近似，替身必须大声报错（guard），不许静默选错。",
+  "cases": [
+    {
+      "name": "无组直通",
+      "words": [[[["zh", "s"], ["zh", "a"]], 0.5, 60.0]],
+      "groups": null,
+      "types": {"s": "consonant", "a": "vowel"},
+      "within_fake_approximation": true,
+      "expect": {
+        "note_phonemes": {"0": [["zh", "s"], ["zh", "a"]]}
+      }
+    },
+    {
+      "name": "两组一词：末音素即元音（替身近似成立）",
+      "words": [
+        [[["zh", "SP"]], 0.5, 0.0],
+        [[["zh", "l"], ["zh", "a"]], 0.5, 60.0],
+        [[], 0.5, 62.0]
+      ],
+      "groups": [[1, 2]],
+      "types": {"SP": "rest", "l": "consonant", "a": "vowel"},
+      "within_fake_approximation": true,
+      "expect": {
+        "note_phonemes": {
+          "0": [["zh", "SP"]],
+          "1": [["zh", "l"], ["zh", "a"]],
+          "2": [["zh", "a"]]
+        }
+      }
+    },
+    {
+      "name": "CVC 头词：真身按类型表取第一个元音，替身末音素是辅音必须报错",
+      "words": [
+        [[["zh", "s"], ["zh", "a"], ["zh", "n"]], 0.5, 60.0],
+        [[], 0.5, 62.0]
+      ],
+      "groups": [[0, 1]],
+      "types": {"s": "consonant", "a": "vowel", "n": "consonant"},
+      "within_fake_approximation": false,
+      "expect": {
+        "note_phonemes": {
+          "0": [["zh", "s"], ["zh", "a"], ["zh", "n"]],
+          "1": [["zh", "a"]]
+        }
+      }
+    },
+    {
+      "name": "无元音头词：真身报错，替身同样报错",
+      "words": [
+        [[["zh", "s"]], 0.5, 60.0],
+        [[], 0.5, 62.0]
+      ],
+      "groups": [[0, 1]],
+      "types": {"s": "consonant"},
+      "within_fake_approximation": false,
+      "expect": {"error_contains": "no vowel"}
+    }
+  ]
+}

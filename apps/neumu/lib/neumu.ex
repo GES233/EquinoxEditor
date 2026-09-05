@@ -165,6 +165,29 @@ defmodule Neumu do
   def artifact(artifact_id), do: Neumu.ArtifactStore.fetch(artifact_id)
 
   @doc """
+  把制品的 WAV 完整保存到 `dest_path`（导出契约：完整落盘是必要的）。
+
+  制品只是运行时登记，本调用把其引用的音频文件复制到用户指定路径
+  （目标目录自动创建）。在线播放不走这里：壳层按 `artifact/1` 的
+  `path` 以 chunk/range 流式送文件即可（见
+  `docs/facade-protocol.md` 的播放/导出契约）。
+  """
+  @spec export_artifact(artifact_id(), Path.t()) :: {:ok, Path.t()} | {:error, term()}
+  def export_artifact(artifact_id, dest_path) do
+    with {:ok, artifact} <- artifact(artifact_id),
+         :ok <- File.mkdir_p(Path.dirname(dest_path)),
+         :ok <- File.cp(artifact.path, dest_path) do
+      {:ok, dest_path}
+    else
+      {:error, reason} = error ->
+        case reason do
+          {:artifact_not_found, _} -> error
+          _other -> {:error, {:export_failed, reason}}
+        end
+    end
+  end
+
+  @doc """
   列出工程当前可用的声库条目（plain data：`%{id, name, mode, engine,
   digest}`），供建轨/重绑定界面选择。只读查询，不产生历史边、不派发事件。
   """

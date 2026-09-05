@@ -94,7 +94,17 @@ Neume.Editor
   冲突/降级可占 UI 一等位置；`submit_render/2` 支持 `:pin` 渲染指定
   历史状态（`Neume.MultiTrack.at_pin/2` 物化，被 squash 的 pin 返回
   tagged error），`list_render_jobs/1` 枚举任务的 `source_pin` 与
-  `artifact_id`，支撑"按 pin 试听对比"。
+  `artifact_id`，支撑"按 pin 试听对比"。`export_artifact/2` 把制品
+  WAV 完整复制到指定路径（在线播放走壳层 chunk/range 流式送文件）。
+  facade 契约冻结于 `apps/neumu/docs/facade-protocol.md`；
+  `Neumu.RefClient`（test/support）是瘦客户端参考实现（镜像快照 +
+  事件同步 + stale 重放），`contract_test.exs` 跑通完整契约回路。
+- 组展开一致性黄金向量（`apps/neume/test/fixtures/expand_vectors.json`）：
+  真 worker（`test_alignment.py` 的 `ExpandVectorsTest`）、neume/neumu
+  两侧的假 client 测试消费同一份 fixture；"末音素当延续元音"的替身
+  近似在不成立的情形（末音素非元音）由前置断言 loudly 报错
+  （mock pipeline 返回 `{:unsupported_continuation_head, _, _}`，假
+  client raise `ArgumentError`），不再静默选错。
 - Neume-owned Oi 混音图（`Neume.MixPipeline`）：`TrackGainPan → Mix → Master →
   Export`，支持逐轨 mute/gain/pan、sample-rate 门禁、PCM16 master 限幅与立体声
   WAV 导出；mix 配置保存在 track extras，并经 Coconut History 更新。
@@ -154,20 +164,20 @@ Neume.Editor
   裁决）、`merge_notes`（into 留内容原样；`moved_pins` 显式报告被吸收
   音符上重定签到 into 的 pin）、`drag_note_across_tracks`（内容全量
   复制、清 melisma 旗标、pin 不迁移）。pin 族走两阶段挂载：
-  `Neumu.probe_pin/3` 在 ProjectServer 外跑轻量 probe（G2P + 组展开），
-  返回 plain-data 令牌；三个 mount（pitch 点列、Bezier plain map、
-  音素时长）携令牌进 server 做 History pin 校验，probe 期间被编辑则
-  `{:error, {:stale_pin, _}}` 拒绝；`Neumu.repatch/3` 按 patch id 批量
-  重挂，回复 `{:ok, pin, results}`；`Neumu.unmount_pin/4` 按
-  `(track_id, note_id, channel)` 卸载。快照新增 `time_sigs`、
-  `can_undo`/`can_redo` 与逐轨 `pins`（存活 patch 的 id/channel/
-  anchor/payload）投影，全部 plain data。
+  `Neumu.probe_pin/3` 在 ProjectServer 外纯派生身份底料（输入事实
+  签名，不跑 G2P），返回 plain-data 令牌；三个 mount（pitch 点列、
+  Bezier plain map、音素时长）携令牌进 server 做 History pin 校验，
+  probe 期间被编辑则 `{:error, {:stale_pin, _}}` 拒绝；
+  `Neumu.repatch/3` 按 patch id 批量重挂，回复 `{:ok, pin, results}`；
+  `Neumu.unmount_pin/4` 按 `(track_id, note_id, channel)` 卸载。
+  快照新增 `time_sigs`、`can_undo`/`can_redo` 与逐轨 `pins`（存活
+  patch 的 id/channel/anchor/payload）投影，全部 plain data。
 
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- `apps/neume` 的 `mix test`：`92 passed, 7 excluded`（excluded 为真声库集成测试）。
-- `apps/neumu` 的 `mix test`：`56 passed`（工程开闭、渲染成功/失败/崩溃、
+- `apps/neume` 的 `mix test`：`98 passed, 7 excluded`（excluded 为真声库集成测试）。
+- `apps/neumu` 的 `mix test`：`62 passed`（工程开闭、渲染成功/失败/崩溃、
   渲染期间查询、source_pin 保留、制品存取、事件订阅幂等与退订、重复
   job_id 拒绝、未知 job tagged error、nil project_id 拒绝、关闭工程终止
   在途渲染；facade：快照与 pin 一致且无运行时对象泄露、查询不产生历史边、
@@ -180,13 +190,16 @@ Neume.Editor
   重签/降级/不在册拒绝、合并 moved_pins 报告、快照 pins 投影与保存重开
   恢复；试听支撑：声库列表、check 返回 plain-data 冲突投影且可 repatch
   兜回 :ok、按 pin 渲染历史状态且 source_pin 钉住、非法/未知 pin 拒绝、
-  list_render_jobs 枚举 source_pin/artifact_id 并净化失败原因）。
+  list_render_jobs 枚举 source_pin/artifact_id 并净化失败原因；契约回路：
+  参考客户端跑通 建工程→编辑→stale 重放→冲突 check→repatch→按 pin
+  渲染对比→导出落盘；黄金向量钉住替身与真身的 expand 一致性）。
 - Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
   `43.6%`，通过 2× 包络门禁。
 - `mix dialyzer`：`Total errors: 0`。
-- Python 纯对齐测试：10 项通过，覆盖 V/CV/CCV/CVC、C-G-V、休止、melisma
-  组展开/多 slot 锚定与 `note_phonemes` 按 owner 归并。
+- Python 纯对齐测试：11 项通过，覆盖 V/CV/CCV/CVC、C-G-V、休止、melisma
+  组展开/多 slot 锚定与 `note_phonemes` 按 owner 归并，以及黄金向量
+  fixture（`ExpandVectorsTest`）。
 - Asaritsu 真声库集成测试（5 例）：整轨渲染与 WAV 输出；analyze 边界与
   render 一致；check 聚合模型错误；多窗编辑后仅受影响窗重渲（缓存
   `:hit/:miss` 逐窗断言）；melisma 一词两音符（延续元音锚在成员起点、

@@ -69,6 +69,10 @@ snapshot 投影对应缺口：pins（存活 patch 的 id/channel/anchor/payload�
 3. **第三批（领域决定，约 2 天）**：`merge_notes`、`trim_note`、
    `drag_note_across_tracks`。每个先在本文档补两三行语义决定再写码。
 4. **第四批（单独立项）**：tempo 编辑（缓存 identity / pin 预算波及面大）。
+   范围已收敛（2026-09-05）：只做**阶梯式** tempo 事件（插/改/删台阶），
+   另加一个"区间时长"查询包装（内核已有
+   `Coconut.Edit.Workspace.region_duration_sec/3` 与 `tempo_steps_at/2`，
+   包装即可）；不做连续变速。
 
 ## 第三批语义决定（2026-09-05 拍板）
 

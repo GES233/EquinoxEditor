@@ -179,4 +179,22 @@ defmodule Neume.IdentityPinTest do
     assert {:error, {:check_failed, entries2}} = Editor.check(editor)
     assert length(entries2) == 2
   end
+
+  test "mock 替身近似不成立时 loudly 报错（黄金向量 guard）", %{editor: editor} do
+    # 头音符显式音素的末位是辅音：替身的"末音素当延续元音"近似不成立
+    # （真 worker 按类型表取第一个元音），必须报错而不是静默选错。
+    {:ok, editor} =
+      Editor.insert_note(editor, "n1", :head, {0, 480}, %{
+        pitch: 60,
+        lyric: "san",
+        phonemes: [["zh", "s"], ["zh", "a"], ["zh", "n"]]
+      })
+
+    {:ok, editor} = Editor.split_note(editor, "n1", 240, "n1b")
+
+    assert {:error, {:check_failed, entries}} = Editor.check(editor)
+
+    assert [%{kind: :model, reason: {:unsupported_continuation_head, "n1", "n"}}] =
+             entries
+  end
 end

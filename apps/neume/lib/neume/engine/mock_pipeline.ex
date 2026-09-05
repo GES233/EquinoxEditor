@@ -235,13 +235,21 @@ defmodule Neume.Engine.MockPipeline do
     resolve_mock_phonemes(sorted, memberships)
   end
 
+  # 拼音韵母近似表：mock 的"末音素当延续元音"近似只在末音素是已知
+  # 元音时成立（真 worker 按声库类型表取第一个元音）；否则大声报错，
+  # 不许替身静默选错。黄金向量见 test/fixtures/expand_vectors.json。
+  @approx_vowels ~w(a o e i u v ü ai ei ao ou an en ang eng ong er)
+
   defp resolve_mock_phonemes(sorted, memberships) do
     Enum.reduce_while(sorted, {:ok, %{}}, fn {id, note, _span}, {:ok, acc} ->
       case Map.fetch!(memberships, id) do
         %{continuation?: true, head_id: head_id} ->
           case acc do
             %{^head_id => [_ | _] = head_phonemes} ->
-              {:cont, {:ok, Map.put(acc, id, [List.last(head_phonemes)])}}
+              case continuation_vowel(head_phonemes, head_id) do
+                {:ok, vowel} -> {:cont, {:ok, Map.put(acc, id, [vowel])}}
+                {:error, _} = error -> {:halt, error}
+              end
 
             _missing ->
               {:halt, {:error, {:missing_lyric, head_id}}}
@@ -254,6 +262,16 @@ defmodule Neume.Engine.MockPipeline do
           end
       end
     end)
+  end
+
+  defp continuation_vowel(head_phonemes, head_id) do
+    [language, phone] = List.last(head_phonemes)
+
+    if phone in @approx_vowels do
+      {:ok, [language, phone]}
+    else
+      {:error, {:unsupported_continuation_head, head_id, phone}}
+    end
   end
 
   defp mock_phonemes(note, id) do
