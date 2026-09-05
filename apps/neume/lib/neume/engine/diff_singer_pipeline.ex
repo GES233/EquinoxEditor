@@ -123,6 +123,10 @@ defmodule Neume.Engine.DiffSingerPipeline do
     end
   end
 
+  @doc "声库内容摘要（manifest digest）：pin 输入底料的声音库事实分量。"
+  @spec voicebank_digest(state()) :: String.t()
+  def voicebank_digest(%{manifest: %{digest: digest}}), do: digest
+
   @spec engine_config(state(), term()) :: map()
   def engine_config(%{compiled: compiled}, _track_id) do
     %{
@@ -199,8 +203,10 @@ defmodule Neume.Engine.DiffSingerPipeline do
   end
 
   @doc """
-  挂载/重挂 probe：G2P + 组展开的轻量路径（worker `expand`，不跑模型），
-  返回 probe 物化的逐音符词内音素序列——pin 身份底料（`Neume.Identity`）。
+  probe 路径：G2P + 组展开的轻量路径（worker `expand`，不跑模型），
+  返回物化的逐音符词内音素序列。pin 底料自 2026-09-05 起改为输入事实
+  签名（`Neume.Identity`），本函数的产物只服务于 duration pin 的
+  可表达性校验（re-patch）与词内下标平移，不再是签名底料。
   不经过 Oi 图，直接复用 step 的纯装配函数。
   """
   @spec phonemes(state(), Snapshot.t(), term()) ::

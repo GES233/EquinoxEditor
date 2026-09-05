@@ -64,13 +64,21 @@ defmodule Neumu.PinFacadeTest do
 
     assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
 
-    assert probe == %{
+    # 底料 = 输入事实签名（歌词/显式音素/组归属/声库摘要），非 G2P 输出。
+    assert %{
              track_id: "lead",
              note_id: "n1",
              pin: 2,
-             base: [["zh", "l"], ["zh", "a"]]
-           }
+             base: %{
+               schema: "pin_input_v1",
+               voicebank: voicebank_digest,
+               lyric: "la",
+               phonemes: [["zh", "l"], ["zh", "a"]],
+               group: %{kind: "head"}
+             }
+           } = probe
 
+    assert is_binary(voicebank_digest) and byte_size(voicebank_digest) == 64
     assert_plain_data(probe)
 
     # probe 是只读旁路：pin 不变、无事件。

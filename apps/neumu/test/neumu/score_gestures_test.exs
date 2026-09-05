@@ -84,16 +84,25 @@ defmodule Neumu.ScoreGesturesTest do
     assert {:ok, 3} = insert_note(id, "lead", "n1", :head, {0, 480}, "la")
     assert {:ok, 4} = Neumu.split_note(id, "lead", "n1", 240, "n1b")
 
-    # 贴接：n1b 是 n1 的续音，底料 = 头的末音素 ["zh", "a"]。
-    assert {:ok, %{base: [["zh", "a"]]}} = Neumu.probe_pin(id, "lead", "n1b")
+    # 贴接：n1b 是 n1 的续音，底料 = 头的输入事实（continuation 形）。
+    assert {:ok, %{base: %{group: group}}} = Neumu.probe_pin(id, "lead", "n1b")
+
+    assert %{
+             kind: "continuation",
+             head: "n1",
+             head_lyric: "la",
+             head_phonemes: [["zh", "l"], ["zh", "a"]]
+           } = group
 
     # 把 n1 剪短，拖出缝隙 → 旗标失效，n1b 按自身歌词/显式音素当头。
     assert {:ok, 5} = Neumu.trim_note(id, "lead", "n1", {0, 120})
-    assert {:ok, %{base: [["zh", "l"], ["zh", "a"]]}} = Neumu.probe_pin(id, "lead", "n1b")
+
+    assert {:ok, %{base: %{group: %{kind: "head"}, lyric: "la"}}} =
+             Neumu.probe_pin(id, "lead", "n1b")
 
     # 剪回去贴接，组关系恢复。
     assert {:ok, 6} = Neumu.trim_note(id, "lead", "n1", {0, 240})
-    assert {:ok, %{base: [["zh", "a"]]}} = Neumu.probe_pin(id, "lead", "n1b")
+    assert {:ok, %{base: %{group: %{kind: "continuation"}}}} = Neumu.probe_pin(id, "lead", "n1b")
   end
 
   test "merge_notes 合并相邻音符：into 留内容原样，可 undo/redo", %{project_id: id} do

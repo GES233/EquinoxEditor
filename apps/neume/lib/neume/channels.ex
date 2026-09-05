@@ -3,9 +3,9 @@ defmodule Neume.Channels.PitchPin do
   音符级 pitch pin channel（probe 期身份底料，§6.6）。
 
   payload：兼容旧 `[[tick, midi], ...]` 折线，或 `pitch_curve_v1` 版本化
-  Bezier plain map；二者都是绝对 tick + 绝对 MIDI。底料是 probe 物化的
-  词内音素序列 `[[lang, phone], ...]`（见 `Neume.Identity`），静态 check
-  不做 digest 裁决；投影与签名归 `Neume.Editor` 的挂载/probe 路径。
+  Bezier plain map；二者都是绝对 tick + 绝对 MIDI。底料是输入事实签名
+  （歌词/显式音素/melisma 归属/声库摘要，见 `Neume.Identity`），静态
+  check 不做 digest 裁决；投影与签名归 `Neume.Editor` 的挂载路径。
   """
 
   @behaviour Coconut.Render.Channel
@@ -26,9 +26,10 @@ defmodule Neume.Channels.DurationPin do
   @moduledoc """
   逐音素 duration pin channel（probe 期身份底料，§6.6）。
 
-  payload：`[[ph_index, dur_tick], ...]` 音符内稀疏时长钉。底料是 probe
-  物化的词内音素序列（pin 下标指向的对象身份）；`ph_index` 越界等
-  可表达性校验在消费边界（ScorePlan/Analysis）与 re-patch 手势里。
+  payload：`[[ph_index, dur_tick], ...]` 音符内稀疏时长钉。底料是输入
+  事实签名（见 `Neume.Identity`）；`ph_index` 越界等可表达性校验在
+  消费边界（ScorePlan/Analysis）与 re-patch 手势里（后者需要 probe
+  物化的词内音素序列长度）。
   """
 
   @behaviour Coconut.Render.Channel

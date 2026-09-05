@@ -301,12 +301,12 @@ defmodule Neume.Editor do
   @doc """
   在音符上挂载绝对 tick 到 MIDI 的稀疏 pitch 控制点。
 
-  身份底料（§6.6）：挂载时跑一次轻量 probe（G2P + 组展开，不跑模型），
-  用物化的词内音素序列签名；probe 期裁决见 `Neume.Identity`。
+  身份底料（§6.6）：输入事实签名（歌词/显式音素/melisma 归属/声库摘要，
+  见 `Neume.Identity`），纯派生、不跑 G2P；probe 期裁决界面不变。
 
   选项（两阶段挂载用，见 `probe_base/2`）：
 
-  - `:base` — 已物化的身份底料；提供时跳过现场 probe；
+  - `:base` — 已物化的身份底料；提供时跳过现场物化；
   - `:pin` — History cursor 版本钉；与当前 cursor 不符时返回
     `{:error, {:stale_pin, _}}`，不落历史边。
   """
@@ -360,21 +360,22 @@ defmodule Neume.Editor do
   end
 
   @doc """
-  pin 挂载的轻量 probe（G2P + 组展开，真声库要调 worker）：物化 `note_id`
-  的词内音素序列，作为 mount 的显式 `:base` 身份底料。
+  物化 `note_id` 的 pin 身份底料（§6.6 输入事实签名，见 `Neume.Identity`）。
 
-  这是慢路径的抽离：调用方（如 Neumu facade 的两阶段挂载）在编辑进程外
-  先跑 probe，再把底料随 `pin:` 校验带回 mount。本函数只读，不改会话。
+  纯派生：只读当前会话的乐谱事实与声库摘要，不跑 G2P、不调 worker。
+  两阶段挂载（先取底料、再携 `pin:` 校验 mount）的调用方仍可把它当
+  慢路径对待；本函数只读，不改会话。
   """
-  @spec probe_base(t(), term()) :: {:ok, [[String.t()]]} | {:error, term()}
+  @spec probe_base(t(), term()) :: {:ok, Identity.input_base()} | {:error, term()}
   def probe_base(%__MODULE__{} = editor, note_id) do
-    with {:ok, request} <- Coconut.request(editor.session),
-         {:ok, sequences} <-
-           editor.pipeline.phonemes(editor.pipeline_state, request.snapshot, editor.track_id),
-         {:ok, sequence} <- fetch_sequence(sequences, note_id) do
-      {:ok, sequence}
+    with {:ok, track} <- current_track(editor) do
+      Identity.base_for(track, note_id, voicebank_digest(editor))
     end
   end
+
+  # pin 输入底料的声音库事实分量（mock 无声库，为 nil）。
+  defp voicebank_digest(%__MODULE__{} = editor),
+    do: editor.pipeline.voicebank_digest(editor.pipeline_state)
 
   @doc """
   按 `(note_id, channel)` 卸载 pin：存活 patch 移入墓地，记一条历史边
@@ -505,7 +506,8 @@ defmodule Neume.Editor do
          {:ok, sequences} <-
            editor.pipeline.phonemes(editor.pipeline_state, request.snapshot, editor.track_id),
          {:ok, track} <- current_track(editor),
-         {:ok, discards, attaches, results} <- plan_repatch(patches, sequences, track),
+         {:ok, discards, attaches, results} <-
+           plan_repatch(patches, sequences, track, voicebank_digest(editor)),
          {:ok, session} <- run_repatch(editor.session, discards, attaches) do
       {:ok, %{editor | session: session}, results}
     end
@@ -622,14 +624,16 @@ defmodule Neume.Editor do
   defp merge_phrase_results([], [_ | _]), do: {:ok, nil}
   defp merge_phrase_results(results, _errors), do: Neume.Analysis.merge(results)
 
-  defp adjudicate_identity_errors(_editor, nil), do: {:ok, []}
-
-  defp adjudicate_identity_errors(%__MODULE__{} = editor, %Neume.Analysis{} = analysis) do
+  # 身份裁决只依赖 workspace 事实与声库摘要，与模型 probe 成败无关；
+  # 定位信息（phrase/span）在 analysis 可用时才补充。
+  defp adjudicate_identity_errors(%__MODULE__{} = editor, analysis) do
     with {:ok, track} <- current_track(editor) do
+      phrases = if analysis, do: analysis.phrases, else: []
+
       entries =
         track
-        |> Identity.adjudicate(editor.session.channels, analysis.note_phonemes)
-        |> Enum.map(&locate_identity_error(&1, editor.track_id, analysis.phrases))
+        |> Identity.adjudicate(editor.session.channels, voicebank_digest(editor))
+        |> Enum.map(&locate_identity_error(&1, editor.track_id, phrases))
 
       {:ok, entries}
     end
@@ -656,7 +660,7 @@ defmodule Neume.Editor do
   end
 
   # 挂载共用路径：显式 :base 签名 → 一条历史边。`opts[:base]` 缺省时现场
-  # probe 物化底料；`opts[:pin]` 透传 History 的 stale-write 校验。
+  # 纯派生物化底料；`opts[:pin]` 透传 History 的 stale-write 校验。
   defp mount_pin(%__MODULE__{} = editor, note_id, channel, payload, opts) do
     with {:ok, base} <- pin_base(editor, note_id, Keyword.get(opts, :base)),
          {:ok, session, patch} <-
@@ -678,15 +682,17 @@ defmodule Neume.Editor do
     end
   end
 
-  # re-patch 计划：逐 patch 取新底料 + 可表达性校验，可重签的进批量。
-  defp plan_repatch(patches, sequences, track) do
+  # re-patch 计划：逐 patch 以 probe 序列校验可表达性（duration 下标
+  # 界内），可表达的以当前输入事实底料重签后进批量。
+  defp plan_repatch(patches, sequences, track, voicebank_digest) do
     {discards, attaches, results} =
       Enum.reduce(patches, {[], [], []}, fn patch, {discards, attaches, results} ->
         note_id = hd(patch.anchor.refs)
 
         with {:ok, fresh} <- fetch_sequence(sequences, note_id),
              :ok <- Identity.expressible?(patch.channel, patch.patch.payload, fresh),
-             {:ok, resigned} <- Tamale.Patch.new(fresh, patch.patch.payload),
+             {:ok, fresh_base} <- Identity.base_for(track, note_id, voicebank_digest),
+             {:ok, resigned} <- Tamale.Patch.new(fresh_base, patch.patch.payload),
              {:ok, replacement} <-
                Patch.new(%{
                  track_id: patch.track_id,

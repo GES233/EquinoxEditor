@@ -343,13 +343,14 @@ defmodule Neumu do
   # --- pin 干预（两阶段挂载） ---
 
   @doc """
-  pin 挂载第一阶段：对音符做轻量 probe（G2P + 组展开，真声库要调
-  worker），在 ProjectServer 之外的调用方进程执行，不阻塞编辑与查询。
+  pin 挂载第一阶段：物化音符的身份底料（输入事实签名：歌词/显式音素/
+  melisma 归属/声库内容摘要，见 `Neume.Identity`）。
 
-  返回 `{:ok, probe}`；`probe` 是 plain data：`%{track_id, note_id,
-  pin, base}`（`base` 为 probe 物化的逐音素身份底料），原样传给三个
-  mount 手势。probe 之后工程被编辑，mount 返回
-  `{:error, {:stale_pin, _}}`（状态不变），UI 重新 probe 后重试。
+  纯派生、不跑 G2P、不调 worker，即时返回；在 ProjectServer 之外的调用
+  方进程执行，不占用 server。返回 `{:ok, probe}`；`probe` 是 plain
+  data：`%{track_id, note_id, pin, base}`，原样传给三个 mount 手势。
+  probe 之后工程被编辑，mount 返回 `{:error, {:stale_pin, _}}`（状态
+  不变），UI 重新 probe 后重试。
   """
   @spec probe_pin(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term()) ::
           {:ok, map()} | {:error, term()}

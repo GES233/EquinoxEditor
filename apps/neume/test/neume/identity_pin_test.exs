@@ -1,7 +1,8 @@
 defmodule Neume.IdentityPinTest do
   @moduledoc """
-  pin 身份底料（§6.6 第二档）的端到端语义：爆炸半径、probe 期裁决与
-  re-patch 批量重挂。全部走 mock 管线（纯 Elixir 派生，确定性）。
+  pin 身份底料（§6.6 第二档，输入事实签名）的端到端语义：爆炸半径、
+  probe 期裁决与 re-patch 批量重挂。全部走 mock 管线（纯 Elixir 派生，
+  确定性）。
   """
 
   use ExUnit.Case, async: true
@@ -133,6 +134,29 @@ defmodule Neume.IdentityPinTest do
     assert {:ok, editor, [%{status: :repatched}]} = Editor.repatch(editor, [entry])
     assert {:ok, _editor, %{analysis: analysis}} = Editor.check(editor)
     assert analysis.note_phonemes["n1b"] == [["zh", "m"], ["zh", "i"]]
+  end
+
+  test "签输入：底料是输入事实而非 G2P 输出，mount 不依赖 probe", %{editor: editor} do
+    editor = insert_la(editor)
+
+    # 无歌词、无显式音素的音符也能取到底料（纯派生，不跑 G2P）；
+    # mock 无声库，voicebank 分量为 nil。
+    {:ok, editor} = Editor.insert_note(editor, "n2", "n1", {480, 960}, %{pitch: 62})
+
+    assert {:ok,
+            %{
+              schema: "pin_input_v1",
+              voicebank: nil,
+              lyric: nil,
+              phonemes: nil,
+              group: %{kind: "head"}
+            }} = Editor.probe_base(editor, "n2")
+
+    # 挂载成功；缺歌词是模型期事实，在 check 的模型裁决才报错，
+    # 且输入底料不因此产生身份冲突（签的是输入，不是 probe 输出）。
+    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n2", [[0, 96]])
+    assert {:error, {:check_failed, entries}} = Editor.check(editor)
+    assert [%{kind: :model, reason: {:missing_lyric, "n2"}}] = entries
   end
 
   test "pitch pin 与 duration pin 的身份冲突聚合在一次 check 里", %{editor: editor} do

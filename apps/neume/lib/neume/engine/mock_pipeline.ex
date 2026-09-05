@@ -37,6 +37,10 @@ defmodule Neume.Engine.MockPipeline do
     end
   end
 
+  @doc "mock 无声库：pin 输入底料的声音库事实分量为 nil。"
+  @spec voicebank_digest(state()) :: nil
+  def voicebank_digest(_state), do: nil
+
   @spec engine_config(state(), term()) :: map()
   def engine_config(%{compiled: compiled}, track_id) do
     %{
@@ -112,8 +116,9 @@ defmodule Neume.Engine.MockPipeline do
   end
 
   @doc """
-  挂载/重挂 probe：mock 音素派生与 analyze 同一份纯逻辑（lyric 拆字 +
-  续音取头末音素），直接作为 pin 的身份底料。
+  re-patch 可表达性用的 probe：mock 音素派生与 analyze 同一份纯逻辑
+  （lyric 拆字 + 续音取头末音素）。pin 底料自 2026-09-05 起为输入事实
+  签名（`Neume.Identity`），本产物只服务于 duration pin 的界内校验。
   """
   @spec phonemes(state(), Snapshot.t(), term()) ::
           {:ok, Neume.Identity.note_phonemes()} | {:error, term()}

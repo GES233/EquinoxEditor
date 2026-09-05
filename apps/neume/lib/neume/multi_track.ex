@@ -281,11 +281,13 @@ defmodule Neume.MultiTrack do
       )
 
   @doc """
-  pin 挂载的轻量 probe（G2P + 组展开，真声库要调 worker）：物化 `note_id`
-  的身份底料。只读，不改工程值——调用方可在 ProjectServer 之外执行，
-  再携 `pin:` 校验走 mount（见 `Neume.Editor.probe_base/2`）。
+  物化 `note_id` 的 pin 身份底料（输入事实签名，见 `Neume.Identity`）。
+  纯派生、不跑 G2P、不调 worker；只读，不改工程值——调用方可在
+  ProjectServer 之外执行，再携 `pin:` 校验走 mount（见
+  `Neume.Editor.probe_base/2`）。
   """
-  @spec probe_pin(t(), Track.track_id(), term()) :: {:ok, [[String.t()]]} | {:error, term()}
+  @spec probe_pin(t(), Track.track_id(), term()) ::
+          {:ok, Neume.Identity.input_base()} | {:error, term()}
   def probe_pin(%__MODULE__{} = runtime, track_id, note_id) do
     with {:ok, editor} <- attach_editor(runtime, track_id) do
       Editor.probe_base(editor, note_id)

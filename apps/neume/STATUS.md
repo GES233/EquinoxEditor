@@ -105,15 +105,20 @@ Neume.Editor
   per-note Ordinal 锚，Analysis 平移到词内下标并按组总时长校验预算；
   `Editor.split_note/4` 拆分右子自动补旗标（单一历史边，undo 一步还原）。
 - pin 身份底料（coconut `design-2026-08-orchid-intervention.md` §6.6
-  第二档）：duration/pitch pin 的 digest 钉 probe 物化的**词内音素序列**
-  （头=自身 G2P 序列，续音=派生延续元音单元素序列），不再钉 score 内容。
-  爆炸半径：改词/显式音素修改/melisma 晋升断组/声库字典变化会炸；改音高、
-  拖动、邻居编辑不炸。coconut 侧新增 channel `resolve_stage/0`（`:probe`
-  跳过静态 digest 裁决）与 `Coconut.mount` 的 `:base` 显式签名；挂载经
-  轻量 probe（worker `expand` action，G2P+组展开不跑模型；mock 为纯
-  Elixir 派生），裁决在 `check`/`analyze`/`render` 的 probe 之后统一执行
-  （`Neume.Identity`），冲突 entry 形如
-  `%{kind: :conflict, stage: :probe, patch: ...}`，与静态冲突共用同一界面。
+  第二档，2026-09-05 起改为**输入事实签名**）：duration/pitch pin 的
+  digest 钉"决定语音学身份的输入事实"——歌词、显式音素、生效 melisma
+  归属（续音 = 头的输入事实）、声库内容摘要——不钉 probe 物化的音素
+  序列（G2P/组展开是引擎内部协议，不进身份层）。底料推导是纯函数
+  （`Neume.Identity.base_by_note/2`，不跑 G2P、不调 worker），挂载不再
+  依赖 probe。爆炸半径：改词/显式音素修改/melisma 晋升断组/声库内容
+  变化会炸；改音高、拖动、邻居编辑不炸。已知取舍：同音字改词等"输入
+  变了但 G2P 输出不变"的编辑会假冲突，由 repatch 重签兜住。coconut 侧
+  channel `resolve_stage/0`（`:probe` 跳过静态 digest 裁决）与
+  `Coconut.mount` 的 `:base` 显式签名不变；裁决仍在
+  `check`/`analyze`/`render` 的统一冲突界面聚合（`Neume.Identity`），
+  冲突 entry 形如 `%{kind: :conflict, stage: :probe, patch: ...}`；
+  probe 物化序列继续服务于 duration pin 的可表达性校验（re-patch 时
+  的下标界内判定）。
 - `Editor.repatch/2` 批量重挂手势：payload 在新底料上仍可表达（下标在
   界内等）则保留重签，否则降级报告 `:degraded`（旧 patch 原样保留）；
   整批经 coconut `Command.repatch_patches` 落**一条历史边**（undo 一次
@@ -231,7 +236,8 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 - CoconutOi 只翻译 Coconut intervention 与 Oi data，不拥有音素对齐、轨道调度或混音语义。
 - 多轨调度、混音、总线和导出汇聚由 Neume 声明的 Oi graph/steps 实现。
 - 音素类型、帧网格、G2P 和元音锚定属于 DiffSinger adapter/worker。
-- pin 底料是 probe 物化的音素序列（身份底料）；其物化与 digest 裁决在
-  引擎 probe 期，Coconut 静态 check 不过问。
+- pin 底料是输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为
+  纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态
+  check 不过问；G2P/组展开只服务于消费边界与 re-patch 可表达性。
 - 声库路径不持久化，模型和生成 WAV 不提交。
 - melisma 必须由显式 syllable group 表达，不在 worker 中启发式猜测。

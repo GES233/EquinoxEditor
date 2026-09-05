@@ -53,7 +53,8 @@ melisma（一词跨多音符）用显式旗标表达：续音音符携带
 吸收剩余帧。pitch intervention 可经 `Editor.mount_pitch/3` 挂载兼容折线，
 或经 `Editor.mount_pitch_curve/3` 挂载 Coconut Bezier 控制点容器；Bezier
 在宿主侧按真实声学帧 tick 栅格化，worker 不重复曲线数学。两种 pin 的
- digest 都钉在 **probe 物化的词内音素序列**上（身份底料）：改词、
+ digest 都钉在**输入事实签名**上（歌词/显式音素/melisma 归属/声库摘要，
+2026-09-05 起替代 probe 物化序列）：改词、
 melisma 晋升/断组会让 pin 冲突并进入统一的 `check_failed` 裁决界面，
 `Editor.repatch/2` 把仍可表达的 pin 批量重签（一条历史边，undo 一次全
 还原）；改音高、拖动和邻居编辑不会误伤。所有干预编辑进入 Coconut
