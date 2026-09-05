@@ -55,7 +55,7 @@ defmodule Neumu.ProjectSnapshot do
           history_pin: History.node_id(),
           can_undo: boolean(),
           can_redo: boolean(),
-          time_sigs: [Coconut.Score.TimeSig.time_sig_event()],
+          time_sigs: [term()],
           tracks: [track()]
         }
 
@@ -70,13 +70,22 @@ defmodule Neumu.ProjectSnapshot do
       history_pin: History.current(history).node_id,
       can_undo: history.cursor > history.base_seq,
       can_redo: history.cursor < history.seq,
-      time_sigs: workspace.time_sigs,
+      time_sigs: deep_lists(workspace.time_sigs),
       tracks:
         workspace.tracks
         |> Enum.sort_by(fn {track_id, _track} -> track_id end)
         |> Enum.map(fn {_track_id, track} -> project_track(track) end)
     }
   end
+
+  # 拍号事件的 JSON-safe 形态：tagged tuple 递归降为位置即标签的 list
+  # （`{1, {4, 4}}` → `[1, [4, 4]]`，`{:compound, [2,3], 8}` →
+  # `["compound", [2, 3], 8]`，`:san` → `"san"`）。
+  defp deep_lists(term) when is_tuple(term),
+    do: term |> Tuple.to_list() |> Enum.map(&deep_lists/1)
+
+  defp deep_lists(list) when is_list(list), do: Enum.map(list, &deep_lists/1)
+  defp deep_lists(term), do: term
 
   defp project_track(%Track{} = track) do
     %{

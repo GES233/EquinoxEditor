@@ -439,26 +439,31 @@ defmodule Neumu.FacadeTest do
   test "set_time_sigs 替换拍号并进快照投影，非法输入不落边", %{project_id: id} do
     :ok = Neumu.subscribe(id)
 
-    # 默认 4/4 从小节 1 开始。
-    assert snapshot!(id).time_sigs == [{1, {4, 4}}]
+    # 默认 4/4 从小节 1 开始；快照投影为 JSON-safe 形态（tuple 降为 list）。
+    assert snapshot!(id).time_sigs == [[1, [4, 4]]]
 
     assert {:ok, 2} = Neumu.set_time_sigs(id, [{1, {3, 4}}, {5, {6, 8}}])
     assert_received {:project_changed, ^id, 2}
-    assert snapshot!(id).time_sigs == [{1, {3, 4}}, {5, {6, 8}}]
+    assert snapshot!(id).time_sigs == [[1, [3, 4]], [5, [6, 8]]]
     assert_plain_data(snapshot!(id))
+
+    # compound 与散拍子的投影形态（atom 保留，JSON 中即字符串）。
+    assert {:ok, 3} = Neumu.set_time_sigs(id, [{1, {:compound, [2, 3], 8}}, {5, :san}])
+    assert_received {:project_changed, ^id, 3}
+    assert snapshot!(id).time_sigs == [[1, [:compound, [2, 3], 8]], [5, :san]]
 
     assert {:error, {:invalid_time_sigs, [{2, {4, 4}}]}} = Neumu.set_time_sigs(id, [{2, {4, 4}}])
     assert {:error, {:invalid_time_sigs, _}} = Neumu.set_time_sigs(id, [{1, {4, 0}}])
-    assert {:ok, 2} = Neumu.history_pin(id)
-    refute_received {:project_changed, _, _}
+    assert {:ok, 3} = Neumu.history_pin(id)
 
-    assert {:ok, 1} = Neumu.undo(id)
-    assert_received {:project_changed, ^id, 1}
-    assert snapshot!(id).time_sigs == [{1, {4, 4}}]
-
-    assert {:ok, 2} = Neumu.redo(id)
+    assert {:ok, 2} = Neumu.undo(id)
     assert_received {:project_changed, ^id, 2}
-    assert snapshot!(id).time_sigs == [{1, {3, 4}}, {5, {6, 8}}]
+    assert snapshot!(id).time_sigs == [[1, [3, 4]], [5, [6, 8]]]
+
+    assert {:ok, 3} = Neumu.redo(id)
+    assert_received {:project_changed, ^id, 3}
+    assert snapshot!(id).time_sigs == [[1, [:compound, [2, 3], 8]], [5, :san]]
+    refute_received {:project_changed, _, _}
   end
 
   test "快照投影 can_undo/can_redo 跟随 History cursor", %{project_id: id} do
@@ -500,7 +505,7 @@ defmodule Neumu.FacadeTest do
 
     snapshot = snapshot!(id)
     assert snapshot.history_pin == 5
-    assert snapshot.time_sigs == [{1, {3, 4}}]
+    assert snapshot.time_sigs == [[1, [3, 4]]]
     lead = track(snapshot, "lead")
     assert lead.name == "主唱"
 

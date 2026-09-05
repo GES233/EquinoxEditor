@@ -4,8 +4,13 @@ defmodule Neumu.CheckReport do
 
   `Neume` 的 check 冲突 entry 携带 `%Coconut.Edit.Patch{}` struct 等运行时
   领域值，不能直接跨 facade 边界；本模块把它们投影为可序列化 plain
-  data（patch 只留 `patch_id`/`channel`/`note_id`），供 `Neumu.check/1`
-  与 `Neumu.list_render_jobs/1` 使用。
+  data（patch 只留 `patch_id`/`channel`/`note_id`，`span` 等结构化字段
+  降为 JSON-safe 的 list），供 `Neumu.check/1` 与
+  `Neumu.list_render_jobs/1` 使用。
+
+  `reason` 字段保持结构化 tagged term：Elixir 调用方需要机器可判，
+  UI 只展示；壳层推到浏览器前的末端转换（tuple→list 等）归壳层，
+  见 `docs/facade-protocol.md`。
   """
 
   alias Coconut.Edit.Patch
@@ -21,17 +26,25 @@ defmodule Neumu.CheckReport do
   @spec project_entries([term()]) :: [term()]
   def project_entries(entries) when is_list(entries), do: Enum.map(entries, &project_entry/1)
 
-  # 携 patch struct 的条目（身份/静态冲突）：patch 降为 id + note 引用。
+  # 冲突条目的结构化字段 JSON-safe：`span` 等 tick 区间 tuple 降为
+  # `[start, end]`；`reason` 保持结构化 tagged term（Elixir 侧机器可判，
+  # UI 只展示——末端转换归壳层，见 docs/facade-protocol.md）。
   defp project_entry(%{patch: %Patch{} = patch} = entry) do
     entry
     |> Map.drop([:patch])
     |> Map.put(:patch_id, patch.id)
     |> Map.put(:note_id, anchor_note_id(patch))
     |> Map.put(:channel, patch.channel)
+    |> project_span()
     |> sanitize()
   end
 
-  defp project_entry(entry), do: sanitize(entry)
+  defp project_entry(entry), do: entry |> project_span() |> sanitize()
+
+  defp project_span(%{span: {start_tick, end_tick}} = entry),
+    do: %{entry | span: [start_tick, end_tick]}
+
+  defp project_span(entry), do: entry
 
   defp anchor_note_id(%Patch{anchor: %Tamale.Anchor.Ordinal{refs: [note_id | _]}}), do: note_id
   defp anchor_note_id(_patch), do: nil

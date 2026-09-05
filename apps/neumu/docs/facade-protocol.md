@@ -9,10 +9,19 @@
 
 1. UI ↔ Neumu 之间只传**可序列化 plain data**：不含 PID、函数、引用、
    struct（快照与回复都递归满足，有测试锁定）。
-2. **事件只携带 identity**（重查所需的 id/pin），不携带状态本体；
+2. **结构化数据字段 JSON-safe**（2026-09-05 起）：快照、check 条目、
+   任务/声库列举、probe 令牌等投影中不出现 tuple——tagged tuple
+   一律降为"位置即标签"的 list（`{1, {4, 4}}` → `[1, [4, 4]]`，
+   `{:compound, [2, 3], 8}` → `["compound", [2, 3], 8]`，
+   `span: {s, e}` → `[s, e]`）。
+3. **例外：`reason`/`error` 字段保持结构化 tagged term**——Elixir
+   调用方需要机器可判，UI 只展示。壳层推给浏览器前做末端转换
+   （tuple→list 或直接 inspect 字符串化），一行递归 walker 的事。
+   atom key/值在 JSON 中即字符串。
+4. **事件只携带 identity**（重查所需的 id/pin），不携带状态本体；
    收到事件后重新查询权威快照。
-3. 所有编辑经封闭命令集串行落账；UI 不持有/修改 `Neume.MultiTrack`。
-4. 编辑手势成功且实际产生 History 边 → 返回新 `history_pin` 并派发
+5. 所有编辑经封闭命令集串行落账；UI 不持有/修改 `Neume.MultiTrack`。
+6. 编辑手势成功且实际产生 History 边 → 返回新 `history_pin` 并派发
    一次 `project_changed`；无变化编辑返回当前 pin、不派发；失败返回
    tagged error、不改状态、不派发。
 
@@ -23,7 +32,9 @@
   project_id: term,
   history_pin: integer,          # History cursor node id
   can_undo: boolean, can_redo: boolean,
-  time_sigs: [{bar, {num, den}}], # 首事件在小节 1
+  time_sigs: [[bar, sig]],          # JSON-safe：[1, [4, 4]]；sig 另有
+                                    # [:standard, n, d] / [:compound, g, d] / :san
+                                    #（atom 保留，JSON 中即字符串）
   tracks: [%{
     id, name: String.t() | nil,
     voicebank: %{name, engine, digest} | nil,
@@ -104,3 +115,16 @@
 `{:patch_not_alive, _}`、`{:check_failed, entries}`、
 `{:job_already_exists, _}`、`{:job_not_found, _}`、
 `{:voicebank_not_registered, _}`。
+
+## 壳实现参考（已查证）
+
+- **Livebook/Kino**：用 `Kino.JS.Live` 自定义 widget（非 Smart Cell——
+  Smart Cell 是"UI 生成代码进 notebook"的语义，与编辑器会话不合）。
+  kino server 是类 GenServer 进程：`init/2`、`handle_connect/1`
+  （给新客户端初始快照）、`handle_event/3`（收客户端 `ctx.pushEvent`）、
+  `handle_info/2`（直接收 `Neumu.subscribe` 的三种事件）、
+  `broadcast_event`（推给客户端 `ctx.handleEvent`）；支持
+  `{:binary, info, binary}` 二进制负载（WAV 不走 base64）；
+  `Kino.Audio` 可直接播 WAV。多客户端同步自带。
+- **Phoenix Channel**：事件桥 = 订阅 + 直转发 + 客户端重查快照；
+  播放走 chunk/range 流式送 artifact 文件；远程部署同此形态。
