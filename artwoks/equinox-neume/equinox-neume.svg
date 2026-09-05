@@ -1,0 +1,37 @@
+<svg xmlns="http://www.w3.org/2000/svg" xmlns:xlink="http://www.w3.org/1999/xlink" width="900" height="1200" viewBox="0 0 900 1200">
+  <!-- 承印物：冷灰（当代纸张，不是羊皮纸） -->
+  <rect width="900" height="1200" fill="#E9E9E5"/>
+
+  <!-- 主体：Gregorio/greciliae 真纽姆字形（C 谱号左缘半裁 + punctum +
+       pes，第四根谱线直出底缘），炭黑版网点化；谱线双缘出血 -->
+  <image xlink:href="neume-strip-halftone.png"
+         href="neume-strip-halftone.png"
+         x="-47" y="230" width="1152" height="2401"/>
+
+  <!-- 标题：宽 grotesk 大写，落进谱线场，与谱号/符头网点叠印相撞 -->
+  <g fill="#30343A" font-family="Arial Black, Arial, sans-serif" font-size="80" letter-spacing="1">
+    <text x="63" y="690">PIN THE NOTE,</text>
+    <text x="63" y="776">KEEP THE VOICE</text>
+  </g>
+
+  <!-- 红版：抽象的"钉"——一枚纯色圆斑按在 pes 符头上（钉头大过符头的
+       反常比例 = 焦点事件），+6px 淡影作套准微偏；下符头从圆斑下探出 -->
+  <circle cx="536" cy="911" r="90" fill="#8DABE4" opacity="0.22"/>
+  <circle cx="530" cy="905" r="90" fill="#8DABE4"/>
+
+  <!-- 手工笔意（同族只此一处）：套准十字 + 小注记，落在右上放空区 -->
+  <g stroke="#8DABE4" stroke-width="2.5" fill="none">
+    <circle cx="740" cy="300" r="26"/>
+    <line x1="740" y1="262" x2="740" y2="280"/>
+    <line x1="740" y1="320" x2="740" y2="338"/>
+    <line x1="702" y1="300" x2="720" y2="300"/>
+    <line x1="760" y1="300" x2="778" y2="300"/>
+  </g>
+  <text x="792" y="307" font-family="Consolas, monospace" font-size="20" fill="#8DABE4" letter-spacing="1">repatch.</text>
+
+  <!-- 底部留白区：两行 mono 事实小字（与标题保持 5×+ 尺度跳变） -->
+  <g font-family="Consolas, monospace" font-size="15" fill="#30343A" letter-spacing="1">
+    <text x="63" y="1110">EQUINOX / NEUME — A SINGING-SYNTHESIS EDITOR KERNEL</text>
+    <text x="63" y="1136">UNDOABLE HISTORY · PINNED INTENT · WINDOWED RENDER</text>
+  </g>
+</svg>

@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="256" height="256" viewBox="0 0 256 256">
+  <!-- Equinox 图标（单色场景）：单墨，钉斑与符头同色 -->
+  <line x1="28" y1="128" x2="228" y2="128" stroke="#30343A" stroke-width="14" stroke-linecap="round"/>
+  <rect x="58" y="68" width="140" height="120" rx="16" fill="#30343A"/>
+  <circle cx="208" cy="58" r="42" fill="#30343A"/>
+</svg>

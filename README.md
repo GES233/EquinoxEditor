@@ -1,4 +1,4 @@
-![icon](artwoks/editor_cyan.svg)
+![icon](artwoks/icon_dark.svg)
 
 # Equinox
 
