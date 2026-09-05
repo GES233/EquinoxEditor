@@ -26,28 +26,41 @@ defmodule Neumu.CheckReport do
   @spec project_entries([term()]) :: [term()]
   def project_entries(entries) when is_list(entries), do: Enum.map(entries, &project_entry/1)
 
-  # 冲突条目的结构化字段 JSON-safe：`span` 等 tick 区间 tuple 降为
-  # `[start, end]`；`reason` 保持结构化 tagged term（Elixir 侧机器可判，
-  # UI 只展示——末端转换归壳层，见 docs/facade-protocol.md）。
+  # 冲突条目的结构化字段 JSON-safe：tuple 递归降为位置即标签的 list
+  # （`span`/`phrase_id` 等）；`reason` 保持结构化 tagged term（Elixir 侧
+  # 机器可判，UI 只展示——末端转换归壳层，见 docs/facade-protocol.md）。
   defp project_entry(%{patch: %Patch{} = patch} = entry) do
     entry
     |> Map.drop([:patch])
     |> Map.put(:patch_id, patch.id)
     |> Map.put(:note_id, anchor_note_id(patch))
     |> Map.put(:channel, patch.channel)
-    |> project_span()
     |> sanitize()
+    |> deep_lists()
   end
 
-  defp project_entry(entry), do: entry |> project_span() |> sanitize()
-
-  defp project_span(%{span: {start_tick, end_tick}} = entry),
-    do: %{entry | span: [start_tick, end_tick]}
-
-  defp project_span(entry), do: entry
+  defp project_entry(entry), do: entry |> sanitize() |> deep_lists()
 
   defp anchor_note_id(%Patch{anchor: %Tamale.Anchor.Ordinal{refs: [note_id | _]}}), do: note_id
   defp anchor_note_id(_patch), do: nil
+
+  # 结构化字段的 JSON-safe 化：tuple 递归降为 list；`:reason` 键下的值例外，
+  # 保持结构化 tagged term（Elixir 机器可判），末端转换归壳层。
+  defp deep_lists(%{reason: _reason} = entry) when is_map(entry) do
+    Map.new(entry, fn
+      {:reason, reason} -> {:reason, reason}
+      {key, value} -> {key, deep_lists(value)}
+    end)
+  end
+
+  defp deep_lists(map) when is_map(map),
+    do: Map.new(map, fn {key, value} -> {key, deep_lists(value)} end)
+
+  defp deep_lists(tuple) when is_tuple(tuple),
+    do: tuple |> Tuple.to_list() |> Enum.map(&deep_lists/1)
+
+  defp deep_lists(list) when is_list(list), do: Enum.map(list, &deep_lists/1)
+  defp deep_lists(term), do: term
 
   # 深度净化：运行时对象（struct/pid/function/reference/port）一律降为
   # inspect 字符串；key 保持原样（facade 投影只产 atom/binary key）。

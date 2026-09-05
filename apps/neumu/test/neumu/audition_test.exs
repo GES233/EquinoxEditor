@@ -51,6 +51,32 @@ defmodule Neumu.AuditionTest do
     end
   end
 
+  # 递归断言结构化投影字段不含 tuple（`:reason` 键例外：facade 契约保持
+  # 结构化 tagged term，末端转换归壳层——见 docs/facade-protocol.md）。
+  defp refute_projection_tuples(term, path \\ [])
+
+  defp refute_projection_tuples(%{reason: _} = map, path) when is_map(map) do
+    Enum.each(map, fn
+      {:reason, _reason} -> :ok
+      {key, value} -> refute_projection_tuples(value, path ++ [key])
+    end)
+  end
+
+  defp refute_projection_tuples(map, path) when is_map(map) do
+    Enum.each(map, fn {key, value} -> refute_projection_tuples(value, path ++ [key]) end)
+  end
+
+  defp refute_projection_tuples(tuple, path) when is_tuple(tuple),
+    do: flunk("tuple 泄露于 #{inspect(path)}：#{inspect(tuple)}")
+
+  defp refute_projection_tuples(list, path) when is_list(list) do
+    list
+    |> Enum.with_index()
+    |> Enum.each(fn {v, i} -> refute_projection_tuples(v, path ++ [i]) end)
+  end
+
+  defp refute_projection_tuples(_term, _path), do: :ok
+
   test "list_voicebanks 返回 plain-data 条目，只读无副作用", %{project_id: id, stock: stock} do
     :ok = Neumu.subscribe(id)
 
@@ -97,11 +123,15 @@ defmodule Neumu.AuditionTest do
              channel: :duration,
              reason: :base_changed,
              patch_id: patch_id,
-             note_id: "n1"
+             note_id: "n1",
+             phrase_id: ["lead", 0]
            } = entry
 
     assert is_binary(patch_id)
     assert_plain_data(entry)
+    # JSON-safe 纪律：结构化投影字段（:reason 除外）不得含 tuple——tuple
+    # 是 plain data 但不可 JSON 序列化，assert_plain_data 抓不到这类泄露。
+    refute_projection_tuples(entry)
 
     # 冲突可 repatch 兜住，之后 check 恢复 :ok。
     assert {:ok, 5, [%{status: :repatched}]} = Neumu.repatch(id, "lead", [patch_id])

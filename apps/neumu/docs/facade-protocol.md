@@ -13,7 +13,10 @@
    任务/声库列举、probe 令牌等投影中不出现 tuple——tagged tuple
    一律降为"位置即标签"的 list（`{1, {4, 4}}` → `[1, [4, 4]]`，
    `{:compound, [2, 3], 8}` → `["compound", [2, 3], 8]`，
-   `span: {s, e}` → `[s, e]`）。
+   `span: {s, e}` → `[s, e]`，`phrase_id: {track_id, tick}` →
+   `[track_id, tick]`）。`Neumu.CheckReport` 对条目做深扫，新增字段
+   自动满足；有递归断言锁定（tuple 是 plain data，
+   `assert_plain_data` 抓不到这类泄露）。
 3. **例外：`reason`/`error` 字段保持结构化 tagged term**——Elixir
    调用方需要机器可判，UI 只展示。壳层推给浏览器前做末端转换
    （tuple→list 或直接 inspect 字符串化），一行递归 walker 的事。
