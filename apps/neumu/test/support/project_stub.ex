@@ -100,10 +100,10 @@ end
 
 defmodule Neumu.ProjectStub.PhonemesClient do
   @moduledoc false
-  # expand-capable 假 client：pin probe（G2P + 组展开）的确定性纯 Elixir
-  # 实现，移植自 apps/neume/test/support/fake_phonemes.ex 的约定——组展开
+  # expand/check-capable 假 client：probe（G2P + 组展开）与 check（假预测）
+  # 的确定性纯 Elixir 实现，移植自 apps/neume/test/support 的约定——组展开
   # 用"头词末音素当延续元音"的近似（与 mock pipeline 一致）。不实现
-  # check/render：pin 族测试只走 probe。
+  # render：测试不走合成。
   @behaviour Neume.Engine.DiffSingerWorker
 
   @impl true
@@ -119,6 +119,44 @@ defmodule Neumu.ProjectStub.PhonemesClient do
 
   def call(%{action: "expand", words: words} = payload, _config) do
     {:ok, %{"note_phonemes" => note_phonemes(words, Map.get(payload, :groups))}}
+  end
+
+  def call(%{action: "check", words: words} = payload, _config) do
+    durations =
+      Enum.map(words, fn [phonemes, seconds | _rest] ->
+        length(phonemes) * round(seconds * 44_100 / 512)
+      end)
+
+    frame_count = Enum.sum(durations)
+
+    {:ok,
+     %{
+       "ph_dur" => durations,
+       "pitch_pred_midi" => List.duplicate(60.0, frame_count),
+       "total_frames" => frame_count,
+       "lead_in_sec" => 0.5,
+       "note_phonemes" => note_phonemes(words, Map.get(payload, :groups)),
+       "phonemes" => [
+         %{
+           "language" => "zh",
+           "symbol" => "SP",
+           "type" => "rest",
+           "start_frame" => 0,
+           "end_frame" => 43,
+           "note_index" => nil,
+           "phoneme_index" => 0
+         },
+         %{
+           "language" => "zh",
+           "symbol" => "a",
+           "type" => "vowel",
+           "start_frame" => 43,
+           "end_frame" => frame_count,
+           "note_index" => 0,
+           "phoneme_index" => 0
+         }
+       ]
+     }}
   end
 
   def call(_payload, _config), do: {:error, :not_used}

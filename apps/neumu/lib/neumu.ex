@@ -164,6 +164,47 @@ defmodule Neumu do
           {:ok, RenderJob.artifact()} | {:error, Neumu.ArtifactStore.not_found()}
   def artifact(artifact_id), do: Neumu.ArtifactStore.fetch(artifact_id)
 
+  @doc """
+  列出工程当前可用的声库条目（plain data：`%{id, name, mode, engine,
+  digest}`），供建轨/重绑定界面选择。只读查询，不产生历史边、不派发事件。
+  """
+  @spec list_voicebanks(RenderJob.project_id()) :: {:ok, [map()]} | {:error, term()}
+  def list_voicebanks(project_id) do
+    call_project(project_id, :list_voicebanks)
+  end
+
+  @doc """
+  对当前状态做一次权威 check（静态 → 模型 probe → 身份裁决），不产生
+  历史边、不派发事件。
+
+  执行在调用方进程（真声库要调 worker，可能较慢），不占用
+  ProjectServer。返回 `{:ok, %{pin, status, entries}}`：`status` 为
+  `:ok | :failed`；`entries` 为 plain-data 冲突投影（patch 只留
+  `patch_id`/`channel`/`note_id`），供冲突/降级的一等界面展示。
+  """
+  @spec check(RenderJob.project_id()) :: {:ok, map()} | {:error, term()}
+  def check(project_id) do
+    with {:ok, multi_track, pin} <- call_project(project_id, :probe_context) do
+      case Neume.MultiTrack.check(multi_track) do
+        {:ok, _refreshed, _reports} ->
+          {:ok, %{pin: pin, status: :ok, entries: []}}
+
+        {:error, {:check_failed, entries}} ->
+          {:ok, %{pin: pin, status: :failed, entries: Neumu.CheckReport.project_entries(entries)}}
+      end
+    end
+  end
+
+  @doc """
+  列出该工程的渲染任务（按 job_id 升序；plain data：`%{job_id,
+  source_pin, status, artifact_id, error}`），供"按 pin 试听对比"枚举
+  制品。只读查询。
+  """
+  @spec list_render_jobs(RenderJob.project_id()) :: {:ok, [map()]} | {:error, term()}
+  def list_render_jobs(project_id) do
+    call_project(project_id, :list_render_jobs)
+  end
+
   # --- 编辑命令 ---
 
   # 所有命令串行进入对应 ProjectServer。成功且实际产生 History 边时返回
@@ -447,7 +488,9 @@ defmodule Neumu do
   - `:renderer` — 覆盖本次渲染的渲染函数（测试注入用）；
   - `:job_id` — 指定任务 id，默认生成唯一整数；该工程内已存在同名
     job（在途或终态）时返回 `{:error, {:job_already_exists, job_id}}`，
-    不覆盖权威 job。
+    不覆盖权威 job；
+  - `:pin` — 渲染指定历史 pin 的状态（"按 pin 试听对比"）；被 squash
+    或不存在的 pin 返回 `{:error, {:unknown_node, pin}}`，不产生任务。
   """
   @spec submit_render(RenderJob.project_id(), keyword()) ::
           {:ok, RenderJob.t()} | {:error, term()}

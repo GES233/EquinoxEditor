@@ -7,7 +7,7 @@ defmodule Neume.MultiTrack do
   临时把运行态绑定到根 Session 的同一当前快照，混音图只消费各轨 WAV。
   """
 
-  alias Coconut.Edit.{Command, Track, Workspace}
+  alias Coconut.Edit.{Command, History, Track, Workspace}
   alias Coconut.Pickle.File
   alias Coconut.Pickle.Track, as: PickleTrack
   alias Neume.{Editor, MixPipeline, TrackConfig, TrackRuntime}
@@ -291,6 +291,19 @@ defmodule Neume.MultiTrack do
   def probe_pin(%__MODULE__{} = runtime, track_id, note_id) do
     with {:ok, editor} <- attach_editor(runtime, track_id) do
       Editor.probe_base(editor, note_id)
+    end
+  end
+
+  @doc """
+  物化历史 pin 处的工程值（供"按 pin 渲染试听"）；各轨运行态按该
+  历史快照的声库签名重建/复用。被 squash 或不存在的 pin 返回
+  `{:error, {:unknown_node, pin}}`。
+  """
+  @spec at_pin(t(), History.node_id()) :: {:ok, t()} | {:error, term()}
+  def at_pin(%__MODULE__{} = runtime, pin) do
+    with {:ok, workspace} <- History.state_at(runtime.session.history, pin) do
+      history = %{runtime.session.history | present: workspace}
+      sync_tracks(%{runtime | session: %{runtime.session | history: history}})
     end
   end
 

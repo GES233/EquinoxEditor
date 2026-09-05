@@ -88,6 +88,13 @@ Neume.Editor
   并派发一次 `{:project_changed, project_id, history_pin}`，无变化的
   编辑（如无改动的 globals 合并）不落边也不派发，失败编辑返回
   tagged error、不改状态、不派发事件。查询不产生 History 边。
+  试听支撑（2026-09-05）：`list_voicebanks/1` 列出可选声库（plain
+  data）；`check/1` 在 ProjectServer 外执行权威 check 并返回
+  plain-data 冲突投影（patch 只留 patch_id/channel/note_id），让
+  冲突/降级可占 UI 一等位置；`submit_render/2` 支持 `:pin` 渲染指定
+  历史状态（`Neume.MultiTrack.at_pin/2` 物化，被 squash 的 pin 返回
+  tagged error），`list_render_jobs/1` 枚举任务的 `source_pin` 与
+  `artifact_id`，支撑"按 pin 试听对比"。
 - Neume-owned Oi 混音图（`Neume.MixPipeline`）：`TrackGainPan → Mix → Master →
   Export`，支持逐轨 mute/gain/pan、sample-rate 门禁、PCM16 master 限幅与立体声
   WAV 导出；mix 配置保存在 track extras，并经 Coconut History 更新。
@@ -160,7 +167,7 @@ Neume.Editor
 
 - `mix compile --force --warnings-as-errors`：通过。
 - `apps/neume` 的 `mix test`：`92 passed, 7 excluded`（excluded 为真声库集成测试）。
-- `apps/neumu` 的 `mix test`：`50 passed`（工程开闭、渲染成功/失败/崩溃、
+- `apps/neumu` 的 `mix test`：`56 passed`（工程开闭、渲染成功/失败/崩溃、
   渲染期间查询、source_pin 保留、制品存取、事件订阅幂等与退订、重复
   job_id 拒绝、未知 job tagged error、nil project_id 拒绝、关闭工程终止
   在途渲染；facade：快照与 pin 一致且无运行时对象泄露、查询不产生历史边、
@@ -171,7 +178,9 @@ Neume.Editor
   并发编辑不丢更新、未知工程 tagged error；pin 族：probe 只读不改状态、
   两阶段挂载、stale_pin 拒绝、令牌绑定 track/note、unmount_pin、repatch
   重签/降级/不在册拒绝、合并 moved_pins 报告、快照 pins 投影与保存重开
-  恢复）。
+  恢复；试听支撑：声库列表、check 返回 plain-data 冲突投影且可 repatch
+  兜回 :ok、按 pin 渲染历史状态且 source_pin 钉住、非法/未知 pin 拒绝、
+  list_render_jobs 枚举 source_pin/artifact_id 并净化失败原因）。
 - Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
   `43.6%`，通过 2× 包络门禁。

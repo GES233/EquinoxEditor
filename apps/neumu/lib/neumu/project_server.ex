@@ -34,6 +34,7 @@ defmodule Neumu.ProjectServer do
           artifact_store: GenServer.server(),
           event_registry: Registry.registry(),
           jobs: %{RenderJob.id() => RenderJob.t()},
+          artifacts: %{RenderJob.id() => Neumu.ArtifactStore.artifact_id()},
           tasks: %{reference() => render_task()}
         }
 
@@ -106,6 +107,7 @@ defmodule Neumu.ProjectServer do
            artifact_store: Keyword.get(opts, :artifact_store, Neumu.ArtifactStore),
            event_registry: Keyword.get(opts, :event_registry, Neumu.EventRegistry),
            jobs: %{},
+           artifacts: %{},
            tasks: %{}
          }}
 
@@ -116,26 +118,30 @@ defmodule Neumu.ProjectServer do
 
   @impl true
   def handle_call({:submit_render, opts}, _from, state) do
-    pin = History.current(state.multi_track.session.history).node_id
     job_id = Keyword.get(opts, :job_id, new_job_id())
 
     if Map.has_key?(state.jobs, job_id) do
       # 已存在的 job_id（在途或终态）一律拒绝，不得覆盖权威 job。
       {:reply, {:error, {:job_already_exists, job_id}}, state}
     else
-      with {:ok, job} <- RenderJob.new(job_id, state.project_id, pin),
+      with {:ok, source_pin, render_target} <-
+             render_target(state.multi_track, Keyword.get(opts, :pin)),
+           {:ok, job} <- RenderJob.new(job_id, state.project_id, source_pin),
            {:ok, job} <- RenderJob.start(job) do
-        snapshot = state.multi_track
         renderer = Keyword.get(opts, :renderer, state.renderer)
 
         task =
-          Task.Supervisor.async_nolink(state.render_supervisor, fn -> renderer.(snapshot) end)
+          Task.Supervisor.async_nolink(state.render_supervisor, fn -> renderer.(render_target) end)
 
         state = %{
           state
           | jobs: Map.put(state.jobs, job_id, job),
             tasks:
-              Map.put(state.tasks, task.ref, %{job_id: job_id, snapshot: snapshot, pid: task.pid})
+              Map.put(state.tasks, task.ref, %{
+                job_id: job_id,
+                snapshot: render_target,
+                pid: task.pid
+              })
         }
 
         broadcast(state, Event.render_changed(job))
@@ -144,6 +150,42 @@ defmodule Neumu.ProjectServer do
         {:error, _} = error -> {:reply, error, state}
       end
     end
+  end
+
+  # 工程当前可用的声库条目（plain data 投影）；只读查询。
+  def handle_call(:list_voicebanks, _from, state) do
+    entries =
+      state.multi_track.voicebank_registry
+      |> Neume.Voicebank.Registry.list()
+      |> Enum.map(fn entry ->
+        %{
+          id: entry.id,
+          name: entry.name,
+          mode: entry.mode,
+          engine: entry.signature.engine,
+          digest: entry.signature.digest
+        }
+      end)
+
+    {:reply, {:ok, entries}, state}
+  end
+
+  # 渲染任务枚举（含 artifact_id 与 source_pin），供"按 pin 试听对比"。
+  def handle_call(:list_render_jobs, _from, state) do
+    jobs =
+      state.jobs
+      |> Enum.sort_by(fn {job_id, _job} -> job_id end)
+      |> Enum.map(fn {job_id, job} ->
+        %{
+          job_id: job_id,
+          source_pin: job.source_pin,
+          status: job.status,
+          artifact_id: Map.get(state.artifacts, job_id),
+          error: job.error && Neumu.CheckReport.project_error(job.error)
+        }
+      end)
+
+    {:reply, {:ok, jobs}, state}
   end
 
   def handle_call({:render_job, job_id}, _from, state) do
@@ -263,7 +305,12 @@ defmodule Neumu.ProjectServer do
   defp complete_render(state, job_id, artifact) do
     with {:ok, artifact_id} <- Neumu.ArtifactStore.put(state.artifact_store, artifact),
          {:ok, job} <- RenderJob.complete(Map.fetch!(state.jobs, job_id), artifact) do
-      state = %{state | jobs: Map.put(state.jobs, job_id, job)}
+      state = %{
+        state
+        | jobs: Map.put(state.jobs, job_id, job),
+          artifacts: Map.put(state.artifacts, job_id, artifact_id)
+      }
+
       broadcast(state, Event.render_changed(job))
       broadcast(state, Event.artifact_ready(job, artifact_id))
       state
@@ -305,6 +352,21 @@ defmodule Neumu.ProjectServer do
   end
 
   defp current_pin(multi_track), do: History.current(multi_track.session.history).node_id
+
+  # 渲染目标：默认当前 cursor；`pin:` 物化对应历史状态（被 squash 或
+  # 不存在的 pin 返回 tagged error）。`job.source_pin` 恒等于实际渲染的 pin。
+  defp render_target(multi_track, nil) do
+    {:ok, current_pin(multi_track), multi_track}
+  end
+
+  defp render_target(multi_track, pin) when is_integer(pin) and pin >= 0 do
+    case Neume.MultiTrack.at_pin(multi_track, pin) do
+      {:ok, target} -> {:ok, pin, target}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp render_target(_multi_track, pin), do: {:error, {:invalid_source_pin, pin}}
 
   # --- 编辑命令的封闭分派 ---
 
