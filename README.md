@@ -4,7 +4,7 @@
 
 [English](README.en.md)
 
-Equinox 是一个歌声合成编辑器实验仓库。当前主线是无界面 Neume 内核，通过 Coconut 编辑模型、CoconutOi 适配层和 Oi 管线完成 DiffSinger 分析与渲染。
+Equinox 是基于 Neume 内核的歌声合成编辑器。Neume 是这套编辑范式的名字（Tamale/Coconut 编辑模型：History、pin 干预、check/repatch 纪律），也是它的 Elixir 实现——即本仓库的内核（`apps/coconut`、`apps/coconut_oi`、`apps/neume`、`apps/neumu`），通过 Oi 管线完成 DiffSinger 分析与渲染。
 
 ## Umbrella 结构
 

@@ -2,7 +2,7 @@
 
 ## Project Status
 
-Equinox is a Mix umbrella for the second Neume iteration. The active product is currently a headless singing-synthesis editor and render kernel; there is no active Phoenix/Svelte UI shell in this branch.
+Equinox is the singing-synthesis editor (this Mix umbrella). **Neume** names the editing paradigm — the Tamale/Coconut edit model (History, pin interventions, check/repatch discipline) — and its Elixir implementation: the kernel apps `coconut`, `coconut_oi`, `neume`, `neumu`. The deliverable is the paradigm itself plus its technical reports/videos; the editor is its host. `apps/neume_lab` is development tooling (Livebook bench), not the product UI. There is no active Phoenix/Svelte UI shell in this branch.
 
 The source of truth for implementation status is `apps/neume/STATUS.md`.
 
