@@ -1,0 +1,95 @@
+# Neume 实验台
+
+## Section
+
+Livebook/Kino 壳层，验证 Neumu facade 契约的交互闭环：
+**改词 → 冲突 → 一键 repatch → 按 pin 渲染 → 并排试听**。
+
+## 运行方式（先读）
+
+本 notebook 以 **Attached Node** 运行（代码由 umbrella 节点提供，不走
+Mix.install——`in_umbrella` 依赖在独立运行时里无法解析）。
+
+> **版本对齐**：附着要求两端 Elixir 同 minor 版本。本项目用 Elixir
+> 1.20；Livebook **Desktop 捆绑的是 1.19，连不上**（对话框会写
+> "The node must run Elixir ~> 1.19.0"）。请改用 escript 装的 Livebook
+> （跑在系统 Elixir 1.20 上）：`mix escript.install hex livebook` 一次，
+> 之后 `livebook server`（本机已装：`~/.mix/escripts/livebook`）。
+> 
+> **节点名类型**：Livebook 用长名，目标节点也必须用长名
+> （`--name …@127.0.0.1`）；`--sname` 起的短名节点会报
+> "unreachable"。
+
+1. 在 umbrella 根目录启动节点：
+
+   ```sh
+   iex --name equinox@127.0.0.1 --cookie equinox -S mix
+   ```
+
+2. `livebook server` 打开本文件 → 左侧边栏 **Runtime**（`s` 图标）→
+   Configure → **Attached Node**：Node 填 `equinox@127.0.0.1`，Cookie 填
+   `equinox` → Connect。
+
+3. 逐格评估。改代码后在 iex 里 `recompile()`，再重评对应 cell。
+
+## 装配演示工程
+
+写 fixture 声库到 `tmp/neume_lab/`（幂等），打开工程并建一条 "lead"
+轨 + 四个显式音素音符（do/re/mi/fa，不走 G2P；推理侧由
+`NeumeLab.DemoClient` 替身接管）。
+
+```elixir
+demo = NeumeLab.Fixture.open_demo()
+```
+
+重复评估本格会开新工程（project_id 唯一），旧工程可用
+`Neumu.close_project(project_id)` 关掉。
+
+## 实验台面板
+
+```elixir
+NeumeLab.Board.new(demo.project_id)
+```
+
+四步验收流：
+
+1. **改词**：点击卷帘中的音符 → 下方选中栏改歌词 → 「保存歌词」；
+2. **冲突**：选中音符先「挂时长 pin」，再改词 → 点「检查」→ 红色横幅
+   列出冲突条目（channel / 音符 / 原因）；
+3. **repatch**：横幅里点「repatch」→ 横幅消失、状态栏显示"检查通过"；
+4. **并排试听**：pin 输入框分别填改动前后的 history pin 各点一次
+   「渲染」→ 任务列表出现两个 completed → 各自「播放」做 A/B 对比
+   （正弦合成，音高准确、音色随意）。
+
+工具栏「撤销/重做」直对应 `Neumu.undo/redo`；所有编辑经事件订阅驱动
+快照刷新，多开同一面板（再评一次本格）可看到两端同步。
+
+## 直接调 facade（可选）
+
+```elixir
+{:ok, snapshot} = Neumu.snapshot(demo.project_id)
+```
+
+```elixir
+{:ok, check} = Neumu.check(demo.project_id)
+```
+
+```elixir
+{:ok, jobs} = Neumu.list_render_jobs(demo.project_id)
+```
+
+把最新制品导出落盘：
+
+```elixir
+with {:ok, jobs} <- Neumu.list_render_jobs(demo.project_id),
+     %{artifact_id: artifact_id} when not is_nil(artifact_id) <- List.last(jobs) do
+  Neumu.export_artifact(artifact_id, Path.join(demo.dir, "export.wav"))
+end
+```
+
+保存工程（不含运行时制品；重开需与 `Fixture.open_demo/1` 相同的
+registry/client 选项，见 `Neumu.load_project/3`）：
+
+```elixir
+Neumu.save_project(demo.project_id, Path.join(demo.dir, "lab.ncp"))
+```

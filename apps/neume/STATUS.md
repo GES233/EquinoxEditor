@@ -190,9 +190,16 @@ Neume.Editor
   重签/降级/不在册拒绝、合并 moved_pins 报告、快照 pins 投影与保存重开
   恢复；试听支撑：声库列表、check 返回 plain-data 冲突投影且可 repatch
   兜回 :ok、按 pin 渲染历史状态且 source_pin 钉住、非法/未知 pin 拒绝、
-  list_render_jobs 枚举 source_pin/artifact_id 并净化失败原因；契约回路：
+  list_render_jobs 枚举 source_pin/artifact_id 并净化失败原因、check 条目
+  深扫无 tuple（`phrase_id` 等结构化字段降为 list，`:reason` 例外保持
+  tagged term）；契约回路：
   参考客户端跑通 建工程→编辑→stale 重放→冲突 check→repatch→按 pin
   渲染对比→导出落盘；黄金向量钉住替身与真身的 expand 一致性）。
+- `apps/neume_lab` 的 `mix test`：`8 passed`（Kino.Test 驱动实验台面板：
+  连接全量状态、编辑事件桥、失败命令 command_error 不改状态、冲突四步流
+  挂 pin→改词→repatch→恢复、按 pin 渲染与 `{:binary, _, WAV}` 试听下发、
+  undo/redo；正弦渲染器产出合法 WAV 制品、空工程 `:no_notes` tagged
+  error）。
 - Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
   `43.6%`，通过 2× 包络门禁。
@@ -229,8 +236,11 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
   `Task.Supervisor` 在 GenServer 外执行、制品入运行时 `ArtifactStore`；
   UI-facing facade 已就位（只读快照含 time_sigs/can_undo/can_redo/pins
   投影、封闭编辑命令集含拆音/修剪/合并/跨轨拖拽与 pin 族两阶段挂载、
-  `project_changed` 派发、工程创建/加载/保存入口）。仍无播放设备适配、
-  export 请求、渲染取消、tempo 编辑或 UI。
+  `project_changed` 派发、工程创建/加载/保存入口、制品导出落盘）。仍无
+  播放设备适配、渲染取消或 tempo 编辑；交互界面目前只有
+  `apps/neume_lab` 的 Livebook 实验台（`Kino.JS.Live` 面板 + fixture
+  声库/假 client/正弦演示渲染，notebook 需 Attached Node 运行），无产品级
+  UI。
 
 ## 声库处置
 

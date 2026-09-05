@@ -11,7 +11,8 @@ The source of truth for implementation status is `apps/neume/STATUS.md`.
 - `apps/coconut/` — engine-agnostic editor core. It owns score/edit state, History, Patch/Resolve, and persistence. It was imported from the archived standalone Coconut repository and is now maintained as part of this umbrella.
 - `apps/coconut_oi/` — intentionally small bridge from `Coconut.Render.Engine` requests and interventions to Oi data and `Oi.execute/2`.
 - `apps/neume/` — product and engine layer: editor facade, DiffSinger scanning, probe/alignment, inference, windowed cache, debug export, and render artifacts.
-- `apps/neumu/` — OTP application service over Neume: per-project `ProjectServer` processes (one `Neume.MultiTrack` value each), async render via `Task.Supervisor`, runtime `ArtifactStore`, and the three small event shapes. No playback device, export requests, cancellation, persistence, or UI.
+- `apps/neumu/` — OTP application service over Neume: per-project `ProjectServer` processes (one `Neume.MultiTrack` value each), async render via `Task.Supervisor`, runtime `ArtifactStore`, and the three small event shapes. No playback device, cancellation, persistence, or UI.
+- `apps/neume_lab/` — Livebook/Kino 实验台（开发工具，非产品 UI）。`Kino.JS.Live` 面板验证 Neumu facade 契约闭环（编辑/冲突/repatch/按 pin 渲染/试听），自带 fixture 声库、假 DiffSinger client 与正弦演示渲染器。notebook 在 `apps/neume_lab/notebooks/lab.livemd`，以 Attached Node 方式附着到 umbrella 节点运行。
 - `config/` — shared umbrella configuration.
 
 The repository must build without sibling Coconut or CoconutOi checkouts. Tamale, Oi, and Orchid packages remain external dependencies resolved by Mix.
