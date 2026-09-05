@@ -73,10 +73,17 @@ defmodule Neumu.ProjectStub do
 
   @doc "create/load_project 的打开选项：注入注册表、不触碰推理的 client 与独立输出目录。"
   @spec open_opts(Neume.Voicebank.Registry.t(), Path.t()) :: keyword()
-  def open_opts(registry, tmp_dir) do
+  def open_opts(registry, tmp_dir), do: open_opts(registry, tmp_dir, UnusedClient)
+
+  @doc """
+  同 `open_opts/2`，但指定 worker client。pin 族测试用
+  `Neumu.ProjectStub.PhonemesClient`（expand/encode 可probe）。
+  """
+  @spec open_opts(Neume.Voicebank.Registry.t(), Path.t(), module()) :: keyword()
+  def open_opts(registry, tmp_dir, client) do
     [
       voicebank_registry: registry,
-      diffsinger_client: Neumu.ProjectStub.UnusedClient,
+      diffsinger_client: client,
       output_dir: Path.join(tmp_dir, "renders")
     ]
   end
@@ -89,4 +96,53 @@ defmodule Neumu.ProjectStub.UnusedClient do
 
   @impl true
   def call(_payload, _config), do: {:error, :not_used}
+end
+
+defmodule Neumu.ProjectStub.PhonemesClient do
+  @moduledoc false
+  # expand-capable 假 client：pin probe（G2P + 组展开）的确定性纯 Elixir
+  # 实现，移植自 apps/neume/test/support/fake_phonemes.ex 的约定——组展开
+  # 用"头词末音素当延续元音"的近似（与 mock pipeline 一致）。不实现
+  # check/render：pin 族测试只走 probe。
+  @behaviour Neume.Engine.DiffSingerWorker
+
+  @impl true
+  def call(%{action: "encode", notes: notes}, _config) do
+    tokens =
+      Map.new(notes, fn note ->
+        phonemes = Enum.map(String.graphemes(note.lyric), &[note.language, &1])
+        {to_string(note.id), phonemes}
+      end)
+
+    {:ok, %{"tokens" => tokens}}
+  end
+
+  def call(%{action: "expand", words: words} = payload, _config) do
+    {:ok, %{"note_phonemes" => note_phonemes(words, Map.get(payload, :groups))}}
+  end
+
+  def call(_payload, _config), do: {:error, :not_used}
+
+  # 按原 words 下标（字符串 key）归并逐词音素序列。
+  defp note_phonemes(words, groups) do
+    member_vowels =
+      for [head | members] <- groups || [],
+          member <- members,
+          into: %{} do
+        [phonemes | _rest] = Enum.at(words, head)
+        {member, [List.last(phonemes)]}
+      end
+
+    words
+    |> Enum.with_index()
+    |> Map.new(fn {word, index} ->
+      phonemes =
+        case Map.fetch(member_vowels, index) do
+          {:ok, vowel} -> vowel
+          :error -> hd(word)
+        end
+
+      {to_string(index), phonemes}
+    end)
+  end
 end

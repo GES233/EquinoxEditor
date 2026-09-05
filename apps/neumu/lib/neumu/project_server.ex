@@ -178,18 +178,23 @@ defmodule Neumu.ProjectServer do
 
     case apply_edit(state.multi_track, command) do
       {:ok, multi_track} ->
-        state = %{state | multi_track: multi_track}
-        new_pin = current_pin(multi_track)
-
-        if new_pin != old_pin do
-          broadcast(state, Event.project_changed(state.project_id, new_pin))
-        end
-
+        {state, new_pin} = commit_edit(state, multi_track, old_pin)
         {:reply, {:ok, new_pin}, state}
+
+      {:ok, multi_track, extra} ->
+        {state, new_pin} = commit_edit(state, multi_track, old_pin)
+        {:reply, {:ok, new_pin, extra}, state}
 
       {:error, reason} ->
         {:reply, {:error, reason}, state}
     end
+  end
+
+  # 两阶段 pin 挂载的 probe 上下文：把当前权威值与 pin 交给调用方，probe
+  # （G2P + 组展开，真声库要调 worker）在本进程之外的调用方进程执行，
+  # 期间本进程仍可响应编辑与查询。mount 携 probe 的 pin 回来校验。
+  def handle_call(:probe_context, _from, state) do
+    {:reply, {:ok, state.multi_track, current_pin(state.multi_track)}, state}
   end
 
   # 渲染任务正常返回。
@@ -287,6 +292,18 @@ defmodule Neumu.ProjectServer do
     :ok
   end
 
+  # 编辑落账：更新权威值；pin 变化时派发一次 project_changed。
+  defp commit_edit(state, multi_track, old_pin) do
+    state = %{state | multi_track: multi_track}
+    new_pin = current_pin(multi_track)
+
+    if new_pin != old_pin do
+      broadcast(state, Event.project_changed(state.project_id, new_pin))
+    end
+
+    {state, new_pin}
+  end
+
   defp current_pin(multi_track), do: History.current(multi_track.session.history).node_id
 
   # --- 编辑命令的封闭分派 ---
@@ -307,6 +324,33 @@ defmodule Neumu.ProjectServer do
     Neume.MultiTrack.delete_note(multi_track, track_id, note_id)
   end
 
+  defp apply_edit(multi_track, {:split_note, track_id, note_id, at_tick, new_id}) do
+    Neume.MultiTrack.split_note(multi_track, track_id, note_id, at_tick, new_id)
+  end
+
+  defp apply_edit(multi_track, {:trim_note, track_id, note_id, new_span}) do
+    Neume.MultiTrack.trim_note(multi_track, track_id, note_id, new_span)
+  end
+
+  defp apply_edit(multi_track, {:merge_notes, track_id, note_ids}) do
+    Neume.MultiTrack.merge_notes(multi_track, track_id, note_ids)
+  end
+
+  defp apply_edit(
+         multi_track,
+         {:drag_note_across_tracks, from_track, note_id, to_track, new_id, after_id, span}
+       ) do
+    Neume.MultiTrack.drag_note_across_tracks(
+      multi_track,
+      from_track,
+      note_id,
+      to_track,
+      new_id,
+      after_id,
+      span
+    )
+  end
+
   defp apply_edit(multi_track, {:add_track, track_id, voicebank_id, attrs}) do
     with {:ok, entry} <- fetch_voicebank(multi_track, voicebank_id) do
       Neume.MultiTrack.add_vocal_track(multi_track, track_id, entry, attrs)
@@ -315,6 +359,14 @@ defmodule Neumu.ProjectServer do
 
   defp apply_edit(multi_track, {:remove_track, track_id}) do
     Neume.MultiTrack.remove_track(multi_track, track_id)
+  end
+
+  defp apply_edit(multi_track, {:rename_track, track_id, name}) do
+    Neume.MultiTrack.rename_track(multi_track, track_id, name)
+  end
+
+  defp apply_edit(multi_track, {:set_time_sigs, events}) do
+    Neume.MultiTrack.set_time_sigs(multi_track, events)
   end
 
   defp apply_edit(multi_track, {:rebind_voicebank, track_id, voicebank_id}) do
@@ -331,10 +383,48 @@ defmodule Neumu.ProjectServer do
     Neume.MultiTrack.update_globals(multi_track, track_id, knobs)
   end
 
+  # 两阶段 pin 挂载：probe 令牌绑定 track/note 且携底料与 pin；pin 校验
+  # 由 History 的 stale-write 机制完成（probe 期间被编辑 → stale_pin）。
+  defp apply_edit(multi_track, {:mount_pin, track_id, note_id, channel, payload, probe}) do
+    with {:ok, opts} <- mount_probe_opts(probe, track_id, note_id) do
+      case {channel, payload} do
+        {:pitch, {:points, points}} ->
+          Neume.MultiTrack.mount_pitch(multi_track, track_id, note_id, points, opts)
+
+        {:pitch, {:curve, curve}} ->
+          Neume.MultiTrack.mount_pitch_curve(multi_track, track_id, note_id, curve, opts)
+
+        {:duration, {:durations, durations}} ->
+          Neume.MultiTrack.mount_phoneme_duration(multi_track, track_id, note_id, durations, opts)
+      end
+    end
+  end
+
+  defp apply_edit(multi_track, {:repatch, track_id, patch_ids}) do
+    Neume.MultiTrack.repatch(multi_track, track_id, patch_ids)
+  end
+
+  defp apply_edit(multi_track, {:unmount_pin, track_id, note_id, channel}) do
+    Neume.MultiTrack.unmount_pin(multi_track, track_id, note_id, channel)
+  end
+
   defp apply_edit(multi_track, :undo), do: Neume.MultiTrack.undo(multi_track)
   defp apply_edit(multi_track, :redo), do: Neume.MultiTrack.redo(multi_track)
 
   defp apply_edit(_multi_track, other), do: {:error, {:unknown_edit_command, other}}
+
+  # probe 令牌必须是 `Neumu.probe_pin/3` 的原样返回：绑定同一 track/note，
+  # 底料是 probe 物化的音素序列，pin 是 probe 时刻的 History cursor。
+  defp mount_probe_opts(
+         %{track_id: track_id, note_id: note_id, pin: pin, base: base},
+         track_id,
+         note_id
+       )
+       when is_integer(pin) and is_list(base),
+       do: {:ok, [base: base, pin: pin]}
+
+  defp mount_probe_opts(probe, track_id, note_id),
+    do: {:error, {:invalid_pin_probe, track_id, note_id, probe}}
 
   defp fetch_voicebank(multi_track, voicebank_id) do
     Neume.Voicebank.Registry.fetch(multi_track.voicebank_registry, voicebank_id)

@@ -9,7 +9,7 @@ defmodule Neume.Editor do
   """
 
   alias Coconut.Edit.{Command, Patch, Track, Workspace}
-  alias Coconut.Edit.Operations.{DeleteNote, DragNote, EditNote, InsertNote}
+  alias Coconut.Edit.Operations.{DeleteNote, DragNote, EditNote, InsertNote, MergeNotes, TrimNote}
   alias Coconut.Pickle.File
   alias Coconut.Pickle.Track, as: PickleTrack
   alias Coconut.Project
@@ -224,6 +224,67 @@ defmodule Neume.Editor do
   end
 
   @doc """
+  修剪音符时值（span 边缘拖拽）。
+
+  melisma 组成员关系按旗标 + 贴接自动派生：trim 拖出缝隙即自然断组，
+  不做手势期特殊处理；duration pin 超预算不在手势期拒绝，走
+  `check/1` 的裁决界面。
+  """
+  @spec trim_note(t(), term(), Track.span()) :: {:ok, t()} | {:error, term()}
+  def trim_note(%__MODULE__{} = editor, note_id, new_span) do
+    with {:ok, track} <- current_track(editor),
+         {:ok, old_span} <- fetch_span(track, note_id) do
+      apply_edit(editor, %TrimNote{
+        track_id: editor.track_id,
+        note_id: note_id,
+        old_span: old_span,
+        new_span: new_span
+      })
+    end
+  end
+
+  @doc """
+  合并相邻音符：`note_ids` 首元素为存活者（into），其余被吸收进墓地；
+  须按轨序相邻。into 保留自身内容原样（歌词/音素不拼接）。
+
+  pin 语义按 Tamale transport：被吸收音符上的 ordinal 锚**不死亡**，而是
+  重定签到 into——"合并后这个 pin 是否还有意义"由 `check/1` /
+  `repatch/2` 的裁决界面判定。返回 `{:ok, editor, report}`，
+  `report.moved_pins` 逐项 `%{id, channel, from_note_id, note_id}` 显式
+  报告这些搬家的 pin（不许静默）。
+  """
+  @spec merge_notes(t(), [term(), ...]) :: {:ok, t(), map()} | {:error, term()}
+  def merge_notes(%__MODULE__{} = editor, note_ids) do
+    with {:ok, track_before} <- current_track(editor),
+         {:ok, editor} <-
+           apply_edit(editor, %MergeNotes{track_id: editor.track_id, note_ids: note_ids}),
+         {:ok, track_after} <- current_track(editor) do
+      {:ok, editor, %{moved_pins: moved_pins_since(track_before, track_after, hd(note_ids))}}
+    end
+  end
+
+  # 本手势中锚被重定签的 pin：合并前锚在非 into 音符上、合并后仍在册但
+  # 锚指向了别处（Tamale Merge 把被吸收者的 ordinal 锚重映射到 into）。
+  defp moved_pins_since(%Track{} = before, %Track{} = after_, into) do
+    after_by_id = Map.new(after_.patches, &{&1.id, &1})
+
+    Enum.flat_map(before.patches, fn patch ->
+      from = anchor_note_id(patch)
+
+      with true <- from != nil and from != into,
+           %Patch{} = moved when is_struct(moved) <- Map.get(after_by_id, patch.id),
+           to when to != from <- anchor_note_id(moved) do
+        [%{id: patch.id, channel: patch.channel, from_note_id: from, note_id: to}]
+      else
+        _other -> []
+      end
+    end)
+  end
+
+  defp anchor_note_id(%Patch{anchor: %Tamale.Anchor.Ordinal{refs: [note_id | _]}}), do: note_id
+  defp anchor_note_id(_patch), do: nil
+
+  @doc """
   在 `at_tick` 拆分音符：左子继承原 id，右子 `new_id` 自动获得 melisma
   续音旗标（拆分 = 同音节延续）。整手势是一条历史边，undo 一次即还原。
   """
@@ -242,11 +303,17 @@ defmodule Neume.Editor do
 
   身份底料（§6.6）：挂载时跑一次轻量 probe（G2P + 组展开，不跑模型），
   用物化的词内音素序列签名；probe 期裁决见 `Neume.Identity`。
+
+  选项（两阶段挂载用，见 `probe_base/2`）：
+
+  - `:base` — 已物化的身份底料；提供时跳过现场 probe；
+  - `:pin` — History cursor 版本钉；与当前 cursor 不符时返回
+    `{:error, {:stale_pin, _}}`，不落历史边。
   """
-  @spec mount_pitch(t(), term(), [[number()]]) :: {:ok, t()} | {:error, term()}
-  def mount_pitch(%__MODULE__{} = editor, note_id, points) do
+  @spec mount_pitch(t(), term(), [[number()]], keyword()) :: {:ok, t()} | {:error, term()}
+  def mount_pitch(%__MODULE__{} = editor, note_id, points, opts \\ []) do
     with {:ok, points} <- PitchCurve.normalize(points),
-         {:ok, editor, _patch} <- mount_pin(editor, note_id, :pitch, points) do
+         {:ok, editor, _patch} <- mount_pin(editor, note_id, :pitch, points, opts) do
       {:ok, editor}
     end
   end
@@ -257,27 +324,85 @@ defmodule Neume.Editor do
   控制点使用绝对 tick + 绝对 MIDI；handle 是相对 anchor 的 tick/value 偏移。
   payload 降为可 Pickle 的版本化 plain map，宿主按真实声学帧网格调用 Coconut
   Bezier adapter 栅格化，worker 不重复实现曲线数学。
+
+  `curve` 可以是 `Coconut.Curve.Adapter.Bezier` struct 或同语义的 plain-map
+  payload（facade 边界只传后者）。选项同 `mount_pitch/4`。
   """
-  @spec mount_pitch_curve(t(), term(), Coconut.Curve.Adapter.Bezier.t()) ::
+  @spec mount_pitch_curve(t(), term(), Coconut.Curve.Adapter.Bezier.t() | map(), keyword()) ::
           {:ok, t()} | {:error, term()}
-  def mount_pitch_curve(%__MODULE__{} = editor, note_id, curve) do
-    with {:ok, payload} <- PitchCurve.from_bezier(curve),
-         {:ok, editor, _patch} <- mount_pin(editor, note_id, :pitch, payload) do
+  def mount_pitch_curve(%__MODULE__{} = editor, note_id, curve, opts \\ []) do
+    with {:ok, payload} <- curve_payload(curve),
+         {:ok, editor, _patch} <- mount_pin(editor, note_id, :pitch, payload, opts) do
       {:ok, editor}
     end
   end
 
+  # Bezier struct 在 Editor 内降为 payload；facade 边界来的 plain map 直接
+  # 走版本化校验。
+  defp curve_payload(%Coconut.Curve.Adapter.Bezier{} = curve),
+    do: PitchCurve.from_bezier(curve)
+
+  defp curve_payload(payload), do: PitchCurve.normalize(payload)
+
   @doc """
   在音符上挂载逐音素的稀疏时长 pin：`[[音素下标, tick 时长], ...]`。
 
-  底料与裁决同 `mount_pitch/3`；下标指向 probe 物化序列中的音素。
+  底料与裁决同 `mount_pitch/4`；下标指向 probe 物化序列中的音素。
+  选项同 `mount_pitch/4`。
   """
-  @spec mount_phoneme_duration(t(), term(), [[non_neg_integer()]]) ::
+  @spec mount_phoneme_duration(t(), term(), [[non_neg_integer()]], keyword()) ::
           {:ok, t()} | {:error, term()}
-  def mount_phoneme_duration(%__MODULE__{} = editor, note_id, durations) do
-    case mount_pin(editor, note_id, :duration, durations) do
+  def mount_phoneme_duration(%__MODULE__{} = editor, note_id, durations, opts \\ []) do
+    case mount_pin(editor, note_id, :duration, durations, opts) do
       {:ok, editor, _patch} -> {:ok, editor}
       {:error, _} = error -> error
+    end
+  end
+
+  @doc """
+  pin 挂载的轻量 probe（G2P + 组展开，真声库要调 worker）：物化 `note_id`
+  的词内音素序列，作为 mount 的显式 `:base` 身份底料。
+
+  这是慢路径的抽离：调用方（如 Neumu facade 的两阶段挂载）在编辑进程外
+  先跑 probe，再把底料随 `pin:` 校验带回 mount。本函数只读，不改会话。
+  """
+  @spec probe_base(t(), term()) :: {:ok, [[String.t()]]} | {:error, term()}
+  def probe_base(%__MODULE__{} = editor, note_id) do
+    with {:ok, request} <- Coconut.request(editor.session),
+         {:ok, sequences} <-
+           editor.pipeline.phonemes(editor.pipeline_state, request.snapshot, editor.track_id),
+         {:ok, sequence} <- fetch_sequence(sequences, note_id) do
+      {:ok, sequence}
+    end
+  end
+
+  @doc """
+  按 `(note_id, channel)` 卸载 pin：存活 patch 移入墓地，记一条历史边
+  （undo 一次还原）。该音符该 channel 无存活 pin 时返回
+  `{:error, {:pin_not_found, note_id, channel}}`，状态不变。
+  """
+  @spec unmount_pin(t(), term(), atom()) :: {:ok, t()} | {:error, term()}
+  def unmount_pin(%__MODULE__{} = editor, note_id, channel) do
+    with {:ok, track} <- current_track(editor) do
+      patches =
+        Enum.filter(track.patches, fn
+          %Patch{anchor: %Tamale.Anchor.Ordinal{refs: [ref | _]}, channel: ^channel} ->
+            ref == note_id
+
+          _other ->
+            false
+        end)
+
+      case patches do
+        [] ->
+          {:error, {:pin_not_found, note_id, channel}}
+
+        _patches ->
+          with {:ok, session} <-
+                 Coconut.discard_patches(editor.session, patches, :unmounted) do
+            {:ok, %{editor | session: session}}
+          end
+      end
     end
   end
 
@@ -361,13 +486,17 @@ defmodule Neume.Editor do
 
   整批重挂是一条历史边（undo 一次全还原），与死 patch、adopt 失败共用
   同一个冲突裁决界面。entry 的 patch 必须仍在册；已进墓地的 patch 请用
-  `mount_pitch/3` / `mount_phoneme_duration/3` 重新挂载。
+  `mount_pitch/4` / `mount_phoneme_duration/4` 重新挂载。
+
+  entry 可以是 check 冲突 entry（`%{patch: %Coconut.Edit.Patch{}}`），
+  也可以是纯 plain-data 引用——patch id 或 `%{patch_id: id}`（facade
+  边界只传后者）。
 
   返回 `{:ok, editor, results}`，`results` 逐项为
-  `%{patch_id, status: :repatched, new_patch_id}` 或
-  `%{patch_id, status: :degraded, reason}`。
+  `%{patch_id, status: :repatched}` 或 `%{patch_id, status: :degraded,
+  reason}`。
   """
-  @spec repatch(t(), [map()]) :: {:ok, t(), [map()]} | {:error, term()}
+  @spec repatch(t(), [map() | Coconut.Util.ID.t()]) :: {:ok, t(), [map()]} | {:error, term()}
   def repatch(%__MODULE__{} = editor, []), do: {:ok, editor, []}
 
   def repatch(%__MODULE__{} = editor, entries) when is_list(entries) do
@@ -526,19 +655,21 @@ defmodule Neume.Editor do
     |> Map.put(:span, {phrase.start_tick, phrase.end_tick})
   end
 
-  # 挂载共用路径：轻量 probe 物化身份底料 → 显式 :base 签名 → 一条历史边。
-  defp mount_pin(%__MODULE__{} = editor, note_id, channel, payload) do
-    with {:ok, request} <- Coconut.request(editor.session),
-         {:ok, sequences} <-
-           editor.pipeline.phonemes(editor.pipeline_state, request.snapshot, editor.track_id),
-         {:ok, sequence} <- fetch_sequence(sequences, note_id),
+  # 挂载共用路径：显式 :base 签名 → 一条历史边。`opts[:base]` 缺省时现场
+  # probe 物化底料；`opts[:pin]` 透传 History 的 stale-write 校验。
+  defp mount_pin(%__MODULE__{} = editor, note_id, channel, payload, opts) do
+    with {:ok, base} <- pin_base(editor, note_id, Keyword.get(opts, :base)),
          {:ok, session, patch} <-
            Coconut.mount(editor.session, editor.track_id, note_id, channel, payload,
-             base: sequence
+             base: base,
+             pin: Keyword.get(opts, :pin)
            ) do
       {:ok, %{editor | session: session}, patch}
     end
   end
+
+  defp pin_base(_editor, _note_id, base) when not is_nil(base), do: {:ok, base}
+  defp pin_base(editor, note_id, nil), do: probe_base(editor, note_id)
 
   defp fetch_sequence(sequences, note_id) do
     case Map.fetch(sequences, note_id) do
@@ -579,21 +710,22 @@ defmodule Neume.Editor do
     {:ok, Enum.reverse(discards), Enum.reverse(attaches), Enum.reverse(results)}
   end
 
-  # 只允许重挂在册 patch；entry 必须携带 patch（check 冲突 entry 形状）。
+  # 只允许重挂在册 patch。entry 可以是 check 冲突 entry（携完整 patch），
+  # 也可以是 plain-data 引用（patch id / `%{patch_id: id}`）。
   defp fetch_alive_patches(%__MODULE__{} = editor, entries) do
     with {:ok, track} <- current_track(editor) do
       alive = Map.new(track.patches, &{&1.id, &1})
 
       Enum.reduce_while(entries, {:ok, []}, fn entry, {:ok, acc} ->
-        case entry do
-          %{patch: %Patch{id: id}} when not is_nil(id) ->
+        case entry_patch_id(entry) do
+          {:ok, id} ->
             case Map.fetch(alive, id) do
               {:ok, patch} -> {:cont, {:ok, [patch | acc]}}
               :error -> {:halt, {:error, {:patch_not_alive, id}}}
             end
 
-          other ->
-            {:halt, {:error, {:invalid_repatch_entry, other}}}
+          :error ->
+            {:halt, {:error, {:invalid_repatch_entry, entry}}}
         end
       end)
       |> case do
@@ -602,6 +734,11 @@ defmodule Neume.Editor do
       end
     end
   end
+
+  defp entry_patch_id(%{patch: %Patch{id: id}}) when not is_nil(id), do: {:ok, id}
+  defp entry_patch_id(%{patch_id: id}) when not is_nil(id), do: {:ok, id}
+  defp entry_patch_id(id) when is_binary(id), do: {:ok, id}
+  defp entry_patch_id(_other), do: :error
 
   # 从最近一次静态 check 的 assemble 结果里取 pins（无 patch 时为空 map）。
   # DiffSinger 图挂在 score_plan 输入上，mock 图挂在 pitch step 输入上。

@@ -1,6 +1,6 @@
 # Neume 开发状态
 
-更新日期：2026-09-04
+更新日期：2026-09-05
 分支：`master`
 
 ## 当前定位
@@ -136,19 +136,37 @@ Neume.Editor
   会话 render 配置（编译期默认在下、轨道旋钮在上）。globals 门禁在 check
   聚合（`%{kind: :global, ...}`），有效值进入窗口缓存键与 worker 调用。
   逐帧表现曲线本版本不做（见"下一步"）。
+- Neumu facade 手势覆盖（`docs/plan-2026-09-ui-facade-gestures.md` 第
+  一至三批）：`split_note`（右子自动补 melisma 旗标）、`rename_track`、
+  `set_time_sigs`、`trim_note`（melisma 断组自动派生、pin 预算走 check
+  裁决）、`merge_notes`（into 留内容原样；`moved_pins` 显式报告被吸收
+  音符上重定签到 into 的 pin）、`drag_note_across_tracks`（内容全量
+  复制、清 melisma 旗标、pin 不迁移）。pin 族走两阶段挂载：
+  `Neumu.probe_pin/3` 在 ProjectServer 外跑轻量 probe（G2P + 组展开），
+  返回 plain-data 令牌；三个 mount（pitch 点列、Bezier plain map、
+  音素时长）携令牌进 server 做 History pin 校验，probe 期间被编辑则
+  `{:error, {:stale_pin, _}}` 拒绝；`Neumu.repatch/3` 按 patch id 批量
+  重挂，回复 `{:ok, pin, results}`；`Neumu.unmount_pin/4` 按
+  `(track_id, note_id, channel)` 卸载。快照新增 `time_sigs`、
+  `can_undo`/`can_redo` 与逐轨 `pins`（存活 patch 的 id/channel/
+  anchor/payload）投影，全部 plain data。
 
 ## 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
 - `apps/neume` 的 `mix test`：`92 passed, 7 excluded`（excluded 为真声库集成测试）。
-- `apps/neumu` 的 `mix test`：`31 passed`（工程开闭、渲染成功/失败/崩溃、
+- `apps/neumu` 的 `mix test`：`50 passed`（工程开闭、渲染成功/失败/崩溃、
   渲染期间查询、source_pin 保留、制品存取、事件订阅幂等与退订、重复
   job_id 拒绝、未知 job tagged error、nil project_id 拒绝、关闭工程终止
   在途渲染；facade：快照与 pin 一致且无运行时对象泄露、查询不产生历史边、
-  音符增删改移与 mix/globals/轨道增删/声库重绑定落权威状态、成功编辑
-  只发一次 `project_changed`、失败编辑不改状态不发事件、undo/redo 更新
-  pin 并发事件、globals 无变化不落边、保存重开恢复工程与 History、渲染
-  期间编辑不改 `job.source_pin`、并发编辑不丢更新、未知工程 tagged error）。
+  音符增删改移/拆分/修剪/合并/跨轨拖拽与 mix/globals/轨道增删/重命名/
+  拍号/声库重绑定落权威状态、成功编辑只发一次 `project_changed`、失败
+  编辑不改状态不发事件、undo/redo 更新 pin 并发事件、globals 无变化不
+  落边、保存重开恢复工程与 History、渲染期间编辑不改 `job.source_pin`、
+  并发编辑不丢更新、未知工程 tagged error；pin 族：probe 只读不改状态、
+  两阶段挂载、stale_pin 拒绝、令牌绑定 track/note、unmount_pin、repatch
+  重签/降级/不在册拒绝、合并 moved_pins 报告、快照 pins 投影与保存重开
+  恢复）。
 - Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
   `43.6%`，通过 2× 包络门禁。
@@ -182,10 +200,10 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
 - Neumu application service（`apps/neumu`）：工程按 `project_id` 注册、
   一工程一 `ProjectServer` 持有唯一 `Neume.MultiTrack`、渲染经
   `Task.Supervisor` 在 GenServer 外执行、制品入运行时 `ArtifactStore`；
-  UI-facing facade 已就位（只读快照、封闭编辑命令集、`project_changed`
-  派发、工程创建/加载/保存入口），但尚未暴露 split_note、pitch/duration
-  pin 挂载与 repatch 等高级编辑命令。仍无播放设备适配、export 请求、
-  渲染取消或 UI。
+  UI-facing facade 已就位（只读快照含 time_sigs/can_undo/can_redo/pins
+  投影、封闭编辑命令集含拆音/修剪/合并/跨轨拖拽与 pin 族两阶段挂载、
+  `project_changed` 派发、工程创建/加载/保存入口）。仍无播放设备适配、
+  export 请求、渲染取消、tempo 编辑或 UI。
 
 ## 声库处置
 
@@ -203,7 +221,8 @@ mix test --include integration test/neume/diff_singer_integration_test.exs
    引入 Rust NIF 承担 PCM 解码/增益/equal-power pan/混合/限幅等热路径。
 3. 在 Neumu application service 上补齐 playback/export 请求契约（编辑
    facade 与 `project_changed` 派发已完成）；UI 只提交意图并展示权威状态，
-   不复制音频、check 或任务语义。
+   不复制音频、check 或任务语义。手势缺口与施工批次见
+   [`docs/plan-2026-09-ui-facade-gestures.md`](docs/plan-2026-09-ui-facade-gestures.md)。
 4. ~~逐帧曲线 channel（energy/breathiness/voicing 的手绘编辑）~~本版本不做。
 
 ## 不变量

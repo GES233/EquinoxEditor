@@ -356,11 +356,164 @@ defmodule Neumu.FacadeTest do
     assert {:error, {:unknown_project, :nope}} =
              Neumu.insert_note(:nope, "t", "n", :head, {0, 1}, %{})
 
+    assert {:error, {:unknown_project, :nope}} =
+             Neumu.split_note(:nope, "t", "n", 240, "n2")
+
+    assert {:error, {:unknown_project, :nope}} = Neumu.rename_track(:nope, "t", "x")
+    assert {:error, {:unknown_project, :nope}} = Neumu.set_time_sigs(:nope, [{1, {4, 4}}])
     assert {:error, {:unknown_project, :nope}} = Neumu.update_mix(:nope, "t", %{gain: 1.0})
     assert {:error, {:unknown_project, :nope}} = Neumu.update_globals(:nope, "t", %{})
     assert {:error, {:unknown_project, :nope}} = Neumu.add_track(:nope, "t", "vb")
     assert {:error, {:unknown_project, :nope}} = Neumu.remove_track(:nope, "t")
     assert {:error, {:unknown_project, :nope}} = Neumu.rebind_voicebank(:nope, "t", "vb")
+  end
+
+  test "split_note 拆音：右子补 melisma 旗标，一条历史边，可 undo/redo", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+
+    assert {:ok, 2} =
+             Neumu.insert_note(id, "lead", "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    assert_received {:project_changed, ^id, 2}
+
+    assert {:ok, 3} = Neumu.split_note(id, "lead", "n1", 240, "n1b")
+    assert_received {:project_changed, ^id, 3}
+
+    assert [
+             %{id: "n1", start_tick: 0, end_tick: 240, metadata: meta_l},
+             %{id: "n1b", start_tick: 240, end_tick: 480, metadata: meta_r}
+           ] = notes!(id)
+
+    assert meta_l == %{}
+    assert meta_r == %{"melisma" => "continue"}
+
+    # 拆分点落在界外 / 未知音符：tagged error，不改状态、不发事件。
+    assert {:ok, before_snapshot} = Neumu.snapshot(id)
+    assert {:error, _} = Neumu.split_note(id, "lead", "n1", 240, "again-outside")
+    assert {:error, _} = Neumu.split_note(id, "lead", "no-such-note", 120, "n2")
+    assert {:error, _} = Neumu.split_note(id, "no-such-track", "n1", 120, "n2")
+    assert {:ok, 3} = Neumu.history_pin(id)
+    assert {:ok, ^before_snapshot} = Neumu.snapshot(id)
+    refute_received {:project_changed, _, _}
+
+    # undo 一次整手势还原（右子消失），redo 恢复。
+    assert {:ok, 2} = Neumu.undo(id)
+    assert_received {:project_changed, ^id, 2}
+    assert [%{id: "n1", start_tick: 0, end_tick: 480}] = notes!(id)
+
+    assert {:ok, 3} = Neumu.redo(id)
+    assert_received {:project_changed, ^id, 3}
+    assert [%{id: "n1"}, %{id: "n1b"}] = notes!(id)
+
+    refute_received {:project_changed, _, _}
+  end
+
+  test "rename_track 重命名落历史边并可 undo/redo，未知轨道报错不改状态", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+    assert track(snapshot!(id), "lead").name == nil
+
+    assert {:ok, 2} = Neumu.rename_track(id, "lead", "主唱")
+    assert_received {:project_changed, ^id, 2}
+    assert track(snapshot!(id), "lead").name == "主唱"
+
+    assert {:ok, 3} = Neumu.rename_track(id, "lead", nil)
+    assert_received {:project_changed, ^id, 3}
+    assert track(snapshot!(id), "lead").name == nil
+
+    assert {:error, {:unknown_track, "no-such-track"}} =
+             Neumu.rename_track(id, "no-such-track", "x")
+
+    assert {:ok, 3} = Neumu.history_pin(id)
+
+    assert {:ok, 2} = Neumu.undo(id)
+    assert_received {:project_changed, ^id, 2}
+    assert track(snapshot!(id), "lead").name == "主唱"
+
+    assert {:ok, 3} = Neumu.redo(id)
+    assert_received {:project_changed, ^id, 3}
+    assert track(snapshot!(id), "lead").name == nil
+
+    refute_received {:project_changed, _, _}
+  end
+
+  test "set_time_sigs 替换拍号并进快照投影，非法输入不落边", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+
+    # 默认 4/4 从小节 1 开始。
+    assert snapshot!(id).time_sigs == [{1, {4, 4}}]
+
+    assert {:ok, 2} = Neumu.set_time_sigs(id, [{1, {3, 4}}, {5, {6, 8}}])
+    assert_received {:project_changed, ^id, 2}
+    assert snapshot!(id).time_sigs == [{1, {3, 4}}, {5, {6, 8}}]
+    assert_plain_data(snapshot!(id))
+
+    assert {:error, {:invalid_time_sigs, [{2, {4, 4}}]}} = Neumu.set_time_sigs(id, [{2, {4, 4}}])
+    assert {:error, {:invalid_time_sigs, _}} = Neumu.set_time_sigs(id, [{1, {4, 0}}])
+    assert {:ok, 2} = Neumu.history_pin(id)
+    refute_received {:project_changed, _, _}
+
+    assert {:ok, 1} = Neumu.undo(id)
+    assert_received {:project_changed, ^id, 1}
+    assert snapshot!(id).time_sigs == [{1, {4, 4}}]
+
+    assert {:ok, 2} = Neumu.redo(id)
+    assert_received {:project_changed, ^id, 2}
+    assert snapshot!(id).time_sigs == [{1, {3, 4}}, {5, {6, 8}}]
+  end
+
+  test "快照投影 can_undo/can_redo 跟随 History cursor", %{project_id: id} do
+    assert %{history_pin: 1, can_undo: true, can_redo: false} = snapshot!(id)
+
+    assert {:ok, 2} = Neumu.rename_track(id, "lead", "主唱")
+    assert %{can_undo: true, can_redo: false} = snapshot!(id)
+
+    assert {:ok, 1} = Neumu.undo(id)
+    assert %{can_undo: true, can_redo: true} = snapshot!(id)
+
+    assert {:ok, 0} = Neumu.undo(id)
+    assert %{can_undo: false, can_redo: true} = snapshot!(id)
+
+    assert {:ok, 1} = Neumu.redo(id)
+    assert %{can_undo: true, can_redo: true} = snapshot!(id)
+
+    assert {:ok, 2} = Neumu.redo(id)
+    assert %{can_undo: true, can_redo: false} = snapshot!(id)
+  end
+
+  test "拆分、重命名与拍号在保存/重开后与 History 一并恢复", %{
+    project_id: id,
+    registry: registry,
+    tmp_dir: tmp_dir
+  } do
+    assert {:ok, 2} = Neumu.set_time_sigs(id, [{1, {3, 4}}])
+    assert {:ok, 3} = Neumu.rename_track(id, "lead", "主唱")
+
+    assert {:ok, 4} =
+             Neumu.insert_note(id, "lead", "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+    assert {:ok, 5} = Neumu.split_note(id, "lead", "n1", 240, "n1b")
+
+    path = Path.join(tmp_dir, "gestures.coconut")
+    assert {:ok, ^path} = Neumu.save_project(id, path)
+    assert :ok = Neumu.close_project(id)
+    assert {:ok, _pid} = Neumu.load_project(id, path, ProjectStub.open_opts(registry, tmp_dir))
+
+    snapshot = snapshot!(id)
+    assert snapshot.history_pin == 5
+    assert snapshot.time_sigs == [{1, {3, 4}}]
+    lead = track(snapshot, "lead")
+    assert lead.name == "主唱"
+
+    assert [%{id: "n1", end_tick: 240}, %{id: "n1b", metadata: %{"melisma" => "continue"}}] =
+             lead.notes
+
+    # 存档 History 可继续 undo：拆分整手势一次还原。
+    assert {:ok, 4} = Neumu.undo(id)
+    assert [%{id: "n1", start_tick: 0, end_tick: 480}] = notes!(id)
+    assert {:ok, 3} = Neumu.undo(id)
+    assert [] = notes!(id)
+    assert {:ok, 2} = Neumu.undo(id)
+    assert track(snapshot!(id), "lead").name == nil
   end
 
   test "create/load_project 拒绝 nil project_id", %{tmp_dir: tmp_dir} do

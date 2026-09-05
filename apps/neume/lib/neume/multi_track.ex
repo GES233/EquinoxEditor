@@ -111,6 +111,22 @@ defmodule Neume.MultiTrack do
   def remove_track(%__MODULE__{} = runtime, track_id),
     do: run(runtime, Command.remove_track(track_id))
 
+  @doc "重命名轨道（轻字段边，不动 edit_version；记入唯一 History）。"
+  @spec rename_track(t(), Track.track_id(), String.t() | nil) :: {:ok, t()} | {:error, term()}
+  def rename_track(%__MODULE__{} = runtime, track_id, name),
+    do: run(runtime, Command.rename_track(track_id, name))
+
+  @doc """
+  整体替换拍号事件（轻字段边；render 不消费，不动 edit_version）。
+
+  `events` 为 `[{bar, {num, den}}]`，首事件须在小节 1、小节号严格递增，
+  非法输入返回 `{:error, {:invalid_time_sigs, events}}`。
+  """
+  @spec set_time_sigs(t(), [Coconut.Score.TimeSig.time_sig_event()]) ::
+          {:ok, t()} | {:error, term()}
+  def set_time_sigs(%__MODULE__{} = runtime, events),
+    do: run(runtime, Command.set_time_sigs(events))
+
   @doc "通过工程唯一 Session 提交 Coconut 编辑手势，包括原子跨轨手势。"
   @spec edit(t(), Coconut.Edit.Operation.request(), keyword()) :: {:ok, t()} | {:error, term()}
   def edit(%__MODULE__{} = runtime, request, opts \\ []) do
@@ -168,19 +184,118 @@ defmodule Neume.MultiTrack do
   def split_note(runtime, track_id, note_id, at_tick, new_id),
     do: invoke_track(runtime, track_id, &Editor.split_note(&1, note_id, at_tick, new_id))
 
-  @spec mount_pitch(t(), Track.track_id(), term(), term()) :: {:ok, t()} | {:error, term()}
-  def mount_pitch(runtime, track_id, note_id, points),
-    do: invoke_track(runtime, track_id, &Editor.mount_pitch(&1, note_id, points))
+  @spec trim_note(t(), Track.track_id(), term(), Track.span()) :: {:ok, t()} | {:error, term()}
+  def trim_note(runtime, track_id, note_id, new_span),
+    do: invoke_track(runtime, track_id, &Editor.trim_note(&1, note_id, new_span))
 
-  @spec mount_pitch_curve(t(), Track.track_id(), term(), term()) ::
-          {:ok, t()} | {:error, term()}
-  def mount_pitch_curve(runtime, track_id, note_id, curve),
-    do: invoke_track(runtime, track_id, &Editor.mount_pitch_curve(&1, note_id, curve))
+  @doc """
+  合并相邻音符：`note_ids` 首元素为存活者（into），其余被吸收进墓地；
+  须按轨序相邻。into 保留自身内容原样。
 
-  @spec mount_phoneme_duration(t(), Track.track_id(), term(), term()) ::
+  pin 语义按 Tamale transport：被吸收音符上的 ordinal 锚不死亡，而是
+  重定签到 into。返回 `{:ok, runtime, report}`；`report.moved_pins`
+  逐项 `%{id, channel, from_note_id, note_id}` 报告这些搬家的 pin。
+  """
+  @spec merge_notes(t(), Track.track_id(), [term(), ...]) ::
+          {:ok, t(), map()} | {:error, term()}
+  def merge_notes(runtime, track_id, note_ids),
+    do: invoke_track(runtime, track_id, &Editor.merge_notes(&1, note_ids))
+
+  @doc """
+  跨轨拖拽音符：源轨删除 + 目标轨以 `new_id` 插入内容副本，一条历史边。
+
+  内容全量复制（pitch/lyric/annotation/metadata），但显式清除 melisma
+  旗标（跨轨后原组必然不成立，旗标留着是死信）；pin 不迁移——源音符
+  上的锚在写时 transport 死进源轨墓地。
+  """
+  @spec drag_note_across_tracks(
+          t(),
+          Track.track_id(),
+          term(),
+          Track.track_id(),
+          term(),
+          term() | :head,
+          Track.span()
+        ) :: {:ok, t()} | {:error, term()}
+  def drag_note_across_tracks(
+        %__MODULE__{} = runtime,
+        from_track,
+        note_id,
+        to_track,
+        new_id,
+        after_id,
+        span
+      ) do
+    with {:ok, attrs} <- copied_note_attrs(runtime, from_track, note_id) do
+      edit(runtime, %Coconut.Edit.Operations.DragNoteAcrossTracks{
+        from_track: from_track,
+        note_id: note_id,
+        to_track: to_track,
+        new_id: new_id,
+        after_id: after_id,
+        span: span,
+        attrs: attrs
+      })
+    end
+  end
+
+  # 内容副本的 attrs：Note 字段原样（metadata 平铺进 attrs，与
+  # `Note.from_element/2` 的约定一致），melisma 旗标清除。
+  defp copied_note_attrs(runtime, track_id, note_id) do
+    with {:ok, track} <- Workspace.fetch_track(Coconut.workspace(runtime.session), track_id),
+         {:ok, note} <- fetch_note(track, note_id) do
+      attrs =
+        %{pitch: note.key, lyric: note.lyric, annotation: note.annotation}
+        |> Map.merge(note.metadata || %{})
+        |> Map.delete("melisma")
+
+      {:ok, attrs}
+    end
+  end
+
+  defp fetch_note(track, note_id) do
+    case Map.fetch(track.elements_by_id, note_id) do
+      {:ok, note} -> {:ok, note}
+      :error -> {:error, {:unknown_note, note_id}}
+    end
+  end
+
+  @spec mount_pitch(t(), Track.track_id(), term(), term(), keyword()) ::
           {:ok, t()} | {:error, term()}
-  def mount_phoneme_duration(runtime, track_id, note_id, durations),
-    do: invoke_track(runtime, track_id, &Editor.mount_phoneme_duration(&1, note_id, durations))
+  def mount_pitch(runtime, track_id, note_id, points, opts \\ []),
+    do: invoke_track(runtime, track_id, &Editor.mount_pitch(&1, note_id, points, opts))
+
+  @spec mount_pitch_curve(t(), Track.track_id(), term(), term(), keyword()) ::
+          {:ok, t()} | {:error, term()}
+  def mount_pitch_curve(runtime, track_id, note_id, curve, opts \\ []),
+    do: invoke_track(runtime, track_id, &Editor.mount_pitch_curve(&1, note_id, curve, opts))
+
+  @spec mount_phoneme_duration(t(), Track.track_id(), term(), term(), keyword()) ::
+          {:ok, t()} | {:error, term()}
+  def mount_phoneme_duration(runtime, track_id, note_id, durations, opts \\ []),
+    do:
+      invoke_track(
+        runtime,
+        track_id,
+        &Editor.mount_phoneme_duration(&1, note_id, durations, opts)
+      )
+
+  @doc """
+  pin 挂载的轻量 probe（G2P + 组展开，真声库要调 worker）：物化 `note_id`
+  的身份底料。只读，不改工程值——调用方可在 ProjectServer 之外执行，
+  再携 `pin:` 校验走 mount（见 `Neume.Editor.probe_base/2`）。
+  """
+  @spec probe_pin(t(), Track.track_id(), term()) :: {:ok, [[String.t()]]} | {:error, term()}
+  def probe_pin(%__MODULE__{} = runtime, track_id, note_id) do
+    with {:ok, editor} <- attach_editor(runtime, track_id) do
+      Editor.probe_base(editor, note_id)
+    end
+  end
+
+  @doc "按 `(track_id, note_id, channel)` 卸载存活 pin（记入唯一 History）。"
+  @spec unmount_pin(t(), Track.track_id(), term(), atom()) :: {:ok, t()} | {:error, term()}
+  def unmount_pin(runtime, track_id, note_id, channel),
+    do: invoke_track(runtime, track_id, &Editor.unmount_pin(&1, note_id, channel))
 
   @spec update_globals(t(), Track.track_id(), map()) :: {:ok, t()} | {:error, term()}
   def update_globals(runtime, track_id, knobs),
@@ -191,7 +306,8 @@ defmodule Neume.MultiTrack do
     with {:ok, editor} <- attach_editor(runtime, track_id), do: {:ok, Editor.globals(editor)}
   end
 
-  @spec repatch(t(), Track.track_id(), [map()]) :: {:ok, t(), [map()]} | {:error, term()}
+  @spec repatch(t(), Track.track_id(), [map() | Coconut.Util.ID.t()]) ::
+          {:ok, t(), [map()]} | {:error, term()}
   def repatch(runtime, track_id, entries),
     do: invoke_track(runtime, track_id, &Editor.repatch(&1, entries))
 

@@ -213,6 +213,22 @@ defmodule Neumu do
   end
 
   @doc """
+  在 `at_tick` 拆分音符：左子继承原 id，右子 `new_id` 自动获得 melisma
+  续音旗标（拆分 = 同音节延续）。整手势是一条历史边，undo 一次即还原。
+  """
+  @spec split_note(
+          RenderJob.project_id(),
+          Coconut.Edit.Track.track_id(),
+          term(),
+          non_neg_integer(),
+          term()
+        ) ::
+          {:ok, history_pin()} | {:error, term()}
+  def split_note(project_id, track_id, note_id, at_tick, new_id) do
+    edit(project_id, {:split_note, track_id, note_id, at_tick, new_id})
+  end
+
+  @doc """
   新增一条人声轨；`voicebank_id` 经工程的声库注册表解析。
 
   `attrs` 支持 `:name` 与 `:mix`（见 `Neume.TrackConfig`）。未知声库返回
@@ -229,6 +245,78 @@ defmodule Neumu do
           {:ok, history_pin()} | {:error, term()}
   def remove_track(project_id, track_id) do
     edit(project_id, {:remove_track, track_id})
+  end
+
+  @doc "重命名轨道（展示注解，非唯一、可置 nil；记入唯一 History）。"
+  @spec rename_track(RenderJob.project_id(), Coconut.Edit.Track.track_id(), String.t() | nil) ::
+          {:ok, history_pin()} | {:error, term()}
+  def rename_track(project_id, track_id, name) do
+    edit(project_id, {:rename_track, track_id, name})
+  end
+
+  @doc """
+  修剪音符时值（span 边缘拖拽）。melisma 组成员关系按旗标 + 贴接自动
+  派生（拖出缝隙即断组）；duration pin 超预算不在手势期拒绝，走 render
+  前的 check 裁决。
+  """
+  @spec trim_note(
+          RenderJob.project_id(),
+          Coconut.Edit.Track.track_id(),
+          term(),
+          Coconut.Edit.Track.span()
+        ) :: {:ok, history_pin()} | {:error, term()}
+  def trim_note(project_id, track_id, note_id, new_span) do
+    edit(project_id, {:trim_note, track_id, note_id, new_span})
+  end
+
+  @doc """
+  合并相邻音符：`note_ids` 首元素为存活者（into），其余被吸收进墓地；
+  须按轨序相邻。into 保留自身内容原样（歌词/音素不拼接）。
+
+  pin 语义按 Tamale transport：被吸收音符上的 ordinal 锚不死亡，而是
+  重定签到 into（"合并后是否还有意义"由 render 前 check 与 `repatch/3`
+  裁决）。返回 `{:ok, history_pin, report}`；`report.moved_pins` 逐项
+  `%{id, channel, from_note_id, note_id}` 显式报告这些搬家的 pin。
+  """
+  @spec merge_notes(RenderJob.project_id(), Coconut.Edit.Track.track_id(), [term(), ...]) ::
+          {:ok, history_pin(), map()} | {:error, term()}
+  def merge_notes(project_id, track_id, note_ids) do
+    edit(project_id, {:merge_notes, track_id, note_ids})
+  end
+
+  @doc """
+  跨轨拖拽音符：源轨删除 + 目标轨以 `new_id` 插入内容副本，一条历史边。
+
+  内容全量复制（pitch/lyric/annotation/metadata），但清除 melisma
+  旗标；pin 不迁移（源音符上的锚死进源轨墓地，经快照 pins 投影可见）。
+  """
+  @spec drag_note_across_tracks(
+          RenderJob.project_id(),
+          Coconut.Edit.Track.track_id(),
+          term(),
+          Coconut.Edit.Track.track_id(),
+          term(),
+          term() | :head,
+          Coconut.Edit.Track.span()
+        ) :: {:ok, history_pin()} | {:error, term()}
+  def drag_note_across_tracks(project_id, from_track, note_id, to_track, new_id, after_id, span) do
+    edit(
+      project_id,
+      {:drag_note_across_tracks, from_track, note_id, to_track, new_id, after_id, span}
+    )
+  end
+
+  @doc """
+  整体替换拍号事件（小节网格展示数据，render 不消费）。
+
+  `events` 为 `[{bar, {num, den}}]`：首事件须在小节 1，小节号为正整数且
+  严格递增，每个拍号须合法；非法输入返回
+  `{:error, {:invalid_time_sigs, events}}`，不落历史边。
+  """
+  @spec set_time_sigs(RenderJob.project_id(), [Coconut.Score.TimeSig.time_sig_event()]) ::
+          {:ok, history_pin()} | {:error, term()}
+  def set_time_sigs(project_id, events) do
+    edit(project_id, {:set_time_sigs, events})
   end
 
   @doc "重绑定轨道声库；`voicebank_id` 经工程的声库注册表解析。"
@@ -250,6 +338,92 @@ defmodule Neumu do
           {:ok, history_pin()} | {:error, term()}
   def update_globals(project_id, track_id, knobs) do
     edit(project_id, {:update_globals, track_id, knobs})
+  end
+
+  # --- pin 干预（两阶段挂载） ---
+
+  @doc """
+  pin 挂载第一阶段：对音符做轻量 probe（G2P + 组展开，真声库要调
+  worker），在 ProjectServer 之外的调用方进程执行，不阻塞编辑与查询。
+
+  返回 `{:ok, probe}`；`probe` 是 plain data：`%{track_id, note_id,
+  pin, base}`（`base` 为 probe 物化的逐音素身份底料），原样传给三个
+  mount 手势。probe 之后工程被编辑，mount 返回
+  `{:error, {:stale_pin, _}}`（状态不变），UI 重新 probe 后重试。
+  """
+  @spec probe_pin(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term()) ::
+          {:ok, map()} | {:error, term()}
+  def probe_pin(project_id, track_id, note_id) do
+    with {:ok, multi_track, pin} <- call_project(project_id, :probe_context),
+         {:ok, base} <- Neume.MultiTrack.probe_pin(multi_track, track_id, note_id) do
+      {:ok, %{track_id: track_id, note_id: note_id, pin: pin, base: base}}
+    end
+  end
+
+  @doc """
+  在音符上挂载绝对 tick→MIDI 的稀疏 pitch 控制点（`[[tick, midi]]`，
+  plain data）。`probe` 为 `probe_pin/3` 的原样返回。
+  """
+  @spec mount_pitch(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term(), term(), map()) ::
+          {:ok, history_pin()} | {:error, term()}
+  def mount_pitch(project_id, track_id, note_id, points, probe) do
+    edit(project_id, {:mount_pin, track_id, note_id, :pitch, {:points, points}, probe})
+  end
+
+  @doc """
+  在音符上挂载 Bezier pitch 曲线；`curve` 是 plain-map payload：
+  `%{format: :pitch_curve_v1, adapter: :bezier, coord: :absolute_tick,
+  value: :absolute_midi, points: [%{tick, value, handle_left, handle_right}]}`
+  （`handle_left`/`handle_right` 为相对 anchor 的偏移，可为 nil）。
+  """
+  @spec mount_pitch_curve(
+          RenderJob.project_id(),
+          Coconut.Edit.Track.track_id(),
+          term(),
+          map(),
+          map()
+        ) :: {:ok, history_pin()} | {:error, term()}
+  def mount_pitch_curve(project_id, track_id, note_id, curve, probe) do
+    edit(project_id, {:mount_pin, track_id, note_id, :pitch, {:curve, curve}, probe})
+  end
+
+  @doc """
+  在音符上挂载逐音素的稀疏时长 pin：`[[音素下标, tick 时长], ...]`；
+  下标指向 probe 物化序列中的音素。
+  """
+  @spec mount_phoneme_duration(
+          RenderJob.project_id(),
+          Coconut.Edit.Track.track_id(),
+          term(),
+          [[non_neg_integer()]],
+          map()
+        ) :: {:ok, history_pin()} | {:error, term()}
+  def mount_phoneme_duration(project_id, track_id, note_id, durations, probe) do
+    edit(project_id, {:mount_pin, track_id, note_id, :duration, {:durations, durations}, probe})
+  end
+
+  @doc """
+  批量重挂 pin（re-patch）：`patch_ids` 为仍在册的 patch id（快照 `pins`
+  投影的 `id`）。返回 `{:ok, history_pin, results}`，`results` 逐项为
+  `%{patch_id, status: :repatched}` 或 `%{patch_id, status: :degraded,
+  reason}`。整批是一条历史边（undo 一次全还原）；全部降级时不落边、
+  不发事件。
+  """
+  @spec repatch(RenderJob.project_id(), Coconut.Edit.Track.track_id(), [term()]) ::
+          {:ok, history_pin(), [map()]} | {:error, term()}
+  def repatch(project_id, track_id, patch_ids) do
+    edit(project_id, {:repatch, track_id, patch_ids})
+  end
+
+  @doc """
+  按 `(track_id, note_id, channel)` 卸载 pin（`channel` 为 `:pitch` 或
+  `:duration`）。该音符该 channel 无存活 pin 时返回
+  `{:error, {:pin_not_found, _, _}}`，状态不变。
+  """
+  @spec unmount_pin(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term(), atom()) ::
+          {:ok, history_pin()} | {:error, term()}
+  def unmount_pin(project_id, track_id, note_id, channel) do
+    edit(project_id, {:unmount_pin, track_id, note_id, channel})
   end
 
   @doc "撤销工程中的上一条历史边；无可撤销时返回 `{:error, :nothing_to_undo}`。"
