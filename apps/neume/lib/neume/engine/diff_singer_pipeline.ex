@@ -12,7 +12,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
   alias Coconut.Render.Engine.Snapshot
   alias Neume.Analysis
   alias Neume.Engine.DiffSingerPipeline.Steps
-  alias Neume.Engine.{DiffSingerFp, DiffSingerWorker}
+  alias Neume.Engine.{DiffSingerFp, DiffSingerWorker, OrchidError}
   alias Neume.Voicebank.DiffSinger
   alias Oi.Flowgraph
 
@@ -248,6 +248,8 @@ defmodule Neume.Engine.DiffSingerPipeline do
          windows <- Enum.map(checked, fn {phrase, _analysis, _data} -> phrase end),
          {:ok, results} <- render_checked_phrases(state, view, checked, globals) do
       assemble(state, windows, results)
+    else
+      {:error, reason} -> {:error, OrchidError.slim(reason)}
     end
   end
 
@@ -260,6 +262,8 @@ defmodule Neume.Engine.DiffSingerPipeline do
          {:ok, windows} <- split_windows(view, snapshot.tpqn),
          {:ok, results} <- render_windows(state, snapshot, view, track_id, windows, pins, globals) do
       assemble(state, windows, results)
+    else
+      {:error, reason} -> {:error, OrchidError.slim(reason)}
     end
   end
 
@@ -583,7 +587,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
       phrase_id: phrase.id,
       span: {phrase.start_tick, phrase.end_tick},
       note_ids: phrase.note_ids,
-      reason: reason
+      reason: OrchidError.slim(reason)
     }
   end
 

@@ -380,7 +380,12 @@ defmodule Neume.DiffSingerEditorTest do
     assert {:error, {:check_failed, [%{kind: :model, reason: reason}]}} =
              Editor.check(editor)
 
-    assert inspect(reason) =~ "phoneme_duration_overflow"
+    # Orchid 执行错误在 Neume 边界已收敛：调度上下文（巨型 term）不入
+    # 条目，机器可判的内层原因保留。
+    assert {:orchid_error, _recipe, %{reason: {:phoneme_duration_overflow, _}} = slim} =
+             reason
+
+    refute Map.has_key?(slim, :context)
   end
 
   # render = 全轨 probe + 逐窗 check，一次 render 产生多条 check_payload。

@@ -16,7 +16,7 @@ defmodule Neume.Editor do
   alias Coconut.Util.ID
   alias Neume.Channels.{DurationPin, PitchPin}
   alias Neume.{Identity, PitchCurve, TrackConfig, TrackRuntime}
-  alias Neume.Engine.{DiffSingerPipeline, MockPipeline}
+  alias Neume.Engine.{DiffSingerPipeline, MockPipeline, OrchidError}
   alias Neume.Voicebank.{DiffSinger, Entry}
   alias Neume.Voicebank.Registry, as: VoicebankRegistry
 
@@ -615,9 +615,14 @@ defmodule Neume.Editor do
          [] <- model_errors ++ identity_errors do
       {:ok, editor, request, analysis, phrase_results}
     else
-      [_ | _] = entries -> {:error, {:check_failed, entries}}
-      {:error, {:check_failed, _entries}} = error -> error
-      {:error, reason} -> {:error, {:check_failed, [%{kind: :model, reason: reason}]}}
+      [_ | _] = entries ->
+        {:error, {:check_failed, entries}}
+
+      {:error, {:check_failed, _entries}} = error ->
+        error
+
+      {:error, reason} ->
+        {:error, {:check_failed, [%{kind: :model, reason: OrchidError.slim(reason)}]}}
     end
   end
 
