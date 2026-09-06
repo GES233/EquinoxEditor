@@ -117,7 +117,7 @@ defmodule Neume.Analysis do
          phoneme_durations: durations,
          pitch_pred_midi: pitch,
          note_phonemes: note_phonemes,
-         lead_in_sec: 0.0,
+         lead_in_sec: first.lead_in_sec,
          origin_sec: 0.0,
          total_frames: total_frames,
          frame_rate: frame_rate,

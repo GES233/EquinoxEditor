@@ -46,13 +46,12 @@ Stock 与 Modified 是两个独立声库身份（`:diffsinger_stock` / `:diffsin
 侧按声库 `dsdict-{lang}.yaml` 字典执行（`priv/diffsinger/g2p.py` 纯函数）：
 
 - 中文：非 ASCII 歌词经 `pypinyin` 逐音节查 `dsdict-zh.yaml`。
-- 英文：ASCII 歌词整词查 `dsdict-en.yaml`；词表未覆盖（OOV）时按字典键
-  贪心最长匹配分段，字典通常收全单字母键，最差退化为逐字母拼读；
-  存在无法解析的字符则 loud error。
+- 英文：ASCII 歌词按整词查 `dsdict-en.yaml`；未收录的词不会猜测或拆分，
+  而是 loud error，需补充声库字典条目或使用显式音素。
 - 日文：假名歌词先自动罗马音化（标准 Hepburn；拗音、促音 っ→`cl`、
-  长音 ー→重复前一拍元音、ん→`n`），再逐拍查 `dsdict-ja.yaml`；罗马音
-  歌词可直接书写（ASCII 通路）。汉字不自动音素化，loud error 提示改用
-  假名或显式音素。
+  长音 ー→重复前一拍元音、ん→`n`），再逐拍查 `dsdict-ja.yaml`；缺失的
+  拍不会继续拆分。罗马音歌词可直接书写（ASCII 通路）。汉字不自动音素化，
+  loud error 提示改用假名或显式音素。
 
 任何语言都可用音符 metadata 中的显式 `[[language, phoneme]]` 完全绕过
 G2P；查不到的词条不会静默降级，报错携带 note_id 定位。

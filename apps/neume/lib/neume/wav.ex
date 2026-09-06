@@ -33,6 +33,14 @@ defmodule Neume.Wav do
     write_pcm16(path, samples, sample_rate, 1)
   end
 
+  @doc "把单声道 s16le 音频开头指定的采样帧置零。"
+  @spec silence_prefix(binary(), non_neg_integer()) :: binary()
+  def silence_prefix(samples, frames) when is_binary(samples) and is_integer(frames) do
+    prefix_bytes = min(max(frames, 0) * 2, byte_size(samples))
+    <<_prefix::binary-size(^prefix_bytes), suffix::binary>> = samples
+    :binary.copy(<<0, 0>>, div(prefix_bytes, 2)) <> suffix
+  end
+
   defp write_pcm16(path, samples, sample_rate, channels) do
     data_size = byte_size(samples)
     block_align = channels * 2

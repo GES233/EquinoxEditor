@@ -1,11 +1,10 @@
-"""纯 G2P 函数：dsdict 字典装载、最长匹配分段、假名→罗马音。
+"""纯 G2P 函数：dsdict 字典装载、查表与假名→罗马音。
 
 不加载 ONNX 或声库文件，字典以 entries 列表注入，可脱离推理环境单测。
 字典是声库事实：能查到的才发音，查不到的一律 loud error，不做静默降级。
 """
 
-# --- 假名表（标准 Hepburn；dsdict-ja 同时收 si/ti/tu/hu/zi 变体，键缺失时
-# --- 由分段兜底拆成基础拍 + 元音拍） -------------------------------------
+# --- 假名表（标准 Hepburn） -----------------------------------------------
 
 _MORA = {
     "あ": "a", "い": "i", "う": "u", "え": "e", "お": "o",
@@ -108,47 +107,20 @@ def has_kana(text):
 # --- 字典 -----------------------------------------------------------------
 
 def build_dictionary(entries):
-    """dsdict entries → {"map": grapheme -> phonemes, "max_key": 最长键}。"""
+    """dsdict entries → grapheme 到音素符号的映射。"""
     mapping = {}
-    max_key = 0
     for item in entries:
         grapheme = item["grapheme"]
         mapping[grapheme] = item["phonemes"]
-        max_key = max(max_key, len(grapheme))
-    return {"map": mapping, "max_key": max_key}
+    return mapping
 
 
 def lookup(dictionary, key, language):
     """先裸键后 `lang/` 限定键；命中返回音素符号列表，未命中返回 None。"""
-    mapping = dictionary["map"]
+    mapping = dictionary
     phonemes = mapping.get(key)
     if phonemes is None:
         phonemes = mapping.get(f"{language}/{key}")
-    return phonemes
-
-
-def segment_token(token, dictionary, language):
-    """贪心最长匹配把 token 切成字典键序列；返回音素符号列表。
-
-    整词未命中时的 OOV 兜底——字典通常收全部单字母键，最差退化为逐字母
-    拼读。存在切不动的字符段时抛 ValueError（带定位），不静默跳过。
-    """
-    max_key = dictionary["max_key"]
-    phonemes = []
-    cursor = 0
-    while cursor < len(token):
-        upper = min(cursor + max_key, len(token))
-        for end in range(upper, cursor, -1):
-            piece = lookup(dictionary, token[cursor:end], language)
-            if piece is not None:
-                phonemes.extend(piece)
-                cursor = end
-                break
-        else:
-            raise ValueError(
-                f"g2p cannot segment: {language}/{token} at "
-                f"{token[cursor:]!r} (note requires explicit phonemes)"
-            )
     return phonemes
 
 
@@ -169,9 +141,9 @@ def qualify(symbols, language):
 def encode_lyric(lyric, language, get_dictionary, note_id, pinyin=None):
     """单音符歌词 → [[lang, phone], ...]。
 
-    - ASCII：整词查字典（小写），未命中走最长匹配分段（OOV 字母级兜底）；
+    - ASCII：整词查字典（小写），未命中直接报错；
     - `zh` 非 ASCII：pypinyin 逐音节查字典（pinyin 回调由调用方注入）；
-    - 含假名：转罗马音后逐拍查字典（拍键缺失退分段）；
+    - 含假名：转罗马音后逐拍查字典，拍键缺失直接报错；
     - 其余文字：loud error，指向显式音素通道。
     """
     result = []
@@ -188,10 +160,7 @@ def _encode_token(token, language, get_dictionary, note_id, pinyin):
         syllable = token.lower()
         phonemes = lookup(dictionary, syllable, language)
         if phonemes is None:
-            try:
-                phonemes = segment_token(syllable, dictionary, language)
-            except ValueError as error:
-                raise ValueError(f"{error} (note {note_id})") from error
+            raise ValueError(f"dictionary miss: {language}/{syllable} (note {note_id})")
         return qualify(phonemes, language)
 
     if language == "zh":
@@ -205,15 +174,12 @@ def _encode_token(token, language, get_dictionary, note_id, pinyin):
             result.extend(qualify(phonemes, language))
         return result
 
-    if has_kana(token):
+    if language == "ja" and has_kana(token):
         result = []
         for mora in kana_to_moras(token):
             phonemes = lookup(dictionary, mora, language)
             if phonemes is None:
-                try:
-                    phonemes = segment_token(mora, dictionary, language)
-                except ValueError as error:
-                    raise ValueError(f"{error} (note {note_id})") from error
+                raise ValueError(f"dictionary miss: {language}/{mora} (note {note_id})")
             result.extend(qualify(phonemes, language))
         return result
 

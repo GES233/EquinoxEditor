@@ -116,8 +116,7 @@ Neume.Editor
   必须显式调用 `Registry.prepare_modified/3`。工程保存 `{name, engine, digest}`，打开时由注册表解析。
 - 多语言歌词 G2P（worker 侧 `g2p.py` 纯函数，字典是声库事实、查不到
   loud error 不静默降级）：中文经 `dsdict-zh.yaml` + `pypinyin`；英文整词
-  查 `dsdict-en.yaml`，OOV 按字典键贪心最长匹配分段兜底（字典收全单字母
-  键，最差逐字母拼读）；日文假名自动罗马音化（拗音、促音 っ→`cl`、长音
+  查 `dsdict-en.yaml`，未收录词不猜测、不拆分；日文假名自动罗马音化（拗音、促音 っ→`cl`、长音
   ー→重复前一拍元音、ん→`n`）后逐拍查 `dsdict-ja.yaml`，罗马音可直接
   书写，汉字须显式音素。任何语言可用音符 metadata 中的显式
   `[[language, phoneme]]` 完全绕过 G2P。
@@ -295,7 +294,7 @@ Neume.Editor
 - `mix dialyzer`：`Total errors: 0`。
 - Python 纯函数测试：47 项通过，覆盖对齐（V/CV/CCV/CVC、C-G-V、休止、
   melisma 组展开/多 slot 锚定与 `note_phonemes` 按 owner 归并、黄金向量
-  fixture）、pitch 输入，以及多语言 G2P（en 整词/OOV 分段/字母兜底、
+  fixture）、pitch 输入，以及多语言 G2P（en 整词与未收录词 loud error、
   ja 假名罗马音化含促音/长音/鼻音、汉字 loud error、zh pypinyin 通路）。
 - Asaritsu 真声库集成测试（6 例）：整轨渲染与 WAV 输出；analyze 边界与
   render 一致；check 聚合模型错误；多窗编辑后仅受影响窗重渲（缓存

@@ -8,7 +8,6 @@ from g2p import (
     has_kana,
     kana_to_moras,
     lookup,
-    segment_token,
 )
 
 
@@ -121,19 +120,17 @@ class EnglishTest(unittest.TestCase):
     def test_contraction(self):
         self.assertEqual(encode_lyric("don't", "en", get_dictionary, "n1")[-1], ["en", "t"])
 
-    def test_oov_segmentation(self):
-        # "hella" 不是整词条目：最长匹配切出 hell + a。
-        self.assertEqual(
-            encode_lyric("hella", "en", get_dictionary, "n1"),
-            [["en", "hh"], ["en", "eh"], ["en", "l"], ["en", "ey"]],
-        )
+    def test_oov_not_guessed_from_subwords(self):
+        with self.assertRaisesRegex(ValueError, "dictionary miss.*note n1"):
+            encode_lyric("hella", "en", get_dictionary, "n1")
 
-    def test_oov_letter_fallback(self):
-        # "xyz" 无词条目：退化为逐字母拼读。
-        self.assertEqual(
-            encode_lyric("xyz", "en", get_dictionary, "n1"),
-            [["en", "k"], ["en", "s"], ["en", "y"], ["en", "z"]],
-        )
+    def test_oov_not_guessed_from_letters(self):
+        with self.assertRaisesRegex(ValueError, "dictionary miss.*note n1"):
+            encode_lyric("xyz", "en", get_dictionary, "n1")
+
+    def test_kana_does_not_override_language(self):
+        with self.assertRaisesRegex(ValueError, "non-ascii en.*note n1"):
+            encode_lyric("あ", "en", get_dictionary, "n1")
 
     def test_unresolvable_char(self):
         with self.assertRaises(ValueError):
@@ -165,12 +162,10 @@ class JapaneseTest(unittest.TestCase):
             encode_lyric("きゃ", "ja", get_dictionary, "n1"), [["ja", "ky"], ["ja", "a"]]
         )
 
-    def test_combo_segment_fallback(self):
-        # "fyu" 不是字典键：分段兜底拆 fu + yu。
-        self.assertEqual(
-            encode_lyric("ふゅ", "ja", get_dictionary, "n1"),
-            [["ja", "f"], ["ja", "u"], ["ja", "y"], ["ja", "u"]],
-        )
+    def test_missing_mora_not_segmented(self):
+        dictionary = make_dictionary([("ky", ["ky"]), ("o", ["o"])])
+        with self.assertRaisesRegex(ValueError, "dictionary miss.*note n1"):
+            encode_lyric("きょ", "ja", lambda language: dictionary, "n1")
 
     def test_romaji_passthrough(self):
         # ASCII 罗马音歌词本来就是字典键，直接整词命中。
@@ -210,11 +205,6 @@ class EdgeTest(unittest.TestCase):
         self.assertEqual(
             encode_lyric("hello don't", "en", get_dictionary, "n1")[0], ["en", "hh"]
         )
-
-    def test_segment_unresolvable(self):
-        with self.assertRaises(ValueError):
-            segment_token("a1b", EN, "en")
-
 
 if __name__ == "__main__":
     unittest.main()

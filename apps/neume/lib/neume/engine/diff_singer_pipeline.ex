@@ -568,6 +568,15 @@ defmodule Neume.Engine.DiffSingerPipeline do
     Enum.reduce_while(results, {:ok, []}, fn result, {:ok, acc} ->
       case Neume.Wav.read(result.path) do
         {:ok, clip} ->
+          clip = %{
+            clip
+            | samples:
+                Neume.Wav.silence_prefix(
+                  clip.samples,
+                  round(result.lead_in_sec * sample_rate)
+                )
+          }
+
           {:cont, {:ok, [%{clip: clip, offset: round(result.origin_sec * sample_rate)} | acc]}}
 
         {:error, reason} ->
