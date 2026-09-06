@@ -114,8 +114,13 @@ Neume.Editor
   与 Modified 是两个独立 entry/工程身份（`:diffsinger_stock` /
   `:diffsinger_modified`）；发现只读取已有修改 manifest，不执行模型修改，构建
   必须显式调用 `Registry.prepare_modified/3`。工程保存 `{name, engine, digest}`，打开时由注册表解析。
-- 中文歌词通过声库 `dsdict-zh.yaml` 和 `pypinyin` 自动音素化，也支持音符
-  metadata 中的显式 `[[language, phoneme]]`。
+- 多语言歌词 G2P（worker 侧 `g2p.py` 纯函数，字典是声库事实、查不到
+  loud error 不静默降级）：中文经 `dsdict-zh.yaml` + `pypinyin`；英文整词
+  查 `dsdict-en.yaml`，OOV 按字典键贪心最长匹配分段兜底（字典收全单字母
+  键，最差逐字母拼读）；日文假名自动罗马音化（拗音、促音 っ→`cl`、长音
+  ー→重复前一拍元音、ん→`n`）后逐拍查 `dsdict-ja.yaml`，罗马音可直接
+  书写，汉字须显式音素。任何语言可用音符 metadata 中的显式
+  `[[language, phoneme]]` 完全绕过 G2P。
 - 常驻 NDJSON Python worker；ONNX session 按 Python、声库路径/摘要、
   FP manifest/噪声版本/seed 和 worker 路径隔离，摘要或渲染上下文变化后
   不会复用旧 session。
@@ -288,14 +293,16 @@ Neume.Editor
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差
   `43.6%`，通过 2× 包络门禁。
 - `mix dialyzer`：`Total errors: 0`。
-- Python 纯对齐测试：11 项通过，覆盖 V/CV/CCV/CVC、C-G-V、休止、melisma
-  组展开/多 slot 锚定与 `note_phonemes` 按 owner 归并，以及黄金向量
-  fixture（`ExpandVectorsTest`）。
-- Asaritsu 真声库集成测试（5 例）：整轨渲染与 WAV 输出；analyze 边界与
+- Python 纯函数测试：47 项通过，覆盖对齐（V/CV/CCV/CVC、C-G-V、休止、
+  melisma 组展开/多 slot 锚定与 `note_phonemes` 按 owner 归并、黄金向量
+  fixture）、pitch 输入，以及多语言 G2P（en 整词/OOV 分段/字母兜底、
+  ja 假名罗马音化含促音/长音/鼻音、汉字 loud error、zh pypinyin 通路）。
+- Asaritsu 真声库集成测试（6 例）：整轨渲染与 WAV 输出；analyze 边界与
   render 一致；check 聚合模型错误；多窗编辑后仅受影响窗重渲（缓存
   `:hit/:miss` 逐窗断言）；melisma 一词两音符（延续元音锚在成员起点、
-  头元音在成员起点截止、analyze/render 边界一致）。96 tick 的首辅音被
-  量化为 9 帧，后续元音仍落在音符起点 ±1 帧。
+  头元音在成员起点截止、analyze/render 边界一致）；多语言歌词（英文
+  整词、日文假名含促音 `cl`、中文混排，语言标签与边界断言）。96 tick
+  的首辅音被量化为 9 帧，后续元音仍落在音符起点 ±1 帧。
 - `git diff --check`：通过。
 
 真声库测试默认排除，运行方式见 Validation 一节；可用 `DS_VOICEBANK` 和

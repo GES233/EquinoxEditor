@@ -42,6 +42,21 @@ Stock 与 Modified 是两个独立声库身份（`:diffsinger_stock` / `:diffsin
 结构对应 glide），此前的一个或多个辅音向前回排并占用前置 SP/间隙；
 `RenderArtifact.phonemes` 返回实际渲染帧网上的绝对音素边界。
 
+歌词语言逐音符由 `metadata["language"]` 指定（默认 `"zh"`），G2P 在 worker
+侧按声库 `dsdict-{lang}.yaml` 字典执行（`priv/diffsinger/g2p.py` 纯函数）：
+
+- 中文：非 ASCII 歌词经 `pypinyin` 逐音节查 `dsdict-zh.yaml`。
+- 英文：ASCII 歌词整词查 `dsdict-en.yaml`；词表未覆盖（OOV）时按字典键
+  贪心最长匹配分段，字典通常收全单字母键，最差退化为逐字母拼读；
+  存在无法解析的字符则 loud error。
+- 日文：假名歌词先自动罗马音化（标准 Hepburn；拗音、促音 っ→`cl`、
+  长音 ー→重复前一拍元音、ん→`n`），再逐拍查 `dsdict-ja.yaml`；罗马音
+  歌词可直接书写（ASCII 通路）。汉字不自动音素化，loud error 提示改用
+  假名或显式音素。
+
+任何语言都可用音符 metadata 中的显式 `[[language, phoneme]]` 完全绕过
+G2P；查不到的词条不会静默降级，报错携带 note_id 定位。
+
 melisma（一词跨多音符）用显式旗标表达：续音音符携带
 `metadata["melisma"] == "continue"` 且与前一音符贴接时并入其音节组；
 组的音素 = 头音素 + 每成员一个延续元音（锚在各成员音符起点，带各自

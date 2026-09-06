@@ -140,6 +140,48 @@ defmodule Neume.DiffSingerIntegrationTest do
   end
 
   @tag tmp_dir: "asaritsu"
+  test "多语言歌词：英文整词、日文假名与中文混排", %{tmp_dir: tmp_dir} do
+    assert {:ok, editor} = asaritsu_editor(tmp_dir, "multilingual")
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{
+               pitch: 60,
+               lyric: "hello",
+               language: "en"
+             })
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n2", "n1", {480, 960}, %{
+               pitch: 62,
+               lyric: "きって",
+               language: "ja"
+             })
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n3", "n2", {960, 1440}, %{pitch: 64, lyric: "啦"})
+
+    assert {:ok, editor, analysis} = Editor.analyze(editor)
+    assert [%{id: "n1", phonemes: [_ | _]}, %{id: "n2", phonemes: [_ | _]}, %{id: "n3"}] =
+             analysis.notes
+
+    n1 = Enum.filter(analysis.phonemes, &(&1.note_id == "n1"))
+    n2 = Enum.filter(analysis.phonemes, &(&1.note_id == "n2"))
+    n3 = Enum.filter(analysis.phonemes, &(&1.note_id == "n3"))
+
+    # 各语言音素带自己的语言标签；日文促音 っ 编成 cl
+    assert Enum.all?(n1, &(&1.language == "en"))
+    assert Enum.all?(n2, &(&1.language == "ja"))
+    assert Enum.all?(n3, &(&1.language == "zh"))
+    assert Enum.any?(n2, &(&1.symbol == "cl"))
+
+    assert {:ok, _editor, artifact} = Editor.render(editor)
+    assert File.regular?(artifact.path)
+    assert {:ok, "RIFF" <> _rest} = File.read(artifact.path)
+    # 同一内容：analyze 边界与 render 制品边界一致（全轨 origin 均为 0）
+    assert analysis.phonemes == artifact.phonemes
+  end
+
+  @tag tmp_dir: "asaritsu"
   test "check 把模型错误聚合为 check_failed", %{tmp_dir: tmp_dir} do
     assert {:ok, editor} = asaritsu_editor(tmp_dir, "check")
 

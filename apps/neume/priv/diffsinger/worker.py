@@ -17,11 +17,19 @@ import soundfile as sf
 import yaml
 
 from alignment import REST_PHONEMES, align_phonemes, expand_groups, note_phonemes, word_parts
+import g2p
 
 try:
     from pypinyin import Style, pinyin
 except ImportError:
     Style, pinyin = None, None
+
+
+def _pinyin_syllables(text):
+    return [item[0] for item in pinyin(text, style=Style.NORMAL)]
+
+
+_PINYIN_SYLLABLES = _pinyin_syllables if pinyin is not None else None
 
 
 DEFAULT_GLOBALS = {
@@ -193,9 +201,9 @@ class DiffSingerEngine:
             note_id = str(note["id"])
             lyric = (note.get("lyric") or "").strip()
             language = note.get("language") or "zh"
-            if not lyric:
-                raise ValueError(f"missing lyric: {note_id}")
-            tokens[note_id] = self._encode_lyric(lyric, language, note_id)
+            tokens[note_id] = g2p.encode_lyric(
+                lyric, language, self._dictionary, note_id, pinyin=_PINYIN_SYLLABLES
+            )
         return {"tokens": tokens}
 
     def _dictionary(self, language):
@@ -204,42 +212,8 @@ class DiffSingerEngine:
             if not os.path.isfile(path):
                 raise ValueError(f"unsupported language: {language}")
             entries = (load_yaml(path) or {}).get("entries") or []
-            self._g2p[language] = {
-                item["grapheme"]: item["phonemes"] for item in entries
-            }
+            self._g2p[language] = g2p.build_dictionary(entries)
         return self._g2p[language]
-
-    def _encode_lyric(self, lyric, language, note_id):
-        dictionary = self._dictionary(language)
-        result = []
-        for token in lyric.split():
-            if token.isascii():
-                syllables = [token.lower()]
-            elif language == "zh":
-                if pinyin is None:
-                    raise ValueError("pypinyin is required for Chinese lyrics")
-                syllables = [item[0] for item in pinyin(token, style=Style.NORMAL)]
-            else:
-                raise ValueError(
-                    f"non-ascii {language} G2P is unavailable for note {note_id}; "
-                    "provide explicit phonemes"
-                )
-
-            for syllable in syllables:
-                phonemes = dictionary.get(syllable) or dictionary.get(
-                    f"{language}/{syllable}"
-                )
-                if phonemes is None:
-                    raise ValueError(
-                        f"dictionary miss: {language}/{syllable} (note {note_id})"
-                    )
-                for symbol in phonemes:
-                    if "/" in symbol:
-                        lang, phone = symbol.split("/", 1)
-                    else:
-                        lang, phone = language, symbol
-                    result.append([lang, phone])
-        return result
 
     def check(self, words, globals_, overrides=None, groups=None):
         words, owners, remap = self._expand(words, groups)
