@@ -44,5 +44,28 @@ defmodule Neume.DiffSingerFpTest do
     assert state.worker_config.fp_manifest_digest == nil
     assert state.worker_config.fp_noise_version == nil
     assert state.worker_config.seed == 7
+    assert state.worker_config.backend == :cpu
+    assert state.cache
+  end
+
+  @tag tmp_dir: true
+  test "实验 OpenVINO 显式选择且不能启用 WAV 缓存，未知后端拒绝", %{tmp_dir: tmp_dir} do
+    root = VoicebankFixture.diffsinger(tmp_dir)
+    assert {:ok, manifest} = DiffSinger.scan(root)
+
+    opts = [
+      manifest: manifest,
+      track_id: "vocal",
+      client: Neume.DiffSingerEditorTest.FakeClient,
+      fp: false,
+      cache: true
+    ]
+
+    assert {:ok, state} = DiffSingerPipeline.compile(opts ++ [backend: :openvino])
+    assert state.worker_config.backend == :openvino
+    refute state.cache
+
+    assert {:error, {:unsupported_diffsinger_backend, :unknown}} =
+             DiffSingerPipeline.compile(opts ++ [backend: :unknown])
   end
 end

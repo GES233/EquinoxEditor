@@ -16,6 +16,8 @@ defmodule Neume.Engine.DiffSingerPipeline do
   alias Neume.Voicebank.DiffSinger
   alias Oi.Flowgraph
 
+  require Logger
+
   # 全局表现旋钮（会话态，直接进 render，不经 tamale patch）：variance
   # 预测曲线的乘性系数，1.0 中立。逐帧曲线干预另走 channel（§6.6 第三档）。
   @global_knobs [:energy, :breathiness, :voicing]
@@ -40,8 +42,14 @@ defmodule Neume.Engine.DiffSingerPipeline do
     output_dir = Keyword.get(opts, :output_dir, Path.join(File.cwd!(), "tmp/neume-renders"))
     client = Keyword.get(opts, :client, DiffSingerWorker)
     python = Keyword.get(opts, :python, ["python"])
+    backend = Keyword.get(opts, :backend, :cpu)
 
-    with {:ok, fp} <- resolve_fp(manifest, client, opts) do
+    with :ok <- validate_backend(backend),
+         {:ok, fp} <- resolve_fp(manifest, client, opts) do
+      if backend == :openvino do
+        Logger.warning("实验性 OpenVINO GPU/f32：pitch 保留 CPU；不保证兼容性与字节确定性，窗口 WAV 缓存已关闭")
+      end
+
       worker_config =
         opts
         |> Keyword.get(:client_config, %{})
@@ -49,6 +57,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
           voicebank_root: manifest.root,
           voicebank_digest: manifest.digest,
           python: python,
+          backend: backend,
           worker: Keyword.get(opts, :worker, default_worker()),
           fp_manifest: fp && fp.manifest_path,
           fp_manifest_digest: fp && fp.manifest_digest,
@@ -117,11 +126,14 @@ defmodule Neume.Engine.DiffSingerPipeline do
            globals: globals,
            output_dir: output_dir,
            manifest: manifest,
-           cache: Keyword.get(opts, :cache, true)
+           cache: backend == :cpu and Keyword.get(opts, :cache, true)
          }}
       end
     end
   end
+
+  defp validate_backend(backend) when backend in [:cpu, :openvino], do: :ok
+  defp validate_backend(backend), do: {:error, {:unsupported_diffsinger_backend, backend}}
 
   @doc "声库内容摘要（manifest digest）：pin 输入底料的声音库事实分量。"
   @spec voicebank_digest(state()) :: String.t()
@@ -341,6 +353,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
   defp render_key(state, elements, pins, globals, snapshot) do
     Neume.RenderCache.key(%{
       voicebank_digest: state.manifest.digest,
+      backend: state.worker_config.backend,
       fp_manifest_digest: state.worker_config.fp_manifest_digest,
       fp_noise_version: state.worker_config.fp_noise_version,
       seed: state.worker_config.seed,
@@ -381,6 +394,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
     key =
       Neume.RenderCache.key(%{
         voicebank_digest: state.manifest.digest,
+        backend: state.worker_config.backend,
         fp_manifest_digest: state.worker_config.fp_manifest_digest,
         fp_noise_version: state.worker_config.fp_noise_version,
         seed: state.worker_config.seed,

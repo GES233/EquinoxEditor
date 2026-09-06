@@ -123,6 +123,13 @@ Neume.Editor
 - 常驻 NDJSON Python worker；ONNX session 按 Python、声库路径/摘要、
   FP manifest/噪声版本/seed 和 worker 路径隔离，摘要或渲染上下文变化后
   不会复用旧 session。
+- 本机实验后端：`Neumu.create_project/2` / `load_project/3` 可透传
+  `diffsinger_backend: :openvino`（默认 `:cpu`），GPU/f32 运行
+  variance/acoustic/vocoder，pitch 保留 CPU；模型动态编译实例在 worker 内
+  常驻，后端进入 worker/窗口键身份。因不保证 GPU 字节确定性，实验模式
+  强制关闭窗口 WAV 缓存，不静默回退 CPU。后端不持久化、不改变 pin 底料；
+  disclaimer、依赖与真 GPU 验证入口见 `apps/neumu/docs/openvino-local.md`。
+  本批只接现有协议，未更换为 Symbiont 生命周期管理。
 - DiffSinger Modified 变体当前采用 Pure-FP 工艺：本地手术把 pitch/variance/acoustic/vocoder
   图内随机算子改成 host-noise 输入，worker 按固定 seed 生成 NumPy float32
   噪声；Stock 需作为另一个声库 entry 显式选择。派生模型只写 gitignored `tmp/`，

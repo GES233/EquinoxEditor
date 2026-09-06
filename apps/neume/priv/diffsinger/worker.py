@@ -58,7 +58,22 @@ def load_yaml(path):
 
 
 class DiffSingerEngine:
-    def __init__(self, root, fp_manifest=None, seed=0):
+    def __init__(self, root, fp_manifest=None, seed=0, backend="cpu"):
+        if backend not in ("cpu", "openvino"):
+            raise ValueError(f"unsupported inference backend: {backend}")
+        self.backend = backend
+        self.openvino_core = None
+        if backend == "openvino":
+            import openvino as ov
+
+            self.openvino_core = ov.Core()
+            if not any(device.startswith("GPU") for device in self.openvino_core.available_devices):
+                raise ValueError("OpenVINO GPU is unavailable; select CPU explicitly")
+            print(
+                f"Experimental OpenVINO {ov.__version__}: GPU/f32 variance/acoustic/vocoder; "
+                "pitch stays on CPU. Compatibility and byte determinism are not guaranteed.",
+                file=sys.stderr,
+            )
         self.root = os.path.abspath(root)
         self.seed = int(seed)
         self.fp = load_json(fp_manifest) if fp_manifest else {}
@@ -95,13 +110,16 @@ class DiffSingerEngine:
             self._asset(os.path.join(root, "dsvariance"), self.variance_cfg["linguistic"])
         )
         self.variance = self._session(
-            self._model("variance", self._asset(os.path.join(root, "dsvariance"), self.variance_cfg["variance"]))
+            self._model("variance", self._asset(os.path.join(root, "dsvariance"), self.variance_cfg["variance"])),
+            gpu=True,
         )
         self.acoustic = self._session(
-            self._model("acoustic", self._asset(root, self.acoustic_cfg["acoustic"]))
+            self._model("acoustic", self._asset(root, self.acoustic_cfg["acoustic"])),
+            gpu=True,
         )
         self.vocoder = self._session(
-            self._model("vocoder", self._asset(os.path.join(root, "dsvocoder"), self.vocoder_cfg["model"]))
+            self._model("vocoder", self._asset(os.path.join(root, "dsvocoder"), self.vocoder_cfg["model"])),
+            gpu=True,
         )
 
         self.speaker_names = list(self.acoustic_cfg.get("speakers") or [])
@@ -138,12 +156,19 @@ class DiffSingerEngine:
             values[spec["name"]] = value
         return values
 
-    def _session(self, path):
-        if path not in self._sessions:
-            self._sessions[path] = ort.InferenceSession(
-                path, providers=["CPUExecutionProvider"]
-            )
-        return self._sessions[path]
+    def _session(self, path, gpu=False):
+        backend = self.backend if gpu else "cpu"
+        key = (path, backend)
+        if key not in self._sessions:
+            if backend == "openvino":
+                from openvino_session import OpenVinoSession
+
+                self._sessions[key] = OpenVinoSession(self.openvino_core, path)
+            else:
+                self._sessions[key] = ort.InferenceSession(
+                    path, providers=["CPUExecutionProvider"]
+                )
+        return self._sessions[key]
 
     def _load_embedding(self, name):
         candidates = [
@@ -675,11 +700,12 @@ def main():
     parser.add_argument("voicebank_root")
     parser.add_argument("--fp-manifest")
     parser.add_argument("--seed", type=int, default=0)
+    parser.add_argument("--backend", choices=("cpu", "openvino"), default="cpu")
     args = parser.parse_args()
 
     sys.stdin.reconfigure(encoding="utf-8")
     sys.stdout.reconfigure(encoding="utf-8")
-    engine = DiffSingerEngine(args.voicebank_root, args.fp_manifest, args.seed)
+    engine = DiffSingerEngine(args.voicebank_root, args.fp_manifest, args.seed, args.backend)
     emit(
         {
             "ready": True,
@@ -688,6 +714,7 @@ def main():
             "speakers": engine.speaker_names,
             "fp": bool(engine.fp),
             "seed": engine.seed,
+            "backend": engine.backend,
         }
     )
 

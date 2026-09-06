@@ -36,6 +36,10 @@ defmodule Neumu do
     缺省时按 `:neume, :voicebank_roots` 应用配置发现；后续
     `add_track/4` / `rebind_voicebank/3` 用它解析 `voicebank_id`；
   - `:metadata` — 写入 `Coconut.Project` 的元数据；
+  - `:diffsinger_backend` — `:cpu`（默认）或实验性 `:openvino`；后者固定
+    GPU/f32 运行 variance/acoustic/vocoder，pitch 保留 CPU，关闭窗口 WAV
+    缓存；需通过 `:python` 指定已安装 OpenVINO 的环境。只影响运行配置，
+    不写入工程，读档时需再次指定；
   - 其余选项（如 `:output_dir`、`:diffsinger_client`）透传给
     `Neume.MultiTrack.open/2`。
   """

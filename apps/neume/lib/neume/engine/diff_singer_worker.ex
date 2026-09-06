@@ -40,7 +40,8 @@ defmodule Neume.Engine.DiffSingerWorker do
     {Map.get(config, :python, ["python"]), Map.fetch!(config, :voicebank_root),
      Map.get(config, :voicebank_digest), Map.get(config, :fp_manifest),
      Map.get(config, :fp_manifest_digest), Map.get(config, :fp_noise_version),
-     Map.get(config, :seed, 0), Map.get(config, :worker, default_worker())}
+     Map.get(config, :seed, 0), Map.get(config, :worker, default_worker()),
+     Map.get(config, :backend, :cpu)}
   end
 
   defp default_worker do
@@ -154,12 +155,14 @@ defmodule Neume.Engine.DiffSingerWorker do
     end
 
     defp worker_args(config) do
+      backend_args = ["--backend", to_string(Map.get(config, :backend, :cpu))]
+
       case Map.get(config, :fp_manifest) do
         path when is_binary(path) ->
-          ["--fp-manifest", path, "--seed", to_string(Map.get(config, :seed, 0))]
+          backend_args ++ ["--fp-manifest", path, "--seed", to_string(Map.get(config, :seed, 0))]
 
         _ ->
-          []
+          backend_args
       end
     end
 

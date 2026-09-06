@@ -998,6 +998,7 @@ defmodule Neume.Editor do
       [manifest: manifest, track_id: track_id]
       |> put_option(:output_dir, opts, :output_dir)
       |> put_option(:python, opts, :python)
+      |> put_option(:backend, opts, :diffsinger_backend)
       |> put_option(:worker, opts, :diffsinger_worker)
       |> put_option(:client, opts, :diffsinger_client)
       |> put_option(:client_config, opts, :diffsinger_client_config)
