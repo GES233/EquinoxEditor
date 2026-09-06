@@ -2,7 +2,8 @@
 
 ~~人类重写版本。~~ 第二轮迭代版本。
 
-当前实现进度、验证基线、限制和后续路线见 [`STATUS.md`](STATUS.md)；多轨
+当前实现进度、验证基线、限制和后续路线见仓库根 [`AGENTS.md`](../../AGENTS.md)
+的 Neume Implementation Status 一节；多轨
 runtime、Oi/NIF 以及 Neume/Neumu/UI 职责见
 [`docs/design-2026-09-multitrack-runtime.md`](docs/design-2026-09-multitrack-runtime.md)。
 

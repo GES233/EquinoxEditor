@@ -24,4 +24,4 @@ mix format --check-formatted
 mix dialyzer
 ```
 
-Neume 的使用方式、真实 DiffSinger 环境和当前限制见 [`apps/neume/README.md`](apps/neume/README.md) 与 [`apps/neume/STATUS.md`](apps/neume/STATUS.md)。
+Neume 的使用方式和真实 DiffSinger 环境见 [`apps/neume/README.md`](apps/neume/README.md)；实现进度、验证基线、当前限制和后续路线见 [`AGENTS.md`](AGENTS.md) 的 Neume Implementation Status 一节。
