@@ -39,7 +39,7 @@ DiffSinger worker / ONNX / artifacts
 - Multi-track scheduling, mixing, buses, and export aggregation are implemented as Neume-owned Oi graphs/steps.
 - Phoneme types, frame grids, G2P, vowel anchoring, and model probes belong to the Neume DiffSinger adapter/worker.
 - Coconut History remains the only entry for persistent score, patch, track-extras, and undoable edits.
-- pin 底料是输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态 check 不过问；G2P/组展开只服务于消费边界与 re-patch 可表达性。
+- 现有 legacy pitch/duration pin 底料是 `pin_input_v1` 输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态 check 不过问。后续按 `Pin<S>` / `Pin<Ph>` / `Pin<Co<S,Ph>>` 解耦的提案见 `apps/neume/docs/design-2026-09-pin-carriers.md`，未拍板前不得直接重解释旧 patch。
 - melisma 必须由显式 syllable group 表达，不在 worker 中启发式猜测。
 - Model paths, generated models, caches, and WAV files are not committed.
 

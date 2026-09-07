@@ -1,8 +1,9 @@
 # 决策：pin 身份底料改为输入事实签名（2026-09-05）
 
-> 状态：已实施（随本次工作落盘，未提交）。取代
+> 状态：已实施（legacy `pin_input_v1` 语义）。取代
 > `design-2026-08-orchid-intervention.md` §6.6 第二档中"签 probe 物化
-> 音素序列"的做法；channel 分档与裁决界面不变。
+> 音素序列"的做法；channel 分档与裁决界面不变。后续 carrier 解耦提案见
+> [`design-2026-09-pin-carriers.md`](design-2026-09-pin-carriers.md)。
 
 ## 背景
 
@@ -76,4 +77,4 @@
   事实而非 G2P 输出，mount 不依赖 probe"）。
 - `apps/neumu`：`50 passed`（pin 族测试的底料断言已更新为输入事实形状；
   melisma 断组/恢复的 probe 断言改验 continuation/head 形态）。
-- 未提交，待人工审阅。
+- carrier 解耦前，现有 pitch/duration 继续以本 schema 兼容读写。
