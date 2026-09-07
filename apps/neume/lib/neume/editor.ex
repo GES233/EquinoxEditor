@@ -16,6 +16,7 @@ defmodule Neume.Editor do
   alias Coconut.Util.ID
   alias Neume.Channels.{DurationPin, PitchPin}
   alias Neume.{Identity, PitchCurve, TrackConfig, TrackRuntime}
+  alias Neume.Pin.{Context, Semantics}
   alias Neume.Engine.{MockPipeline, OrchidError}
   alias Neume.Voicebank.Entry
   alias Neume.Voicebank.Registry, as: VoicebankRegistry
@@ -503,13 +504,40 @@ defmodule Neume.Editor do
   def repatch(%__MODULE__{} = editor, entries) when is_list(entries) do
     with {:ok, patches} <- fetch_alive_patches(editor, entries),
          {:ok, request} <- Coconut.request(editor.session),
-         {:ok, sequences} <-
-           editor.pipeline.phonemes(editor.pipeline_state, request.snapshot, editor.track_id),
+         {:ok, sequences} <- probe_sequences(editor, request, patches),
          {:ok, track} <- current_track(editor),
          {:ok, discards, attaches, results} <-
-           plan_repatch(patches, sequences, track, voicebank_digest(editor)),
+           plan_repatch(
+             patches,
+             sequences,
+             track,
+             voicebank_digest(editor),
+             editor.session.channels
+           ),
          {:ok, session} <- run_repatch(editor.session, discards, attaches) do
       {:ok, %{editor | session: session}, results}
+    end
+  end
+
+  # 只有声明需要 probe 的 payload（如旧 duration 的裸 ph_index）才调
+  # pipeline.phonemes/3；纯 Pin<S>（pitch）批次不强迫引擎实现音素展开。
+  # 无法判定时保守按需要 probe 处理，后续校验会给出 tagged error。
+  defp probe_sequences(editor, request, patches) do
+    if Enum.any?(patches, &requires_probe?(&1, editor.session.channels)) do
+      editor.pipeline.phonemes(editor.pipeline_state, request.snapshot, editor.track_id)
+    else
+      {:ok, nil}
+    end
+  end
+
+  defp requires_probe?(patch, channels) do
+    with {:ok, semantics} <- Map.fetch(channels, patch.channel),
+         true <- Semantics.implemented?(semantics),
+         true <- function_exported?(semantics, :requires_probe?, 2),
+         {:ok, descriptor} <- semantics.describe(patch.patch.payload) do
+      semantics.requires_probe?(descriptor, patch.patch.payload)
+    else
+      _other -> true
     end
   end
 
@@ -680,6 +708,24 @@ defmodule Neume.Editor do
   defp pin_base(_editor, _note_id, base) when not is_nil(base), do: {:ok, base}
   defp pin_base(editor, note_id, nil), do: probe_base(editor, note_id)
 
+  # channel 入口校验：未注册 → 未知 channel；未完整实现 pin 语义回调 →
+  # tagged error，不抛 UndefinedFunctionError。
+  defp fetch_semantics(channels, channel) do
+    case Map.fetch(channels, channel) do
+      {:ok, semantics} ->
+        if Semantics.implemented?(semantics),
+          do: {:ok, semantics},
+          else: {:error, {:missing_pin_semantics, semantics}}
+
+      :error ->
+        {:error, {:unknown_pin_channel, channel}}
+    end
+  end
+
+  # 批次不含需要 probe 的 payload 时 sequences 为 nil，不做界内预校验
+  # （fetch_alive_patches 已保证音符存活）。
+  defp fetch_sequence(nil, _note_id), do: {:ok, nil}
+
   defp fetch_sequence(sequences, note_id) do
     case Map.fetch(sequences, note_id) do
       {:ok, sequence} -> {:ok, sequence}
@@ -687,16 +733,30 @@ defmodule Neume.Editor do
     end
   end
 
-  # re-patch 计划：逐 patch 以 probe 序列校验可表达性（duration 下标
-  # 界内），可表达的以当前输入事实底料重签后进批量。
-  defp plan_repatch(patches, sequences, track, voicebank_digest) do
+  # re-patch 计划：逐 patch 经其 channel 的 pin 语义分派——先校验可表达性
+  # （duration 下标在 probe 序列界内），可表达的以该 channel 的当前底料
+  # 重签后进批量。整轨 legacy 底料预计算一次，经 Context.legacy_bases
+  # 共享；channel 未注册或未完整实现语义回调时降级为 tagged error。
+  defp plan_repatch(patches, sequences, track, voicebank_digest, channels) do
+    bases = Identity.base_by_note(track, voicebank_digest)
+
     {discards, attaches, results} =
       Enum.reduce(patches, {[], [], []}, fn patch, {discards, attaches, results} ->
         note_id = hd(patch.anchor.refs)
 
-        with {:ok, fresh} <- fetch_sequence(sequences, note_id),
-             :ok <- Identity.expressible?(patch.channel, patch.patch.payload, fresh),
-             {:ok, fresh_base} <- Identity.base_for(track, note_id, voicebank_digest),
+        context =
+          Context.new(track, patch.track_id, voicebank_digest,
+            legacy_probe: sequences,
+            legacy_bases: bases
+          )
+
+        with {:ok, semantics} <- fetch_semantics(channels, patch.channel),
+             {:ok, _sequence} <- fetch_sequence(sequences, note_id),
+             {:ok, descriptor} <- semantics.describe(patch.patch.payload),
+             :ok <-
+               semantics.expressible?(context, patch.anchor, descriptor, patch.patch.payload),
+             {:ok, fresh_base} <-
+               semantics.base(context, patch.anchor, descriptor, patch.patch.payload),
              {:ok, resigned} <- Tamale.Patch.new(fresh_base, patch.patch.payload),
              {:ok, replacement} <-
                Patch.new(%{

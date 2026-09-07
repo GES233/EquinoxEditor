@@ -28,11 +28,17 @@ defmodule Neume.Identity do
 
   裁决时机仍在引擎 probe 之后的统一冲突界面（`stage: :probe`），但裁决
   本身只依赖 workspace 事实与声库摘要；payload 的可表达性（duration
-  下标界内）在 re-patch 手势里另行校验（`expressible?/3`，需要 probe
-  物化的序列长度）。
+  下标界内）在 re-patch 手势里另行校验（各 channel 的
+  `Neume.Pin.Semantics.expressible?/4`，需要 probe 物化的序列长度）。
+
+  自 `design-2026-09-pin-carriers` 批次 A 起，`adjudicate/3` 按各
+  channel 的 `Neume.Pin.Semantics` 分派底料与裁决；本模块保留的
+  `base_by_note/2` / `base_for/3` / `legacy_base/2` 即 legacy
+  `pin_input_v1` schema 的实现，供 channel 语义模块与挂载路径委托。
   """
 
   alias Coconut.Edit.{Patch, Track}
+  alias Neume.Pin.{Context, Semantics}
   alias Neume.Syllable
 
   @base_schema "pin_input_v1"
@@ -44,7 +50,8 @@ defmodule Neume.Identity do
   probe 物化的逐音符词内音素序列表（`%{note_id => [[lang, phone], ...]}`）。
 
   自 2026-09-05 起不再是签名底料；只服务于 duration pin 的可表达性
-  校验（`expressible?/3`）与 Analysis 的词内下标平移。
+  校验（`Neume.Channels.DurationPin.expressible?/4`，经
+  `Neume.Pin.Context.legacy_probe` 传入）与 Analysis 的词内下标平移。
   """
   @type note_phonemes :: %{term() => [[String.t()]]}
 
@@ -89,6 +96,30 @@ defmodule Neume.Identity do
     end
   end
 
+  @doc """
+  legacy（`pin_input_v1`）底料入口：从 Ordinal anchor 取 note_id 后等价
+  `base_for/3`，声库摘要取自 `Context.voicebank_identity`。供 channel
+  语义模块的 `base/4` 委托；`Context.legacy_bases` 携带批量裁决预计算
+  的整轨底料时直接复用，不逐 patch 重算。非 Ordinal anchor 返回
+  `{:error, {:unsupported_anchor, anchor}}`。
+  """
+  @spec legacy_base(Context.t(), Tamale.Anchor.t()) :: {:ok, input_base()} | {:error, term()}
+  def legacy_base(%Context{legacy_bases: %{} = bases}, %Tamale.Anchor.Ordinal{
+        refs: [note_id | _]
+      }) do
+    case Map.fetch(bases, note_id) do
+      {:ok, base} -> {:ok, base}
+      :error -> {:error, {:unknown_note, note_id}}
+    end
+  end
+
+  def legacy_base(%Context{legacy_bases: nil} = context, %Tamale.Anchor.Ordinal{
+        refs: [note_id | _]
+      }),
+      do: base_for(context.track, note_id, Context.voicebank_digest(context))
+
+  def legacy_base(%Context{}, other), do: {:error, {:unsupported_anchor, other}}
+
   # 头音符：身份 = 自身歌词/显式音素 + 声库事实。
   defp base(note, %{continuation?: false}, _notes, voicebank_digest) do
     %{
@@ -125,35 +156,45 @@ defmodule Neume.Identity do
   对轨道上所有 probe 期 channel 的在册 patch 做身份裁决。
 
   `channels` 是会话的 channel 注册表（`%{name => module}`），只裁决声明
-  `resolve_stage() == :probe` 的 channel。返回 `[]` 表示全部通过。
+  `resolve_stage() == :probe` 的 channel。每个 patch 经其 channel 的
+  `Neume.Pin.Semantics` 分派：`describe/1` 按 payload 得出 descriptor，
+  `base/4` 推导底料，再 `Tamale.Patch.resolve/2` 裁决。整轨 legacy 底料
+  只推导一次，经 `Context.legacy_bases` 共享给所有 patch；channel 未完整
+  实现语义回调时聚合为 `{:missing_pin_semantics, module}` 冲突 entry
+  （入口校验，不抛 `UndefinedFunctionError`）。返回 `[]` 表示全部通过。
   """
   @spec adjudicate(Track.t(), %{atom() => module()}, String.t() | nil) :: [conflict_entry()]
   def adjudicate(%Track{} = track, channels, voicebank_digest)
       when is_map(channels) do
-    bases = base_by_note(track, voicebank_digest)
-
     probe_channels =
       for {name, module} <- channels,
           function_exported?(module, :resolve_stage, 0) and module.resolve_stage() == :probe,
           into: MapSet.new(),
           do: name
 
+    bases = base_by_note(track, voicebank_digest)
+
     track.patches
     |> Enum.filter(&MapSet.member?(probe_channels, &1.channel))
-    |> Enum.map(&adjudicate_one(&1, bases))
+    |> Enum.map(
+      &adjudicate_one(&1, track, Map.fetch!(channels, &1.channel), voicebank_digest, bases)
+    )
     |> Enum.reject(&is_nil/1)
   end
 
-  defp adjudicate_one(%Patch{} = patch, bases) do
-    case patch.anchor do
-      %Tamale.Anchor.Ordinal{refs: [note_id | _]} ->
-        case Map.fetch(bases, note_id) do
-          {:ok, fresh} -> resolve_entry(patch, fresh)
-          :error -> entry(patch, :identity_unavailable)
-        end
+  defp adjudicate_one(%Patch{} = patch, %Track{} = track, semantics, voicebank_digest, bases) do
+    if Semantics.implemented?(semantics) do
+      context = Context.new(track, patch.track_id, voicebank_digest, legacy_bases: bases)
 
-      other ->
-        entry(patch, {:unsupported_anchor, other})
+      with {:ok, descriptor} <- semantics.describe(patch.patch.payload),
+           {:ok, fresh} <- semantics.base(context, patch.anchor, descriptor, patch.patch.payload) do
+        resolve_entry(patch, fresh)
+      else
+        {:error, {:unknown_note, _note_id}} -> entry(patch, :identity_unavailable)
+        {:error, reason} -> entry(patch, reason)
+      end
+    else
+      entry(patch, {:missing_pin_semantics, semantics})
     end
   end
 
@@ -175,27 +216,4 @@ defmodule Neume.Identity do
       reason: reason
     }
   end
-
-  @doc """
-  re-patch 的可表达性校验：payload 在 probe 物化序列上仍可表达则 `:ok`。
-
-  - `:duration`——所有 pin 下标在新序列界内；
-  - `:pitch`——点是绝对 tick，不索引音素，恒可表达（span 合法性在
-    消费边界复核）。
-  """
-  @spec expressible?(atom(), term(), [[String.t()]]) :: :ok | {:error, term()}
-  def expressible?(:duration, durations, fresh) when is_list(durations) do
-    Enum.reduce_while(durations, :ok, fn
-      [index, _ticks], :ok when is_integer(index) and index >= 0 ->
-        if index < length(fresh),
-          do: {:cont, :ok},
-          else: {:halt, {:error, {:phoneme_index_out_of_range, index, length(fresh)}}}
-
-      other, :ok ->
-        {:halt, {:error, {:invalid_duration_payload, other}}}
-    end)
-  end
-
-  def expressible?(:pitch, _points, _fresh), do: :ok
-  def expressible?(channel, _payload, _fresh), do: {:error, {:unknown_pin_channel, channel}}
 end

@@ -39,7 +39,7 @@ DiffSinger worker / ONNX / artifacts
 - Multi-track scheduling, mixing, buses, and export aggregation are implemented as Neume-owned Oi graphs/steps.
 - Phoneme types, frame grids, G2P, vowel anchoring, and model probes belong to the Neume DiffSinger adapter/worker.
 - Coconut History remains the only entry for persistent score, patch, track-extras, and undoable edits.
-- 现有 legacy pitch/duration pin 底料是 `pin_input_v1` 输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态 check 不过问。后续按 `Pin<S>` / `Pin<Ph>` / `Pin<Co<S,Ph>>` 解耦的提案见 `apps/neume/docs/design-2026-09-pin-carriers.md`，未拍板前不得直接重解释旧 patch。
+- 现有 legacy pitch/duration pin 底料是 `pin_input_v1` 输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态 check 不过问。`Pin<S>` / `Pin<Ph>` / `Pin<Co<S,Ph>>` 解耦设计见 `apps/neume/docs/design-2026-09-pin-carriers.md`：批次 A 协议骨架（`Neume.Pin.Descriptor/Context/Semantics/Schema`）已实施，底料推导与裁决按 channel semantics 分派、行为不变；其余批次未拍板前不得直接重解释旧 patch。
 - melisma 必须由显式 syllable group 表达，不在 worker 中启发式猜测。
 - Model paths, generated models, caches, and WAV files are not committed.
 
@@ -238,6 +238,16 @@ Neume.Editor
   界内等）则保留重签，否则降级报告 `:degraded`（旧 patch 原样保留）；
   整批经 coconut `Command.repatch_patches` 落**一条历史边**（undo 一次
   全还原）。
+- pin carrier 协议骨架（`design-2026-09-pin-carriers` 批次 A）：
+  `Neume.Pin.Descriptor` / `Context` / `Semantics` / `Schema` 落地；
+  `PitchPin` / `DurationPin` 按 payload 分派 descriptor（legacy 点列、
+  `pitch_curve_v1` 与旧 duration list 均仍签 `pin_input_v1`），
+  `Identity.adjudicate/3` 与 re-patch 计划改为按 channel semantics
+  分派（整轨底料经 `Context.legacy_bases` 预计算共享；probe 需求按
+  `requires_probe?/2` 判定，纯 pitch 批不调 `pipeline.phonemes/3`；
+  语义入口校验不完整实现为 `{:missing_pin_semantics, _}` tagged
+  error）；digest、工程文件与 facade 行为不变。批次 B/C/D 待该文档
+  §11 拍板后施工。
 - 调试导出（`Editor.export_debug/2` → `Neume.DebugExport`）：Track 维度 +
   可选 `span` tick 裁剪（多轨适配预留），打包 `neume-debug/1` schema 的
   debug.json——notes（秒轴）、帧级 pitch（有效/可选 `raw?: true` 无干预
@@ -274,7 +284,7 @@ Neume.Editor
 ### 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- `apps/neume` 核心测试：`66 passed`；`apps/neume_opu_ds` 适配器测试：`38 passed, 8 excluded`（excluded 为真声库集成测试）。
+- `apps/neume` 核心测试：`85 passed`；`apps/neume_opu_ds` 适配器测试：`38 passed, 8 excluded`（excluded 为真声库集成测试）。
 - `apps/neumu` 的 `mix test`：`69 passed, 1 excluded`（工程开闭、渲染成功/失败/崩溃、
   渲染期间查询、source_pin 保留、制品存取、事件订阅幂等与退订、重复
   job_id 拒绝、未知 job tagged error、nil project_id 拒绝、关闭工程终止

@@ -1,7 +1,10 @@
 # 设计提案：pin carrier 与 runtime 解耦（2026-09-07）
 
-> 状态：提案，尚未实施。本文不改变现有 `pin_input_v1`、工程文件或
-> facade 行为；先冻结边界，再分别迁移 pitch、phonology 和 duration。
+> 状态：批次 A 已实施（2026-09-07）——`Neume.Pin.Descriptor` /
+> `Neume.Pin.Context` / `Neume.Pin.Semantics` / `Neume.Pin.Schema`
+> 协议骨架落地，`Identity.adjudicate/3` 与 `Editor.repatch/2` 按
+> channel semantics 分派；digest、工程文件与 facade 行为不变。
+> 批次 B 待拍板 §11.1，批次 C/D 待 §11.2/11.3。
 
 ## 1. 问题
 
@@ -73,14 +76,15 @@ end
 
 defmodule Neume.Pin.Context do
   @enforce_keys [:track, :track_id]
-  defstruct [:track, :track_id, :voicebank_identity, phonology: nil, legacy_probe: nil]
+  defstruct [:track, :track_id, :voicebank_identity, phonology: nil, legacy_probe: nil, legacy_bases: nil]
 
   @type t :: %__MODULE__{
           track: Coconut.Edit.Track.t(),
           track_id: Coconut.Edit.Track.track_id(),
           voicebank_identity: map() | nil,
           phonology: term() | nil,
-          legacy_probe: term() | nil
+          legacy_probe: term() | nil,
+          legacy_bases: %{term() => map()} | nil
         }
 end
 
@@ -101,8 +105,23 @@ defmodule Neume.Pin.Semantics do
               term()
             ) ::
               :ok | {:error, term()}
+  @callback requires_probe?(Neume.Pin.Descriptor.t(), term()) :: boolean()
+  @optional_callbacks requires_probe?: 2
 end
 ```
+
+实施补充（评审后修订）：
+
+- `Context.legacy_bases` 是批量裁决的整轨底料预计算槽位：`adjudicate/3`
+  与 re-patch 计划只推导一次 `Identity.base_by_note/2`，逐 patch 复用；
+  `nil` 时 legacy `base/4` 回退现场推导（单点调用路径）。
+- `requires_probe?/2` 按 descriptor/payload schema 判定可表达性校验是否
+  需要 probe 物化序列；re-patch 只在批次含此类 payload 时调用
+  `pipeline.phonemes/3`，纯 `Pin<S>` 批次不强迫引擎实现音素展开。实现方
+  未提供该回调时保守按 `true` 处理。
+- 裁决与 re-patch 在调用语义回调前经 `Semantics.implemented?/1` 做入口
+  校验；不完整实现的 channel 聚合为 `{:missing_pin_semantics, module}`
+  （冲突 entry / 降级原因），不抛 `UndefinedFunctionError`。
 
 `describe/1` 必须按 payload 分派，而不能用模块级 `carrier/0`：同一个
 `:pitch` channel 在迁移期会同时承载 legacy list/`pitch_curve_v1` 与
@@ -226,12 +245,16 @@ Neume 负责：
 
 ## 9. 迁移批次
 
-### 批次 A：协议存在但行为不变
+### 批次 A：协议存在但行为不变（已实施，2026-09-07）
 
-- 增加 `Neume.Pin.Context`、`Neume.Pin.Semantics` 和 payload schema helper。
+- 增加 `Neume.Pin.Context`、`Neume.Pin.Semantics` 和 payload schema helper
+  （`Neume.Pin.Schema`）。✅
 - 现有 `PitchPin` / `DurationPin` 按 payload 返回 descriptor，但继续使用
-  legacy base。
-- `Identity` 改为按 channel semantics 分派，黄金行为不变。
+  legacy base。✅
+- `Identity` 改为按 channel semantics 分派，黄金行为不变。✅
+- 评审修订：整轨底料预计算（`Context.legacy_bases`）、probe 需求按
+  descriptor 判定（`requires_probe?/2`）、语义回调入口校验
+  （`Semantics.implemented?/1` → `{:missing_pin_semantics, _}`）。✅
 
 ### 批次 B：pitch v2
 
