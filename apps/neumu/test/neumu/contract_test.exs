@@ -96,6 +96,8 @@ defmodule Neumu.ContractTest do
     assert job_a.source_pin == 4 and job_b.source_pin == 6
 
     # —— 改词 → 冲突占一等位置 → 一键 repatch ——
+    # 批次 B 起 pitch 点列落 score_pitch_v2（底料只钉 track/note/坐标系），
+    # 改词不再炸 pitch pin；duration pin 仍签 pin_input_v1 输入事实，照常冲突。
     assert {:ok, client} =
              RefClient.dispatch(client, fn ->
                Neumu.edit_note(id, "lead", "n1", %{lyric: "lo"})
@@ -105,13 +107,10 @@ defmodule Neumu.ContractTest do
 
     assert {:ok, %{pin: 7, status: :failed, entries: entries}} = Neumu.check(id)
 
-    assert [
-             %{kind: :conflict, channel: :duration, patch_id: duration_patch},
-             %{kind: :conflict, channel: :pitch, patch_id: pitch_patch}
-           ] = Enum.sort_by(entries, & &1.channel)
+    assert [%{kind: :conflict, channel: :duration, patch_id: duration_patch}] = entries
 
-    assert {:ok, 8, results} = Neumu.repatch(id, "lead", [duration_patch, pitch_patch])
-    assert Enum.all?(results, &(&1.status == :repatched))
+    assert {:ok, 8, [%{patch_id: ^duration_patch, status: :repatched}]} =
+             Neumu.repatch(id, "lead", [duration_patch])
 
     {:ok, client} = RefClient.sync(client)
     assert client.pin == 8

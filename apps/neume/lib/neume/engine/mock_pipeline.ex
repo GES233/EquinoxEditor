@@ -53,6 +53,13 @@ defmodule Neume.Engine.MockPipeline do
     }
   end
 
+  @doc "默认 lowering：legacy 透传，`note_tick` v2 平移为绝对 tick。"
+  @impl true
+  @spec lower_pins(state(), Snapshot.t(), [Neume.Pin.Resolved.t()], term()) ::
+          {:ok, map()} | {:error, term()}
+  def lower_pins(_state, %Snapshot{} = snapshot, resolved, track_id),
+    do: Neume.Pin.Lower.lower(resolved, snapshot, track_id)
+
   @impl true
   @spec engine_config(state(), term()) :: map()
   def engine_config(%{compiled: compiled}, track_id) do

@@ -329,13 +329,31 @@ defmodule Neume.DebugExport do
   defp curves_json(patches, view, span) do
     for %{channel: :pitch} = patch <- patches,
         span_overlaps?(resolved_span(patch.anchor, view), span),
-        {:ok, points} <- [Neume.PitchCurve.display_points(patch.patch.payload)] do
+        {:ok, points} <- [display_points(patch, view)] do
       curve_points =
         Enum.map(points, fn [tick, midi] ->
           %{tick: tick, value: Float.round(midi * 1.0, 3)}
         end)
 
       %{id: patch.id, kind: "pitch_midi", points: curve_points}
+    end
+  end
+
+  # v2 envelope（`note_tick`）按锚定音符当前起点投影回绝对 tick；legacy
+  # payload 已是绝对坐标，走 `PitchCurve.display_points/1`。
+  defp display_points(patch, view) do
+    case patch.patch.payload do
+      %{schema: "score_pitch_v2", values: values} ->
+        case resolved_span(patch.anchor, view) do
+          [start_tick, _end_tick] ->
+            {:ok, Enum.map(values, fn [offset, midi] -> [start_tick + offset, midi] end)}
+
+          nil ->
+            {:error, :unknown_anchor_note}
+        end
+
+      payload ->
+        Neume.PitchCurve.display_points(payload)
     end
   end
 

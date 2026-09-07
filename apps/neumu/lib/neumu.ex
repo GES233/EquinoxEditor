@@ -441,27 +441,29 @@ defmodule Neumu do
   # --- pin 干预（两阶段挂载） ---
 
   @doc """
-  pin 挂载第一阶段：物化音符的身份底料（输入事实签名：歌词/显式音素/
-  melisma 归属/声库内容摘要，见 `Neume.Identity`）。
+  pin 挂载第一阶段：钉住当前 History cursor 并校验音符存活。
 
   纯派生、不跑 G2P、不调 worker，即时返回；在 ProjectServer 之外的调用
   方进程执行，不占用 server。返回 `{:ok, probe}`；`probe` 是 plain
-  data：`%{track_id, note_id, pin, base}`，原样传给三个 mount 手势。
-  probe 之后工程被编辑，mount 返回 `{:error, {:stale_pin, _}}`（状态
-  不变），UI 重新 probe 后重试。
+  data：`%{track_id, note_id, pin}`，原样传给三个 mount 手势。身份底料
+  不再随令牌下发——mount 由 server 在 stale 校验覆盖的当前状态上经
+  channel 语义现场推导（payload 分派 schema → `base/4`），客户端传回的
+  base 一律拒绝。probe 之后工程被编辑，mount 返回
+  `{:error, {:stale_pin, _}}`（状态不变），UI 重新 probe 后重试。
   """
   @spec probe_pin(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term()) ::
           {:ok, map()} | {:error, term()}
   def probe_pin(project_id, track_id, note_id) do
     with {:ok, multi_track, pin} <- call_project(project_id, :probe_context),
-         {:ok, base} <- Neume.MultiTrack.probe_pin(multi_track, track_id, note_id) do
-      {:ok, %{track_id: track_id, note_id: note_id, pin: pin, base: base}}
+         :ok <- Neume.MultiTrack.probe_pin(multi_track, track_id, note_id) do
+      {:ok, %{track_id: track_id, note_id: note_id, pin: pin}}
     end
   end
 
   @doc """
   在音符上挂载绝对 tick→MIDI 的稀疏 pitch 控制点（`[[tick, midi]]`，
-  plain data）。`probe` 为 `probe_pin/3` 的原样返回。
+  plain data）；落库为 `score_pitch_v2` envelope（`note_tick` 相对坐标，
+  拖动跟随）。`probe` 为 `probe_pin/3` 的原样返回。
   """
   @spec mount_pitch(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term(), term(), map()) ::
           {:ok, history_pin()} | {:error, term()}

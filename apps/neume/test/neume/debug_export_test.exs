@@ -103,7 +103,11 @@ defmodule Neume.DebugExportTest do
                "channel" => "pitch",
                "anchor" => %{"kind" => "ordinal", "refs" => ["n1"], "adjacent" => false},
                "span_ticks" => [0, 480],
-               "payload" => [[0, 60.0], [240, 61.0], [479, 59.5]]
+               "payload" => %{
+                 "schema" => "score_pitch_v2",
+                 "coordinates" => "note_tick",
+                 "values" => [[0, 60.0], [240, 61.0], [479, 59.5]]
+               }
              }
            ] = data["meta"]["patches"]
 

@@ -80,29 +80,31 @@ defmodule Neumu.ScoreGesturesTest do
     refute_received {:project_changed, _, _}
   end
 
-  test "trim 拖出缝隙后 melisma 续音断组，probe 底料自动改派生", %{project_id: id} do
+  test "trim 拖出缝隙后 melisma 续音断组，身份底料改派生（duration pin 冲突可见）", %{
+    project_id: id
+  } do
     assert {:ok, 3} = insert_note(id, "lead", "n1", :head, {0, 480}, "la")
     assert {:ok, 4} = Neumu.split_note(id, "lead", "n1", 240, "n1b")
 
-    # 贴接：n1b 是 n1 的续音，底料 = 头的输入事实（continuation 形）。
-    assert {:ok, %{base: %{group: group}}} = Neumu.probe_pin(id, "lead", "n1b")
+    # 贴接：n1b 是 n1 的续音，底料 = 头的输入事实（continuation 身份）。
+    # duration pin 签的是这份输入事实，组关系变化在 check 冲突界面可见。
+    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1b")
+    assert {:ok, 5} = Neumu.mount_phoneme_duration(id, "lead", "n1b", [[0, 96]], probe)
 
-    assert %{
-             kind: "continuation",
-             head: "n1",
-             head_lyric: "la",
-             head_phonemes: [["zh", "l"], ["zh", "a"]]
-           } = group
+    # harmony 空轨的 empty_score 与 pin 无关；只看冲突 entry。
+    assert {:ok, %{entries: entries}} = Neumu.check(id)
+    refute Enum.any?(entries, &(&1[:kind] == :conflict))
 
-    # 把 n1 剪短，拖出缝隙 → 旗标失效，n1b 按自身歌词/显式音素当头。
-    assert {:ok, 5} = Neumu.trim_note(id, "lead", "n1", {0, 120})
+    # 把 n1 剪短，拖出缝隙 → 旗标失效，n1b 按自身歌词当头 → 底料失配。
+    assert {:ok, 6} = Neumu.trim_note(id, "lead", "n1", {0, 120})
 
-    assert {:ok, %{base: %{group: %{kind: "head"}, lyric: "la"}}} =
-             Neumu.probe_pin(id, "lead", "n1b")
+    assert {:ok, %{status: :failed, entries: entries}} = Neumu.check(id)
+    assert Enum.any?(entries, &(&1[:kind] == :conflict and &1[:channel] == :duration))
 
-    # 剪回去贴接，组关系恢复。
-    assert {:ok, 6} = Neumu.trim_note(id, "lead", "n1", {0, 240})
-    assert {:ok, %{base: %{group: %{kind: "continuation"}}}} = Neumu.probe_pin(id, "lead", "n1b")
+    # 剪回去贴接，组关系恢复：底料回到签名时的 continuation 事实，冲突消失。
+    assert {:ok, 7} = Neumu.trim_note(id, "lead", "n1", {0, 240})
+    assert {:ok, %{entries: entries}} = Neumu.check(id)
+    refute Enum.any?(entries, &(&1[:kind] == :conflict))
   end
 
   test "merge_notes 合并相邻音符：into 留内容原样，可 undo/redo", %{project_id: id} do

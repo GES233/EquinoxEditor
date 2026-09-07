@@ -4,7 +4,11 @@
 > `Neume.Pin.Context` / `Neume.Pin.Semantics` / `Neume.Pin.Schema`
 > 协议骨架落地，`Identity.adjudicate/3` 与 `Editor.repatch/2` 按
 > channel semantics 分派；digest、工程文件与 facade 行为不变。
-> 批次 B 待拍板 §11.1，批次 C/D 待 §11.2/11.3。
+> 批次 B 已实施（2026-09-07）：§11.1 拍板 `note_tick`；新增
+> `Neume.Pin.Resolved` / `Neume.Pin.Lower` 与 `Neume.Runtime.lower_pins/4`
+> lowering 边界；`score_pitch_v2` envelope + `score_region_v1` 底料落地，
+> 点列 mount 默认产 v2，legacy payload 行为不变；facade probe 令牌不再
+> 携带底料。批次 C/D 待 §11.2/11.3。
 
 ## 1. 问题
 
@@ -138,20 +142,46 @@ payload 继续使用 `pin_input_v1` base，v2 使用 `score_region_v1` base。
   由具体 payload schema 决定。
 
 runtime 边界建议补一个 lowering callback，而不是让 `Editor` 理解各运行时
-端口：
+端口（批次 B 已实施，`Neume.Runtime.lower_pins/4` 为 optional callback）：
 
 ```elixir
 @callback lower_pins(state(), Snapshot.t(), [Neume.Pin.Resolved.t()], term()) ::
             {:ok, term()} | {:error, term()}
 ```
 
-`Resolved` 至少携带 channel、descriptor、anchor 和已裁决 payload，不携带
-Tamale digest 或 History 状态。具体字段等第二个 runtime 的实际差异出现后
-再冻结。
+`Resolved` 携带 channel、descriptor、anchor 和已挂载 payload，不携带
+Tamale digest 或 History 状态。字段集在第二个真实 runtime 出现前不冻结
+（mock 是测试夹具，不算第二个真实 runtime）。
 
-当前 `checked_pins/1` 返回 `%{pitch: ..., duration: ...}` 可继续作为兼容入口；
-等第二个 runtime 接入后，再用 `Resolved` 列表替换，避免为尚未出现的差异
-提前设计过宽的 DTO。
+实施要点（批次 B 评审后拍板）：
+
+- `Resolved` 由 Neume 从存活 patch 直接构造（`Editor.resolved_pins`），
+  不经 Oi assemble 数据反推——`checked_pins/1` 读 runtime 图结构的旧
+  耦合点已拆除，仅作兼容回退保留。
+- fallback 严格限制：runtime 未实现 `lower_pins/4` 时，纯 legacy
+  descriptor 批次才允许走 `checked_pins/1`；批次中出现 v2 schema 直接
+  在统一冲突界面返回 `{:unsupported_pin_schema, schema}`（kind `:pin`
+  entry），绝不把 v2 payload 塞进 legacy 路径猜着解释。
+- 不设 `capabilities/1`：能力协商以后可用于 UI 预检，当前由
+  `lower_pins/4` 的 tagged error 兜底，且不进入 mount 路径。
+- 批次 B 评审修订：`Editor.resolved_pins/1` 保持 `track.patches` 原序
+  （lowering 同 note/channel 后写覆盖，later-write-wins 与 Coconut
+  assemble 一致）；显式 `:base` 兼容入口校验 `base.schema` 与 payload
+  分派出的 `descriptor.base_schema` 一致，错配即
+  `{:pin_base_schema_mismatch, _, _}`（挂载期拒绝，不留永久冲突）；
+  `checked_pins/1` 降为 optional callback，两个 lowering 入口都缺失的
+  runtime 得 `{:missing_pin_lowering, module}` tagged error；facade
+  probe 令牌精确三键（`%{track_id, note_id, pin}`，携带 base 的旧令牌
+  一律 `{:invalid_pin_probe, _, _, _}`），`probe_pin` 只做存活校验、
+  不再物化底料。
+- mock 与 `neume_opu_ds` 都委托默认 lowering `Neume.Pin.Lower`：legacy
+  payload 透传、`note_tick` 按 snapshot 平移为绝对 tick；双 runtime 契约
+  测试（`neume_opu_ds` 的 `PinLoweringTest`）钉住同一 Resolved 批次两边
+  产出一致、未知 schema 两边同样 tagged error。
+
+当前 `checked_pins/1` 返回 `%{pitch: ..., duration: ...}` 继续作为兼容
+入口保留；等第二个真实 runtime 接入后，再评估是否以 `Resolved` 列表
+取代它。
 
 ## 5. 版本化 envelope
 
@@ -161,8 +191,8 @@ Tamale digest 或 History 状态。具体字段等第二个 runtime 的实际差
 ```elixir
 %{
   schema: "score_pitch_v2",
-  coordinates: "project_tick",
-  values: [[tick, midi], ...]
+  coordinates: "note_tick",
+  values: [[offset_tick, midi], ...]
 }
 
 %{
@@ -173,32 +203,48 @@ Tamale digest 或 History 状态。具体字段等第二个 runtime 的实际差
 
 - 旧 pitch list / `pitch_curve_v1` 与旧 duration list 继续签
   `pin_input_v1`，读档和渲染行为不变。
-- 新 mount 默认产生 v2；旧 payload 只在显式兼容路径或读档时出现。
-- repatch 不跨 schema 偷偷升级。升级是独立、可报告、可撤销的 History 手势。
+- 新 mount 默认产生 v2（批次 B 起 pitch 点列如此）；旧 payload 只在显式
+  兼容路径或读档时出现。
+- repatch 不跨 schema 偷偷升级。升级如将来提供，必须是独立、可报告、
+  可撤销的 History 手势（批次 B 不实现升级手势）。
 
 ## 6. `Pin<S>`：pitch
 
-当前绝对 pitch 点已经是 `project_tick -> MIDI`，最容易先迁移。其 base 至少
-需要：
+当前绝对 pitch 点已经是 `project_tick -> MIDI`，最容易先迁移。批次 B
+拍板 transport 为 **`note_tick`**（§11.1），payload 与 base 坐标系统一
+为音符内相对 tick。已实施的 v2 base：
 
 ```elixir
 %{
   schema: "score_region_v1",
-  coordinates: "project_tick",
+  coordinates: "note_tick",
   track: track_id,
-  anchor: canonical_anchor_region
+  note: note_id
 }
 ```
 
-但在施工前必须拍板 transport：
+拍板依据（保留原权衡记录）：
 
 1. **`project_tick`**：拖动音符只移动 anchor，payload 保持绝对位置；移出
    新音符 span 后产生 expressibility conflict。
 2. **`note_tick`**：payload 保存相对音符起点的位置，拖动时自然随音符移动；
-   runtime lowering 时转成绝对 tick。
+   runtime lowering 时转成绝对 tick（`Neume.Pin.Lower`，消费边界形状不变，
+   worker 协议不动）。
 
-推荐新 schema 采用 `note_tick`。它更符合“音符上的 pitch pin”，也能让 anchor
-transport 与 payload 语义一致。现有绝对点作为 legacy 保持原行为。
+`note_tick` 更符合“音符上的 pitch pin”，也让 anchor transport 与 payload
+语义一致；base 不含绝对起点是“拖动存活”的前提。现有绝对点作为 legacy
+保持原行为。survival matrix（批次 B 已钉测试）：
+
+| 手势 | v2 结果 |
+|---|---|
+| 改词 / 换声库 / 改音高 / 邻居编辑 | 直接存活（底料不含输入事实与声库） |
+| 拖动 | 直接存活并跟随（base 不含绝对起点） |
+| trim / split | 界内点直接存活；越界点在消费边界 loud 报错（与 legacy 同一规则），repatch 经 `expressible?/4` 判越界 → 降级 |
+| merge | into 上 pin 存活；被吸收音符的 pin 因 note origin 失配冲突，repatch = 显式接受新 origin 重签 |
+| 跨轨移动 | facade 手势本就不迁移 pin；若底层跨轨移动 patch，base 的 track 分量失配 → 冲突，repatch 显式重签 |
+
+Bezier envelope（`pitch_curve_v1`）本批保持 legacy：控制点仍为绝对
+tick，签 `pin_input_v1`；相对坐标曲线留待后续批次拍板。
 
 ## 7. `Pin<Ph>`：稳定 phonology
 
@@ -256,11 +302,20 @@ Neume 负责：
   descriptor 判定（`requires_probe?/2`）、语义回调入口校验
   （`Semantics.implemented?/1` → `{:missing_pin_semantics, _}`）。✅
 
-### 批次 B：pitch v2
+### 批次 B：pitch v2（已实施，2026-09-07）
 
-- 拍板 `note_tick` transport。
-- 新 mount 产生 `score_pitch_v2`；旧 payload 继续可读可渲染。
-- 添加拖动、trim、split、merge、跨轨移动的 survival matrix 测试。
+- 拍板 `note_tick` transport（§11.1）。✅
+- lowering 边界（B0）：`Neume.Pin.Resolved` + `Neume.Runtime.lower_pins/4`
+  optional callback + 严格 fallback（纯 legacy 才回退 `checked_pins/1`）；
+  mock 与 `neume_opu_ds` 委托 `Neume.Pin.Lower`，双 runtime 契约测试
+  钉住一致性与 `{:unsupported_pin_schema, _}`。✅
+- 新 mount 产生 `score_pitch_v2`（点列；Bezier 保持 legacy）；旧 payload
+  继续可读可渲染可 repatch，digest 不跨 schema 升级。✅
+- 挂载底料由 channel 语义现场推导（`Editor.mount_pin` 经 `describe/1` →
+  `base/4`）；facade probe 令牌只携 `track_id`/`note_id`/`pin`，客户端
+  传回的 base 一律拒绝。✅
+- survival matrix 测试：改词/换声库/拖动/trim/split/merge/跨轨（见 §6
+  表格），legacy 行为不变性由 `IdentityPinTest` 与本批矩阵共同钉住。✅
 
 ### 批次 C：phonology ref
 
@@ -285,12 +340,12 @@ Neume 负责：
 
 ## 11. 尚待拍板
 
-1. pitch v2 坐标采用推荐的 `note_tick`，还是继续 `project_tick`？
+1. ~~pitch v2 坐标采用推荐的 `note_tick`，还是继续 `project_tick`？~~
+   已拍板 `note_tick`（2026-09-07，批次 B 实施）。
 2. stable phonology segment ref 的最小生成规则：显式持久化 ID，还是由
    syllable unit 输入事实确定性派生？
 3. voicebank 的 phonology namespace/dictionary digest 是否需要进入
    `Pin<Ph>` / `Pin<Co>` base；若进入，应使用 provider 提供的 phonology
    digest，而不是整个 runtime manifest digest。
 
-这三个问题未定前，可以完成批次 A；批次 B 需要决定 1，批次 C/D 需要决定
-2 和 3。
+批次 A/B 已完成；批次 C/D 需要决定 2 和 3。

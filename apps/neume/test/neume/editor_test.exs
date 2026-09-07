@@ -117,16 +117,17 @@ defmodule Neume.EditorTest do
     assert {:ok, editor} =
              Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
 
-    assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[120, 72]])
+    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
 
-    # mock G2P："la" → [l, a]，"lai" → [l, a, i]——词内音素序列变了，pin 炸。
+    # mock G2P："la" → [l, a]，"lai" → [l, a, i]——输入事实变了，legacy
+    # pin_input_v1 底料的 duration pin 炸。
     assert {:error, {:check_failed, [%{kind: :conflict, stage: :probe}]}} =
              Editor.render(editor)
 
     assert {:ok, editor} = Editor.undo(editor)
     assert {:ok, _editor, artifact} = Editor.render(editor)
-    assert Enum.at(artifact.midi, 12) == 72.0
+    assert Enum.at(artifact.midi, 12) == 60.0
   end
 
   test "analyze 不产出音频，返回确定性音素边界", %{editor: editor} do
@@ -163,7 +164,7 @@ defmodule Neume.EditorTest do
     assert {:ok, editor} =
              Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
 
-    assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[120, 72]])
+    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
     assert {:error, {:check_failed, [%{kind: :conflict, stage: :probe}]}} = Editor.check(editor)
   end

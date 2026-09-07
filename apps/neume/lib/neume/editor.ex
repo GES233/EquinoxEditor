@@ -16,7 +16,7 @@ defmodule Neume.Editor do
   alias Coconut.Util.ID
   alias Neume.Channels.{DurationPin, PitchPin}
   alias Neume.{Identity, PitchCurve, TrackConfig, TrackRuntime}
-  alias Neume.Pin.{Context, Semantics}
+  alias Neume.Pin.{Context, Resolved, Schema, Semantics}
   alias Neume.Engine.{MockPipeline, OrchidError}
   alias Neume.Voicebank.Entry
   alias Neume.Voicebank.Registry, as: VoicebankRegistry
@@ -300,22 +300,45 @@ defmodule Neume.Editor do
   end
 
   @doc """
-  在音符上挂载绝对 tick 到 MIDI 的稀疏 pitch 控制点。
+  在音符上挂载 pitch 控制点（批次 B 起默认产出 `score_pitch_v2`）。
 
-  身份底料（§6.6）：输入事实签名（歌词/显式音素/melisma 归属/声库摘要，
-  见 `Neume.Identity`），纯派生、不跑 G2P；probe 期裁决界面不变。
+  入参 `points` 仍是绝对 tick → MIDI 的稀疏折线（`[[tick, midi], ...]`）；
+  挂载时按当前 span 起点换算为音符内相对 tick（`note_tick` transport，
+  拖动自然跟随），payload 为自描述 envelope
+  `%{schema: "score_pitch_v2", coordinates: "note_tick", values: ...}`。
+  v2 身份底料是 `score_region_v1`（只钉 track/note 与坐标系；改词、换
+  声库、改音高不炸）；旧 `pitch_points_v1` / `pitch_curve_v1` payload
+  继续签 `pin_input_v1` 输入事实底料（见 `Neume.Identity`），可读可渲染。
 
-  选项（两阶段挂载用，见 `probe_base/2`）：
+  选项（两阶段挂载用）：
 
-  - `:base` — 已物化的身份底料；提供时跳过现场物化；
+  - `:base` — 显式签名底料（兼容入口；缺省时经 channel 语义按 payload
+    schema 现场推导）；
   - `:pin` — History cursor 版本钉；与当前 cursor 不符时返回
     `{:error, {:stale_pin, _}}`，不落历史边。
   """
   @spec mount_pitch(t(), term(), [[number()]], keyword()) :: {:ok, t()} | {:error, term()}
   def mount_pitch(%__MODULE__{} = editor, note_id, points, opts \\ []) do
-    with {:ok, points} <- PitchCurve.normalize(points),
-         {:ok, editor, _patch} <- mount_pin(editor, note_id, :pitch, points, opts) do
+    with {:ok, normalized} <- PitchCurve.normalize(points),
+         {:ok, payload} <- pitch_mount_payload(editor, note_id, normalized),
+         {:ok, editor, _patch} <- mount_pin(editor, note_id, :pitch, payload, opts) do
       {:ok, editor}
+    end
+  end
+
+  # 批次 B：点列 mount 默认产出 `score_pitch_v2`（note_tick transport）；
+  # 绝对 tick 输入按当前 span 起点换算为相对 tick。Bezier envelope 本批
+  # 保持 legacy `pitch_curve_v1` 不变。
+  defp pitch_mount_payload(_editor, _note_id, %{format: :pitch_curve_v1} = curve),
+    do: {:ok, curve}
+
+  defp pitch_mount_payload(%__MODULE__{} = editor, note_id, points) when is_list(points) do
+    with {:ok, track} <- current_track(editor),
+         {:ok, {start_tick, _end_tick}} <- fetch_span(track, note_id) do
+      {:ok,
+       Schema.score_pitch_v2_payload(
+         Enum.map(points, fn [tick, midi] -> [tick - start_tick, midi] end)
+       )}
     end
   end
 
@@ -361,11 +384,12 @@ defmodule Neume.Editor do
   end
 
   @doc """
-  物化 `note_id` 的 pin 身份底料（§6.6 输入事实签名，见 `Neume.Identity`）。
+  物化 `note_id` 的 legacy 输入事实底料（§6.6，见 `Neume.Identity`）。
 
   纯派生：只读当前会话的乐谱事实与声库摘要，不跑 G2P、不调 worker。
-  两阶段挂载（先取底料、再携 `pin:` 校验 mount）的调用方仍可把它当
-  慢路径对待；本函数只读，不改会话。
+  只读，不改会话。挂载路径的底料自批次 B 起由 channel 语义按 payload
+  schema 现场推导（`mount_pin` 的 `base/4` 分派），本函数只作只读
+  probe/校验入口（legacy 底料的显式签名仍可经 `opts[:base]` 传入）。
   """
   @spec probe_base(t(), term()) :: {:ok, Identity.input_base()} | {:error, term()}
   def probe_base(%__MODULE__{} = editor, note_id) do
@@ -443,7 +467,7 @@ defmodule Neume.Editor do
   """
   @spec export_debug(t(), Path.t(), keyword()) :: {:ok, t(), Path.t()} | {:error, term()}
   def export_debug(%__MODULE__{} = editor, path, opts \\ []) do
-    with {:ok, editor, request, analysis, _checked} <- checked_probe(editor),
+    with {:ok, editor, request, analysis, _checked, _pins} <- checked_probe(editor),
          {:ok, raw} <- maybe_raw_probe(editor, request, Keyword.get(opts, :raw?, false)),
          {:ok, data} <-
            Neume.DebugExport.build(
@@ -564,13 +588,13 @@ defmodule Neume.Editor do
   """
   @spec render(t()) :: {:ok, t(), Neume.RenderArtifact.t()} | {:error, term()}
   def render(%__MODULE__{} = editor) do
-    with {:ok, editor, request, _analysis, checked_phrases} <- checked_probe(editor),
-         {:ok, artifact} <- render_checked(editor, request, checked_phrases) do
+    with {:ok, editor, request, _analysis, checked_phrases, pins} <- checked_probe(editor),
+         {:ok, artifact} <- render_checked(editor, request, checked_phrases, pins) do
       {:ok, editor, artifact}
     end
   end
 
-  defp render_checked(editor, request, checked) do
+  defp render_checked(editor, request, checked, pins) do
     if function_exported?(editor.pipeline, :render_checked, 5) do
       editor.pipeline.render_checked(
         editor.pipeline_state,
@@ -583,7 +607,7 @@ defmodule Neume.Editor do
       editor.pipeline.render(
         editor.pipeline_state,
         request.snapshot,
-        checked_pins(editor),
+        pins,
         request.globals,
         editor.track_id
       )
@@ -596,7 +620,7 @@ defmodule Neume.Editor do
   """
   @spec analyze(t()) :: {:ok, t(), Neume.Analysis.t()} | {:error, term()}
   def analyze(%__MODULE__{} = editor) do
-    with {:ok, editor, _request, analysis, _checked} <- checked_probe(editor) do
+    with {:ok, editor, _request, analysis, _checked, _pins} <- checked_probe(editor) do
       {:ok, editor, analysis}
     end
   end
@@ -611,7 +635,7 @@ defmodule Neume.Editor do
   """
   @spec check(t()) :: {:ok, t(), map()} | {:error, {:check_failed, [term()]}}
   def check(%__MODULE__{} = editor) do
-    with {:ok, editor, _request, analysis, _checked} <- checked_probe(editor) do
+    with {:ok, editor, _request, analysis, _checked, _pins} <- checked_probe(editor) do
       {:ok, editor, %{analysis: analysis}}
     end
   end
@@ -630,18 +654,19 @@ defmodule Neume.Editor do
   defp probe_and_adjudicate(%__MODULE__{} = editor) do
     %{request: request} = editor.session.last_round
 
-    with {:ok, phrase_results, model_errors} <-
+    with {:ok, pins} <- lowered_pins(editor, request),
+         {:ok, phrase_results, model_errors} <-
            editor.pipeline.analyze_phrases(
              editor.pipeline_state,
              request.snapshot,
-             checked_pins(editor),
+             pins,
              request.globals,
              editor.track_id
            ),
          {:ok, analysis} <- merge_phrase_results(phrase_results, model_errors),
          {:ok, identity_errors} <- adjudicate_identity_errors(editor, analysis),
          [] <- model_errors ++ identity_errors do
-      {:ok, editor, request, analysis, phrase_results}
+      {:ok, editor, request, analysis, phrase_results, pins}
     else
       [_ | _] = entries ->
         {:error, {:check_failed, entries}}
@@ -692,10 +717,14 @@ defmodule Neume.Editor do
     |> Map.put(:span, {phrase.start_tick, phrase.end_tick})
   end
 
-  # 挂载共用路径：显式 :base 签名 → 一条历史边。`opts[:base]` 缺省时现场
-  # 纯派生物化底料；`opts[:pin]` 透传 History 的 stale-write 校验。
+  # 挂载共用路径：底料经 channel 语义现场推导（`describe/1` 按 payload
+  # 分派 schema → `base/4` 推导底料），显式 `:base` 仅作兼容入口；
+  # `opts[:pin]` 透传 History 的 stale-write 校验。
   defp mount_pin(%__MODULE__{} = editor, note_id, channel, payload, opts) do
-    with {:ok, base} <- pin_base(editor, note_id, Keyword.get(opts, :base)),
+    with {:ok, semantics} <- fetch_semantics(editor.session.channels, channel),
+         {:ok, descriptor} <- semantics.describe(payload),
+         {:ok, base} <-
+           mount_base(editor, note_id, semantics, descriptor, payload, Keyword.get(opts, :base)),
          {:ok, session, patch} <-
            Coconut.mount(editor.session, editor.track_id, note_id, channel, payload,
              base: base,
@@ -705,8 +734,27 @@ defmodule Neume.Editor do
     end
   end
 
-  defp pin_base(_editor, _note_id, base) when not is_nil(base), do: {:ok, base}
-  defp pin_base(editor, note_id, nil), do: probe_base(editor, note_id)
+  # 显式 :base 是兼容入口：schema 必须与 payload 分派出的 descriptor
+  # 一致（否则签错底座——如给 score_pitch_v2 签 pin_input_v1——挂载即
+  # 永久 :base_changed）。
+  defp mount_base(_editor, _note_id, _semantics, descriptor, _payload, base)
+       when not is_nil(base) do
+    case base do
+      %{schema: schema} when schema == descriptor.base_schema ->
+        {:ok, base}
+
+      _mismatch ->
+        {:error, {:pin_base_schema_mismatch, descriptor.base_schema, base}}
+    end
+  end
+
+  defp mount_base(%__MODULE__{} = editor, note_id, semantics, descriptor, payload, nil) do
+    with {:ok, track} <- current_track(editor) do
+      context = Context.new(track, editor.track_id, voicebank_digest(editor))
+      anchor = %Tamale.Anchor.Ordinal{refs: [note_id], at_version: track.space.version}
+      semantics.base(context, anchor, descriptor, payload)
+    end
+  end
 
   # channel 入口校验：未注册 → 未知 channel；未完整实现 pin 语义回调 →
   # tagged error，不抛 UndefinedFunctionError。
@@ -811,7 +859,97 @@ defmodule Neume.Editor do
   defp entry_patch_id(id) when is_binary(id), do: {:ok, id}
   defp entry_patch_id(_other), do: :error
 
+  # pins 归口（`design-2026-09-pin-carriers` §4 lowering 边界）：Neume 用
+  # 裁决侧事实（存活 patch + channel semantics 的 descriptor）直接构造
+  # engine-independent ResolvedPin，不经 Oi assemble 数据反推；runtime 经
+  # `lower_pins/4` 降为执行输入。runtime 未实现 `lower_pins/4` 时只允许纯
+  # legacy 批次回退 `checked_pins/1` 兼容入口；批次中出现 v2 schema 直接
+  # `{:unsupported_pin_schema, schema}`——绝不把 v2 payload 塞进 legacy
+  # 路径猜解。
+  defp lowered_pins(%__MODULE__{} = editor, request) do
+    with {:ok, resolved} <- resolved_pins(editor) do
+      cond do
+        function_exported?(editor.pipeline, :lower_pins, 4) ->
+          case editor.pipeline.lower_pins(
+                 editor.pipeline_state,
+                 request.snapshot,
+                 resolved,
+                 editor.track_id
+               ) do
+            {:ok, pins} -> {:ok, pins}
+            {:error, reason} -> {:error, {:check_failed, [pin_entry(editor, reason)]}}
+          end
+
+        legacy_only?(resolved) ->
+          # 纯 legacy 批次的兼容回退；runtime 连 checked_pins/1 也未实现时
+          # 给 tagged error，不抛 UndefinedFunctionError。
+          if function_exported?(editor.pipeline, :checked_pins, 1) do
+            {:ok, checked_pins(editor)}
+          else
+            {:error,
+             {:check_failed, [pin_entry(editor, {:missing_pin_lowering, editor.pipeline})]}}
+          end
+
+        true ->
+          schema = Enum.find_value(resolved, &unsupported_schema/1)
+          {:error, {:check_failed, [pin_entry(editor, {:unsupported_pin_schema, schema})]}}
+      end
+    end
+  end
+
+  defp pin_entry(editor, reason),
+    do: %{kind: :pin, track_id: editor.track_id, reason: reason}
+
+  defp legacy_only?(resolved),
+    do: Enum.all?(resolved, &(&1.descriptor.payload_schema in Schema.legacy_payload_schemas()))
+
+  defp unsupported_schema(%Resolved{descriptor: descriptor}) do
+    if descriptor.payload_schema in Schema.legacy_payload_schemas(),
+      do: nil,
+      else: descriptor.payload_schema
+  end
+
+  # 从存活 patch 构造 ResolvedPin：channel 未注册/未完整实现语义、或
+  # payload 无法 describe 时，在同一会冲突界面聚合（与身份裁决同形状）。
+  # 保持 track.patches 的原序——lowering 同 note/channel 后写覆盖
+  # （later-write-wins，与 Coconut assemble 一致），不许反转。
+  defp resolved_pins(%__MODULE__{} = editor) do
+    with {:ok, track} <- current_track(editor) do
+      track.patches
+      |> Enum.reduce_while({:ok, []}, fn %Patch{} = patch, {:ok, acc} ->
+        with {:ok, semantics} <- fetch_semantics(editor.session.channels, patch.channel),
+             {:ok, descriptor} <- semantics.describe(patch.patch.payload) do
+          resolved = %Resolved{
+            channel: patch.channel,
+            descriptor: descriptor,
+            anchor: patch.anchor,
+            payload: patch.patch.payload
+          }
+
+          {:cont, {:ok, [resolved | acc]}}
+        else
+          {:error, reason} ->
+            entry = %{
+              kind: :conflict,
+              stage: :probe,
+              track_id: patch.track_id,
+              patch: patch,
+              channel: patch.channel,
+              reason: reason
+            }
+
+            {:halt, {:error, {:check_failed, [entry]}}}
+        end
+      end)
+      |> case do
+        {:ok, resolved} -> {:ok, Enum.reverse(resolved)}
+        {:error, _} = error -> error
+      end
+    end
+  end
+
   # 端口路径属于 runtime 图实现；Editor 只传递静态 check 的 assemble 数据。
+  # 仅供未实现 `lower_pins/4` 的 runtime 的纯 legacy 批次回退使用。
   defp checked_pins(%__MODULE__{} = editor) do
     data =
       case Coconut.checked(editor.session) do

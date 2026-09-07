@@ -48,6 +48,12 @@ defmodule NeumeOpuDs.Runtime do
     }
   end
 
+  # 默认 lowering：legacy 透传，`note_tick` v2 按 snapshot 平移为绝对
+  # tick 点列；worker 协议不变（不支持的 schema 由 Lower 给 tagged error）。
+  @impl true
+  def lower_pins(_state, snapshot, resolved, track_id),
+    do: Neume.Pin.Lower.lower(resolved, snapshot, track_id)
+
   @impl true
   defdelegate analyze_phrases(state, snapshot, pins, globals, track_id), to: Pipeline
 

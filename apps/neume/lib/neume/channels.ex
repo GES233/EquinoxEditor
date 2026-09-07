@@ -2,20 +2,29 @@ defmodule Neume.Channels.PitchPin do
   @moduledoc """
   音符级 pitch pin channel（probe 期身份底料，§6.6）。
 
-  payload：兼容旧 `[[tick, midi], ...]` 折线（`pitch_points_v1`），或
-  `pitch_curve_v1` 版本化 Bezier plain map；二者都是绝对 tick + 绝对
-  MIDI，carrier 为 `Pin<S>`（`:score`）。迁移期底座不变：两种 payload
-  继续签 `pin_input_v1` 输入事实底料（歌词/显式音素/melisma 归属/声库
-  摘要，见 `Neume.Identity`），静态 check 不做 digest 裁决；投影与签名
-  归 `Neume.Editor` 的挂载路径。v2（`score_pitch_v2` / `note_tick`
-  transport）见 `design-2026-09-pin-carriers` 批次 B。
+  payload 三形（`describe/1` 按 payload 分派）：
+
+  - 旧 `[[tick, midi], ...]` 折线（`pitch_points_v1`，绝对 tick）与
+    `pitch_curve_v1` Bezier plain map：legacy，继续签 `pin_input_v1`
+    输入事实底料（歌词/显式音素/melisma 归属/声库摘要，见
+    `Neume.Identity`），行为不变；
+  - `score_pitch_v2` envelope（批次 B）：`note_tick` 相对坐标，签
+    `score_region_v1` 底料——只钉 track/note 与坐标系，不含歌词、
+    音素、声库与 runtime digest；改词、换声库、拖动均不炸，merge 锚
+    重定签（origin 变化）与跨轨移动（track 分量变化）会炸，由
+    repatch 显式重签。survival matrix 见设计文档批次 B。
+
+  静态 check 不做 digest 裁决；投影与签名归 `Neume.Editor` 的挂载路径。
   """
 
   @behaviour Coconut.Render.Channel
   @behaviour Neume.Pin.Semantics
 
-  alias Coconut.Edit.Patch
+  alias Coconut.Edit.{Patch, Track}
   alias Neume.Pin.{Context, Descriptor, Schema}
+
+  @score_pitch_v2 Schema.score_pitch_v2()
+  @score_region_v1 Schema.base_score_region_v1()
 
   @impl Coconut.Render.Channel
   def projection(_ws, _patch), do: {:error, :probe_stage_channel}
@@ -32,19 +41,80 @@ defmodule Neume.Channels.PitchPin do
       {:ok,
        %Descriptor{
          payload_schema: schema,
-         base_schema: Schema.base_pin_input_v1(),
+         base_schema: base_schema(schema),
          carrier: :score
        }}
     end
   end
 
+  defp base_schema(@score_pitch_v2), do: @score_region_v1
+  defp base_schema(_legacy), do: Schema.base_pin_input_v1()
+
+  # v2 底料：谱面区域事实（track + 锚定音符 + 坐标系）。不含绝对起点
+  # （拖动跟随）、不含歌词/音素/声库（Pin<S> 与语音学解耦）。
   @impl Neume.Pin.Semantics
+  def base(%Context{} = context, anchor, %Descriptor{base_schema: @score_region_v1}, _payload),
+    do: score_region_base(context, anchor)
+
   def base(%Context{} = context, anchor, _descriptor, _payload),
     do: Neume.Identity.legacy_base(context, anchor)
 
-  # 绝对 tick 点不索引音素，恒可表达（span 合法性在消费边界复核）。
+  defp score_region_base(%Context{} = context, %Tamale.Anchor.Ordinal{refs: [note_id | _]}) do
+    case Track.latest_span(context.track, note_id) do
+      nil ->
+        {:error, {:unknown_note, note_id}}
+
+      _span ->
+        {:ok,
+         %{
+           schema: @score_region_v1,
+           coordinates: Schema.note_tick(),
+           track: context.track_id,
+           note: note_id
+         }}
+    end
+  end
+
+  defp score_region_base(%Context{}, other), do: {:error, {:unsupported_anchor, other}}
+
+  # v2：偏移须落在当前锚定音符 span 内（trim/split 后越界 → repatch 降级；
+  # 消费边界另有 loud 复核）。legacy 绝对 tick 点恒可表达（span 合法性在
+  # 消费边界复核）。
   @impl Neume.Pin.Semantics
+  def expressible?(
+        %Context{} = context,
+        anchor,
+        %Descriptor{payload_schema: @score_pitch_v2},
+        payload
+      ),
+      do: offsets_expressible?(context, anchor, payload)
+
   def expressible?(_context, _anchor, _descriptor, _payload), do: :ok
+
+  defp offsets_expressible?(%Context{} = context, %Tamale.Anchor.Ordinal{refs: [note_id | _]}, %{
+         values: values
+       }) do
+    case Track.latest_span(context.track, note_id) do
+      nil ->
+        {:error, {:unknown_note, note_id}}
+
+      {start_tick, end_tick} ->
+        span = end_tick - start_tick
+
+        Enum.reduce_while(values, :ok, fn
+          [offset, midi], :ok when is_integer(offset) and is_number(midi) ->
+            if offset >= 0 and offset < span,
+              do: {:cont, :ok},
+              else: {:halt, {:error, {:pitch_offset_out_of_range, note_id, offset, span}}}
+
+          other, :ok ->
+            {:halt, {:error, {:invalid_score_pitch_v2_value, other}}}
+        end)
+    end
+  end
+
+  defp offsets_expressible?(%Context{}, other, _payload),
+    do: {:error, {:unsupported_anchor, other}}
 
   # Pin<S>：可表达性不依赖 probe 物化序列。
   @impl Neume.Pin.Semantics

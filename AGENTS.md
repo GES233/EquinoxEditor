@@ -39,7 +39,7 @@ DiffSinger worker / ONNX / artifacts
 - Multi-track scheduling, mixing, buses, and export aggregation are implemented as Neume-owned Oi graphs/steps.
 - Phoneme types, frame grids, G2P, vowel anchoring, and model probes belong to the Neume DiffSinger adapter/worker.
 - Coconut History remains the only entry for persistent score, patch, track-extras, and undoable edits.
-- 现有 legacy pitch/duration pin 底料是 `pin_input_v1` 输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态 check 不过问。`Pin<S>` / `Pin<Ph>` / `Pin<Co<S,Ph>>` 解耦设计见 `apps/neume/docs/design-2026-09-pin-carriers.md`：批次 A 协议骨架（`Neume.Pin.Descriptor/Context/Semantics/Schema`）已实施，底料推导与裁决按 channel semantics 分派、行为不变；其余批次未拍板前不得直接重解释旧 patch。
+- 现有 legacy pitch/duration pin 底料是 `pin_input_v1` 输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态 check 不过问。`Pin<S>` / `Pin<Ph>` / `Pin<Co<S,Ph>>` 解耦设计见 `apps/neume/docs/design-2026-09-pin-carriers.md`：批次 A 协议骨架（`Neume.Pin.Descriptor/Context/Semantics/Schema`）与批次 B（`score_pitch_v2` note_tick envelope + `score_region_v1` 底料、`Neume.Pin.Resolved`/`Neume.Pin.Lower` 与 `Neume.Runtime.lower_pins/4` lowering 边界、facade probe 令牌不再携带底料）已实施；批次 C/D（stable phonology ref、duration v2）未拍板前不得直接重解释旧 patch。
 - melisma 必须由显式 syllable group 表达，不在 worker 中启发式猜测。
 - Model paths, generated models, caches, and WAV files are not committed.
 
@@ -246,8 +246,26 @@ Neume.Editor
   分派（整轨底料经 `Context.legacy_bases` 预计算共享；probe 需求按
   `requires_probe?/2` 判定，纯 pitch 批不调 `pipeline.phonemes/3`；
   语义入口校验不完整实现为 `{:missing_pin_semantics, _}` tagged
-  error）；digest、工程文件与 facade 行为不变。批次 B/C/D 待该文档
-  §11 拍板后施工。
+  error）；digest、工程文件与 facade 行为不变。批次 C/D 待该文档
+  §11.2/11.3 拍板后施工。
+- pin carrier 批次 B（pitch v2，2026-09-07，§11.1 拍板 `note_tick`）：
+  点列 mount 默认产出 `score_pitch_v2` envelope（`%{schema, coordinates:
+  "note_tick", values: [[offset, midi]]}`，挂载时按当前 span 起点从绝对
+  tick 换算），签 `score_region_v1` 底料（只钉 track/note/坐标系——
+  改词、换声库、改音高、拖动均不炸；merge 锚重定签与跨轨移动冲突，
+  repatch = 显式重签）；survival matrix 逐手势钉死（见设计文档 §6），
+  trim/split 越界点在消费边界 loud 报错、repatch 经 `expressible?/4`
+  降级。Bezier envelope 本批保持 legacy `pitch_curve_v1`。lowering
+  边界（B0）：`Neume.Pin.Resolved` 由 Editor 从存活 patch 直接构造
+  （不经 Oi assemble 数据反推），runtime 经 optional callback
+  `Neume.Runtime.lower_pins/4` 降为执行输入——mock 与 `neume_opu_ds`
+  委托 `Neume.Pin.Lower`（legacy 透传、note_tick 平移为绝对 tick，
+  worker 协议不变）；runtime 未实现时纯 legacy 批次回退
+  `checked_pins/1`，含 v2 schema 的批次在统一冲突界面返回
+  `{:unsupported_pin_schema, schema}`（kind `:pin` entry）。facade
+  probe 令牌只携 `track_id`/`note_id`/`pin`，底料由 server 经 channel
+  语义现场推导，客户端传回的 base 一律拒绝。legacy payload 不自动
+  升级；升级如将来提供必须是显式、可报告、可撤销手势。
 - 调试导出（`Editor.export_debug/2` → `Neume.DebugExport`）：Track 维度 +
   可选 `span` tick 裁剪（多轨适配预留），打包 `neume-debug/1` schema 的
   debug.json——notes（秒轴）、帧级 pitch（有效/可选 `raw?: true` 无干预
@@ -284,7 +302,9 @@ Neume.Editor
 ### 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- `apps/neume` 核心测试：`85 passed`；`apps/neume_opu_ds` 适配器测试：`38 passed, 8 excluded`（excluded 为真声库集成测试）。
+- `apps/neume` 核心测试：`109 passed`（含 `score_pitch_v2` survival
+  matrix、lowering fallback 规则与批次 B 评审修订：later-write-wins
+  顺序、显式 base schema 校验、双入口缺失 tagged error）；`apps/neume_opu_ds` 适配器测试：`40 passed, 8 excluded`（excluded 为真声库集成测试，含双 runtime lowering 契约）。
 - `apps/neumu` 的 `mix test`：`69 passed, 1 excluded`（工程开闭、渲染成功/失败/崩溃、
   渲染期间查询、source_pin 保留、制品存取、事件订阅幂等与退订、重复
   job_id 拒绝、未知 job tagged error、nil project_id 拒绝、关闭工程终止

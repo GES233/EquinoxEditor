@@ -477,14 +477,16 @@ defmodule Neumu.ProjectServer do
   defp apply_edit(_multi_track, other), do: {:error, {:unknown_edit_command, other}}
 
   # probe 令牌必须是 `Neumu.probe_pin/3` 的原样返回：绑定同一 track/note，
-  # 底料是物化的输入事实 map，pin 是物化时刻的 History cursor。
+  # pin 是物化时刻的 History cursor。令牌精确为 %{track_id, note_id, pin}
+  # 三键——底料不随令牌下发（携带 base 的旧令牌一律拒绝），mount 由
+  # Editor 在 stale 校验覆盖的当前状态上经 channel 语义现场推导。
   defp mount_probe_opts(
-         %{track_id: track_id, note_id: note_id, pin: pin, base: base},
+         %{track_id: track_id, note_id: note_id, pin: pin} = probe,
          track_id,
          note_id
        )
-       when is_integer(pin) and is_map(base),
-       do: {:ok, [base: base, pin: pin]}
+       when is_integer(pin) and map_size(probe) == 3,
+       do: {:ok, [pin: pin]}
 
   defp mount_probe_opts(probe, track_id, note_id),
     do: {:error, {:invalid_pin_probe, track_id, note_id, probe}}

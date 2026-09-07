@@ -245,7 +245,15 @@ defmodule Neume.PinSemanticsTest do
     end
 
     test "纯 pitch pin 的 repatch 不调用 pipeline.phonemes/3", %{editor: editor} do
-      {:ok, editor} = Editor.mount_pitch(editor, "n1", [[0, 60.0]])
+      # legacy pitch 点列（签 pin_input_v1）：改词才会炸；v2 改词不炸，
+      # 无从产生冲突 entry。NoPhonemesPipeline 不实现 lower_pins/4，同时
+      # 覆盖纯 legacy 批次的 checked_pins/1 回退路径。
+      {:ok, base} = Editor.probe_base(editor, "n1")
+
+      {:ok, session, _patch} =
+        Coconut.mount(editor.session, editor.track_id, "n1", :pitch, [[0, 60.0]], base: base)
+
+      editor = %{editor | session: session}
       {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lu"})
       editor = %{editor | pipeline: NoPhonemesPipeline}
 

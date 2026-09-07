@@ -27,6 +27,16 @@ defmodule Neume.IdentityPinTest do
     editor
   end
 
+  # 模拟旧档/兼容路径：显式签 pin_input_v1 底料的 legacy pitch 点列
+  # （Editor.mount_pitch 自批次 B 起产出 score_pitch_v2）。
+  defp mount_legacy_pitch(editor, note_id, points) do
+    with {:ok, base} <- Editor.probe_base(editor, note_id),
+         {:ok, session, _patch} <-
+           Coconut.mount(editor.session, editor.track_id, note_id, :pitch, points, base: base) do
+      {:ok, %{editor | session: session}}
+    end
+  end
+
   test "改音高与拖动不炸 pin（身份底料不含音高与时值）", %{editor: editor} do
     editor = insert_la(editor)
     assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
@@ -100,7 +110,7 @@ defmodule Neume.IdentityPinTest do
 
   test "repatch 拒绝不在册的 patch", %{editor: editor} do
     editor = insert_la(editor)
-    assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[120, 72]])
+    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
 
     assert {:error, {:check_failed, [%{patch: patch} = entry]}} = Editor.check(editor)
@@ -159,9 +169,10 @@ defmodule Neume.IdentityPinTest do
     assert [%{kind: :model, reason: {:missing_lyric, "n2"}}] = entries
   end
 
-  test "pitch pin 与 duration pin 的身份冲突聚合在一次 check 里", %{editor: editor} do
+  test "legacy pitch pin 与 duration pin 的身份冲突聚合在一次 check 里", %{editor: editor} do
     editor = insert_la(editor)
-    assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[120, 72]])
+    # legacy pitch_points_v1（旧档/兼容路径）仍签 pin_input_v1：改词会炸。
+    assert {:ok, editor} = mount_legacy_pitch(editor, "n1", [[120, 72]])
     assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
 

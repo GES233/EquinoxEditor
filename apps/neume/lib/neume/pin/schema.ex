@@ -10,24 +10,62 @@ defmodule Neume.Pin.Schema do
   | 旧 pitch 点列 `[[tick, midi]]` | `pitch_points_v1` | `pin_input_v1` | `:score` |
   | Bezier plain map | `pitch_curve_v1` | `pin_input_v1` | `:score` |
   | 旧 duration 点列 `[[ph_index, tick]]` | `phoneme_duration_v1` | `pin_input_v1` | `:correspondence` |
+  | v2 pitch envelope（批次 B） | `score_pitch_v2` | `score_region_v1` | `:score` |
 
-  v2（`score_pitch_v2` / `phoneme_duration_v2`，base `score_region_v1`
-  等）见设计文档批次 B/D；本模块当前只分派 legacy payload，不产生 v2。
+  `score_pitch_v2` 是自描述 envelope：`%{schema, coordinates: "note_tick",
+  values: [[offset_tick, midi], ...]}`，坐标为音符内相对 tick（拖动跟随）；
+  base `score_region_v1` 只钉 track/note 与坐标系，不含歌词、音素、声库
+  与 runtime digest。`phoneme_duration_v2`（stable segment ref）见批次 D，
+  本模块不产生。
   """
 
   @base_pin_input_v1 "pin_input_v1"
+  @base_score_region_v1 "score_region_v1"
   @pitch_points_v1 "pitch_points_v1"
   @pitch_curve_v1 "pitch_curve_v1"
   @phoneme_duration_v1 "phoneme_duration_v1"
+  @score_pitch_v2 "score_pitch_v2"
+  @note_tick "note_tick"
+
+  @legacy_payload_schemas [@pitch_points_v1, @pitch_curve_v1, @phoneme_duration_v1]
 
   @doc "legacy 输入事实签名底料 schema 名（`Neume.Identity`）。"
   @spec base_pin_input_v1() :: String.t()
   def base_pin_input_v1, do: @base_pin_input_v1
 
+  @doc "v2 谱面区域底料 schema 名（批次 B）。"
+  @spec base_score_region_v1() :: String.t()
+  def base_score_region_v1, do: @base_score_region_v1
+
+  @doc "v2 pitch envelope 的 payload schema 名。"
+  @spec score_pitch_v2() :: String.t()
+  def score_pitch_v2, do: @score_pitch_v2
+
+  @doc "音符内相对 tick 坐标系名。"
+  @spec note_tick() :: String.t()
+  def note_tick, do: @note_tick
+
+  @doc "legacy payload schema 名单（lowering 回退资格判定用）。"
+  @spec legacy_payload_schemas() :: [String.t()]
+  def legacy_payload_schemas, do: @legacy_payload_schemas
+
+  @doc "构造 `score_pitch_v2` envelope（`values` 为 `[[offset_tick, midi], ...]`）。"
+  @spec score_pitch_v2_payload([[number()]]) :: map()
+  def score_pitch_v2_payload(values) when is_list(values),
+    do: %{schema: @score_pitch_v2, coordinates: @note_tick, values: values}
+
   @doc "分派 pitch payload 的 schema 名。"
   @spec pitch_payload(term()) :: {:ok, String.t()} | {:error, term()}
   def pitch_payload(points) when is_list(points), do: {:ok, @pitch_points_v1}
   def pitch_payload(%{format: :pitch_curve_v1}), do: {:ok, @pitch_curve_v1}
+
+  def pitch_payload(%{schema: @score_pitch_v2, coordinates: @note_tick, values: values})
+      when is_list(values),
+      do: {:ok, @score_pitch_v2}
+
+  def pitch_payload(%{schema: @score_pitch_v2} = other),
+    do: {:error, {:invalid_score_pitch_v2, other}}
+
   def pitch_payload(other), do: {:error, {:unknown_pitch_payload_schema, other}}
 
   @doc "分派 duration payload 的 schema 名。"

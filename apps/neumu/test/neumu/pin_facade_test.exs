@@ -64,21 +64,11 @@ defmodule Neumu.PinFacadeTest do
 
     assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
 
-    # 底料 = 输入事实签名（歌词/显式音素/组归属/声库摘要），非 G2P 输出。
-    assert %{
-             track_id: "lead",
-             note_id: "n1",
-             pin: 2,
-             base: %{
-               schema: "pin_input_v1",
-               voicebank: voicebank_digest,
-               lyric: "la",
-               phonemes: [["zh", "l"], ["zh", "a"]],
-               group: %{kind: "head"}
-             }
-           } = probe
-
-    assert is_binary(voicebank_digest) and byte_size(voicebank_digest) == 64
+    # 令牌只钉 track/note 与 History cursor；底料不随令牌下发——mount 时
+    # 由 server 在 stale 校验覆盖的当前状态上经 channel 语义现场推导
+    # （批次 B 起 pitch 点列落 score_pitch_v2，客户端不代为选底料）。
+    assert %{track_id: "lead", note_id: "n1", pin: 2} = probe
+    refute Map.has_key?(probe, :base)
     assert_plain_data(probe)
 
     # probe 是只读旁路：pin 不变、无事件。
@@ -100,7 +90,11 @@ defmodule Neumu.PinFacadeTest do
                id: patch_id,
                channel: :pitch,
                anchor: %{type: :ordinal, refs: ["n1"], at_version: _},
-               payload: [[120, 72.0]]
+               payload: %{
+                 schema: "score_pitch_v2",
+                 coordinates: "note_tick",
+                 values: [[120, 72.0]]
+               }
              }
            ] = pins!(id)
 
@@ -142,6 +136,10 @@ defmodule Neumu.PinFacadeTest do
 
     assert {:error, {:invalid_pin_probe, "lead", "n1", _}} =
              Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], %{})
+
+    # 携带 base 的旧形令牌一律拒绝（底料由 server 侧现场推导）。
+    assert {:error, {:invalid_pin_probe, "lead", "n1", _}} =
+             Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], Map.put(probe, :base, %{}))
 
     assert {:ok, 3} = Neumu.history_pin(id)
     assert [] = pins!(id)
@@ -302,7 +300,11 @@ defmodule Neumu.PinFacadeTest do
     assert %{history_pin: 4} = snapshot!(id)
 
     assert [
-             %{channel: :pitch, anchor: %{refs: ["n1"]}, payload: [[120, 72.0]]},
+             %{
+               channel: :pitch,
+               anchor: %{refs: ["n1"]},
+               payload: %{schema: "score_pitch_v2", values: [[120, 72.0]]}
+             },
              %{channel: :duration, payload: [[0, 96]]}
            ] = pins!(id)
 
