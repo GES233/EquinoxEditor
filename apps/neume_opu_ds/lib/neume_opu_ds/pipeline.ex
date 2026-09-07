@@ -1,4 +1,4 @@
-defmodule Neume.Engine.DiffSingerPipeline do
+defmodule NeumeOpuDs.Pipeline do
   @moduledoc """
   Neume 的真实 DiffSinger Oi 图。
 
@@ -11,9 +11,10 @@ defmodule Neume.Engine.DiffSingerPipeline do
 
   alias Coconut.Render.Engine.Snapshot
   alias Neume.Analysis
-  alias Neume.Engine.DiffSingerPipeline.Steps
-  alias Neume.Engine.{DiffSingerFp, DiffSingerWorker, OrchidError}
-  alias Neume.Voicebank.DiffSinger
+  alias Neume.Engine.OrchidError
+  alias NeumeOpuDs.{Fp, Worker}
+  alias NeumeOpuDs.Pipeline.Steps
+  alias NeumeOpuDs.Voicebank.Manifest
   alias Oi.Flowgraph
 
   require Logger
@@ -31,7 +32,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
           worker_config: map(),
           globals: %{String.t() => term()},
           output_dir: Path.t(),
-          manifest: DiffSinger.t(),
+          manifest: Manifest.t(),
           cache: boolean()
         }
 
@@ -40,7 +41,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
     manifest = Keyword.fetch!(opts, :manifest)
     track_id = Keyword.fetch!(opts, :track_id)
     output_dir = Keyword.get(opts, :output_dir, Path.join(File.cwd!(), "tmp/neume-renders"))
-    client = Keyword.get(opts, :client, DiffSingerWorker)
+    client = Keyword.get(opts, :client, Worker)
     python = Keyword.get(opts, :python, ["python"])
     backend = Keyword.get(opts, :backend, :cpu)
 
@@ -623,7 +624,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
     end
   end
 
-  defp to_analysis(probe, %DiffSinger{} = manifest) do
+  defp to_analysis(probe, %Manifest{} = manifest) do
     %Analysis{
       notes: probe.notes,
       phonemes: probe.boundaries,
@@ -649,7 +650,7 @@ defmodule Neume.Engine.DiffSingerPipeline do
         {:ok, fp}
 
       mode when mode in [:default, true] ->
-        if client == DiffSingerWorker or mode == true do
+        if client == Worker or mode == true do
           # 手术环境需要 onnx；推理环境只需 onnxruntime，二者可独立配置。
           fp_opts = [
             python: Keyword.get(opts, :fp_python, ["python"]),
@@ -658,16 +659,16 @@ defmodule Neume.Engine.DiffSingerPipeline do
           ]
 
           fp_opts = if opts[:fp_dir], do: Keyword.put(fp_opts, :dir, opts[:fp_dir]), else: fp_opts
-          DiffSingerFp.for_voicebank(manifest.root, fp_opts)
+          Fp.for_voicebank(manifest.root, fp_opts)
         else
           {:ok, nil}
         end
     end
   end
 
-  defp default_worker, do: Application.app_dir(:neume, "priv/diffsinger/worker.py")
+  defp default_worker, do: Application.app_dir(:neume_opu_ds, "priv/diffsinger/worker.py")
 
-  defp default_speaker(%DiffSinger{speakers: speakers}) do
+  defp default_speaker(%Manifest{speakers: speakers}) do
     if Map.has_key?(speakers, "Normal"), do: "Normal", else: speakers |> Map.keys() |> hd()
   end
 end

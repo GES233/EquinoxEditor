@@ -6,17 +6,18 @@ defmodule Neumu.OpenVinoIntegrationTest do
   @moduletag timeout: 300_000
   @moduletag tmp_dir: true
 
-  alias Neume.Engine.DiffSingerFp
-  alias Neume.Voicebank.{DiffSinger, Entry, Registry}
+  alias Neume.Voicebank.Registry
+  alias NeumeOpuDs.Fp, as: DiffSingerFp
+  alias NeumeOpuDs.Voicebank.{Manifest, Provider}
 
   test "真实混合后端经 Neumu check、异步渲染、导出和读档", %{tmp_dir: tmp_dir} do
     python = System.fetch_env!("DS_PYTHON")
     root = System.fetch_env!("DS_VOICEBANK")
     fp_path = System.fetch_env!("DS_FP_MANIFEST")
     assert File.regular?(python)
-    assert {:ok, manifest} = DiffSinger.scan(root)
+    assert {:ok, manifest} = Manifest.scan(root)
     assert {:ok, fp} = DiffSingerFp.load_manifest(fp_path)
-    entry = Entry.modified(manifest, fp)
+    entry = Provider.modified(manifest, fp)
     registry = %Registry{entries: %{entry.id => entry}, diagnostics: []}
     id = "openvino-#{System.unique_integer([:positive])}"
 

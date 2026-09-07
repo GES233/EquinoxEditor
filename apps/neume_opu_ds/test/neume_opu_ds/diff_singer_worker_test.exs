@@ -2,8 +2,8 @@ defmodule Neume.DiffSingerWorkerTest do
   @moduledoc "不启动 Python 的 worker 身份回归：默认 CPU 复用、实验后端隔离。"
   use ExUnit.Case, async: false
 
-  alias Neume.Engine.DiffSingerWorker
-  alias Neume.Engine.DiffSingerWorker.Server
+  alias NeumeOpuDs.Worker, as: DiffSingerWorker
+  alias NeumeOpuDs.Worker.Server
 
   test "后端进入常驻身份，相同配置复用" do
     python = "neume-missing-python-#{System.unique_integer([:positive])}"

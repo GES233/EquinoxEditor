@@ -29,7 +29,8 @@ defmodule Neumu.MixProject do
   defp deps do
     [
       {:coconut, in_umbrella: true},
-      {:neume, in_umbrella: true}
+      {:neume, in_umbrella: true},
+      {:neume_opu_ds, in_umbrella: true}
     ]
   end
 end

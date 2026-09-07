@@ -1,9 +1,9 @@
-defmodule Neume.MixProject do
+defmodule NeumeOpuDs.MixProject do
   use Mix.Project
 
   def project do
     [
-      app: :neume,
+      app: :neume_opu_ds,
       version: "0.1.0",
       build_path: "../../_build",
       config_path: "../../config/config.exs",
@@ -20,17 +20,16 @@ defmodule Neume.MixProject do
   defp elixirc_paths(_env), do: ["lib"]
 
   def application do
-    [
-      extra_applications: [:crypto, :logger]
-    ]
+    [extra_applications: [:crypto, :logger]]
   end
 
   defp deps do
     [
-      {:coconut, in_umbrella: true},
+      {:neume, in_umbrella: true},
       {:coconut_oi, in_umbrella: true},
       {:oi, "~> 0.8"},
-      {:jason, "~> 1.4"}
+      {:jason, "~> 1.4"},
+      {:yaml_elixir, "~> 2.12"}
     ]
   end
 end

@@ -58,8 +58,8 @@ opts = [
 无 GPU 测试：
 
 ```powershell
-mix test apps/neume/test/neume/diff_singer_fp_test.exs apps/neumu/test/neumu/inference_backend_test.exs
-python -m unittest discover -s apps/neume/priv/diffsinger -p 'test_*.py'
+mix test apps/neume_opu_ds/test/neume_opu_ds/diff_singer_fp_test.exs apps/neumu/test/neumu/inference_backend_test.exs
+python -m unittest discover -s apps/neume_opu_ds/priv/diffsinger -p 'test_*.py'
 ```
 
 真实 GPU facade 测试默认排除，显式提供本机环境和已存在的 Pure-FP manifest：

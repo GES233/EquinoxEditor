@@ -10,7 +10,7 @@ defmodule Neume.DiffSingerWindowedTest do
   alias Neume.VoicebankFixture
 
   defmodule CountingClient do
-    @behaviour Neume.Engine.DiffSingerWorker
+    @behaviour NeumeOpuDs.Worker
 
     @frame_rate 44_100 / 512
 
@@ -209,7 +209,7 @@ defmodule Neume.DiffSingerWindowedTest do
   @tag tmp_dir: true
   test "check 会继续检查后续乐句并聚合带定位的模型错误", %{tmp_dir: tmp_dir} do
     defmodule SelectiveClient do
-      @behaviour Neume.Engine.DiffSingerWorker
+      @behaviour NeumeOpuDs.Worker
       def call(%{action: "encode", notes: [%{id: id}]}, _config),
         do: {:ok, %{"tokens" => %{id => [["zh", "a"]]}}}
 

@@ -1,4 +1,4 @@
-defmodule Neume.Engine.DiffSingerFp do
+defmodule NeumeOpuDs.Fp do
   @moduledoc """
   DiffSinger Pure-FP 本地派生模型的构建与 manifest 加载。
 
@@ -54,7 +54,7 @@ defmodule Neume.Engine.DiffSingerFp do
 
   defp build(root, dir, path, opts) do
     [python | python_args] = Keyword.get(opts, :python, ["python"])
-    script = Application.app_dir(:neume, "priv/fp/freeze_noise.py")
+    script = Application.app_dir(:neume_opu_ds, "priv/fp/freeze_noise.py")
 
     args = python_args ++ [script, Path.expand(root), "--out", Path.expand(dir)]
 

@@ -6,7 +6,7 @@ defmodule Neume.VoicebankSelectionTest do
   alias Neume.VoicebankFixture
 
   defmodule UnusedClient do
-    @behaviour Neume.Engine.DiffSingerWorker
+    @behaviour NeumeOpuDs.Worker
     @impl true
     def call(_payload, _config), do: {:error, :not_used}
   end

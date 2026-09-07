@@ -1,4 +1,4 @@
-defmodule Neume.Engine.DiffSingerWorker do
+defmodule NeumeOpuDs.Worker do
   @moduledoc """
   DiffSinger Python worker 的 NDJSON Port 客户端。
 
@@ -8,7 +8,7 @@ defmodule Neume.Engine.DiffSingerWorker do
   Runtime arena 归同一生命周期所有。
   """
 
-  alias Neume.Engine.DiffSingerWorker.Server
+  alias NeumeOpuDs.Worker.Server
 
   @callback call(map(), map()) :: {:ok, map()} | {:error, term()}
 
@@ -45,7 +45,7 @@ defmodule Neume.Engine.DiffSingerWorker do
   end
 
   defp default_worker do
-    Application.app_dir(:neume, "priv/diffsinger/worker.py")
+    Application.app_dir(:neume_opu_ds, "priv/diffsinger/worker.py")
   end
 
   defmodule Server do
@@ -167,7 +167,7 @@ defmodule Neume.Engine.DiffSingerWorker do
     end
 
     defp default_worker do
-      Application.app_dir(:neume, "priv/diffsinger/worker.py")
+      Application.app_dir(:neume_opu_ds, "priv/diffsinger/worker.py")
     end
 
     defp maybe_dispatch(%{ready: true, current: nil} = state) do

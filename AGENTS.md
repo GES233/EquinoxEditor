@@ -2,7 +2,7 @@
 
 ## Project Status
 
-Equinox is the singing-synthesis editor (this Mix umbrella). **Neume** names the editing paradigm — the Tamale/Coconut edit model (History, pin interventions, check/repatch discipline) — and its Elixir implementation: the kernel apps `coconut`, `coconut_oi`, `neume`, `neumu`. The deliverable is the paradigm itself plus its technical reports/videos; the editor is its host. `apps/neume_lab` is development tooling (Livebook bench), not the product UI. There is no active Phoenix/Svelte UI shell in this branch.
+Equinox is the singing-synthesis editor (this Mix umbrella). **Neume** names the editing paradigm — the Tamale/Coconut edit model (History, pin interventions, check/repatch discipline) — and its Elixir implementation: the kernel apps `coconut`, `coconut_oi`, `neume`, `neumu`. Concrete synthesis runtimes live in separate adapter apps such as `neume_opu_ds`. The deliverable is the paradigm itself plus its technical reports/videos; the editor is its host. `apps/neume_lab` is development tooling (Livebook bench), not the product UI. There is no active Phoenix/Svelte UI shell in this branch.
 
 The source of truth for implementation status is the **Neume Implementation Status** section at the end of this file (migrated from the retired `apps/neume/STATUS.md`).
 
@@ -10,7 +10,8 @@ The source of truth for implementation status is the **Neume Implementation Stat
 
 - `apps/coconut/` — engine-agnostic editor core. It owns score/edit state, History, Patch/Resolve, and persistence. It was imported from the archived standalone Coconut repository and is now maintained as part of this umbrella.
 - `apps/coconut_oi/` — intentionally small bridge from `Coconut.Render.Engine` requests and interventions to Oi data and `Oi.execute/2`.
-- `apps/neume/` — product and engine layer: editor facade, DiffSinger scanning, probe/alignment, inference, windowed cache, debug export, and render artifacts.
+- `apps/neume/` — stable editor and pin semantics: editor facade, runtime/provider contracts, History-facing identity/check/repatch, windowing, cache, mix, debug export, and render artifacts. It has no concrete DiffSinger or OpenUTAU dependency.
+- `apps/neume_opu_ds/` — OpenUTAU DiffSinger adapter: voicebank scanning and Stock/Modified variants, Pure-FP preparation, Oi analysis/synthesis graph, Python worker, ONNX inference, and adapter-specific tests.
 - `apps/neumu/` — OTP application service over Neume: per-project `ProjectServer` processes (one `Neume.MultiTrack` value each), async render via `Task.Supervisor`, runtime `ArtifactStore`, and the three small event shapes. No playback device, cancellation, persistence, or UI.
 - `apps/neume_lab/` — Livebook/Kino 实验台（开发工具，非产品 UI）。`Kino.JS.Live` 面板验证 Neumu facade 契约闭环（编辑/冲突/repatch/按 pin 渲染/试听），自带 fixture 声库、假 DiffSinger client 与正弦演示渲染器。notebook 在 `apps/neume_lab/notebooks/lab.livemd`，以 Attached Node 方式附着到 umbrella 节点运行。
 - `config/` — shared umbrella configuration.
@@ -24,13 +25,17 @@ Coconut (edit/history/patch/persistence)
         ↓
 CoconutOi (intervention-to-Oi translation only)
         ↓
-Neume Oi graphs and engine steps
+Neume runtime/pin contracts
+        ↓
+NeumeOpuDs Oi graphs and engine steps
         ↓
 DiffSinger worker / ONNX / artifacts
 ```
 
 - Coconut must remain engine-agnostic. Do not add DiffSinger, Oi graph, playback, mixing, or UI semantics to it.
 - CoconutOi must remain a thin adapter. Do not add engine compilation, phoneme alignment, track scheduling, mixing, buses, playback, or export management to it.
+- Neume owns stable score/phonology/correspondence pin meaning and runtime/provider contracts. Do not add concrete voicebank package scanning, DiffSinger model topology, Python worker, FP surgery, backend, or seed semantics to it.
+- NeumeOpuDs owns the OpenUTAU package and current DiffSinger execution runtime. Runtime execution identity must not enter Neume pin identity.
 - Multi-track scheduling, mixing, buses, and export aggregation are implemented as Neume-owned Oi graphs/steps.
 - Phoneme types, frame grids, G2P, vowel anchoring, and model probes belong to the Neume DiffSinger adapter/worker.
 - Coconut History remains the only entry for persistent score, patch, track-extras, and undoable edits.
@@ -75,15 +80,15 @@ git diff --check
 Neume real-voicebank tests are excluded by default. Run them explicitly only with the required external voicebank and Python environment:
 
 ```powershell
-cd apps/neume
-mix test --include integration test/neume/diff_singer_integration_test.exs
+cd apps/neume_opu_ds
+mix test --include integration test/neume_opu_ds/diff_singer_integration_test.exs
 ```
 
-Python worker tests must run from `apps/neume/priv/diffsinger` with the inference dependencies installed.
+Python worker tests must run from `apps/neume_opu_ds` with the inference dependencies installed.
 
 ## Neume Implementation Status
 
-更新日期：2026-09-05（迁移自 `apps/neume/STATUS.md`；不变量已并入上文 Architecture Boundaries，验证命令见 Validation 一节）。
+更新日期：2026-09-07（迁移自 `apps/neume/STATUS.md`；不变量已并入上文 Architecture Boundaries，验证命令见 Validation 一节）。
 
 ### 当前定位
 
@@ -269,8 +274,8 @@ Neume.Editor
 ### 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- `apps/neume` 的 `mix test`：`102 passed, 7 excluded`（excluded 为真声库集成测试）。
-- `apps/neumu` 的 `mix test`：`68 passed`（工程开闭、渲染成功/失败/崩溃、
+- `apps/neume` 核心测试：`66 passed`；`apps/neume_opu_ds` 适配器测试：`38 passed, 8 excluded`（excluded 为真声库集成测试）。
+- `apps/neumu` 的 `mix test`：`69 passed, 1 excluded`（工程开闭、渲染成功/失败/崩溃、
   渲染期间查询、source_pin 保留、制品存取、事件订阅幂等与退订、重复
   job_id 拒绝、未知 job tagged error、nil project_id 拒绝、关闭工程终止
   在途渲染；facade：快照与 pin 一致且无运行时对象泄露、查询不产生历史边、
@@ -290,7 +295,7 @@ Neume.Editor
   时长查询空轨回退 flat 120 BPM 且只读无副作用；契约回路：
   参考客户端跑通 建工程→编辑→stale 重放→冲突 check→repatch→按 pin
   渲染对比→导出落盘；黄金向量钉住替身与真身的 expand 一致性）。
-- `apps/neume_lab` 的 `mix test`：`8 passed`（Kino.Test 驱动实验台面板：
+- `apps/neume_lab` 的 `mix test`：`9 passed`（Kino.Test 驱动实验台面板：
   连接全量状态、编辑事件桥、失败命令 command_error 不改状态、冲突四步流
   挂 pin→改词→repatch→恢复、按 pin 渲染与 `{:binary, _, WAV}` 试听下发、
   undo/redo；正弦渲染器产出合法 WAV 制品、空工程 `:no_notes` tagged

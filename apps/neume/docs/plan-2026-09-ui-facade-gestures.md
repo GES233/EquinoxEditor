@@ -64,7 +64,7 @@ snapshot 投影对应缺口：pins（存活 patch 的 id/channel/anchor/payload�
    → facade 命令 → 测试矩阵"的模式钉死。
 2. **第二批（pin 族，约 1.5–2 天）**：三个 mount、`repatch`、`unmount_pin`
    （Neume 新增）、payload schema、snapshot pins 投影；把
-   `apps/neume/test/support/fake_phonemes.ex` 式 expand-capable 假 client
+   `apps/neume_opu_ds/test/support/fake_phonemes.ex` 式 expand-capable 假 client
    移植到 neumu 测试支撑。
 3. **第三批（领域决定，约 2 天）**：`merge_notes`、`trim_note`、
    `drag_note_across_tracks`。每个先在本文档补两三行语义决定再写码。

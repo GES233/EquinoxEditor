@@ -68,7 +68,7 @@ defmodule Neumu.ProjectStub do
       noise_version: 1
     }
 
-    Neume.Voicebank.Entry.modified(stock.manifest, fp)
+    NeumeOpuDs.Voicebank.Provider.modified(stock.manifest, fp)
   end
 
   @doc "create/load_project 的打开选项：注入注册表、不触碰推理的 client 与独立输出目录。"
@@ -92,7 +92,7 @@ end
 defmodule Neumu.ProjectStub.UnusedClient do
   @moduledoc false
   # 声库解析与管线编译期不调用 client；只有真实 probe/render 才会触发。
-  @behaviour Neume.Engine.DiffSingerWorker
+  @behaviour NeumeOpuDs.Worker
 
   @impl true
   def call(_payload, _config), do: {:error, :not_used}
@@ -101,10 +101,10 @@ end
 defmodule Neumu.ProjectStub.PhonemesClient do
   @moduledoc false
   # expand/check-capable 假 client：probe（G2P + 组展开）与 check（假预测）
-  # 的确定性纯 Elixir 实现，移植自 apps/neume/test/support 的约定——组展开
+  # 的确定性纯 Elixir 实现，移植自 apps/neume_opu_ds/test/support 的约定——组展开
   # 用"头词末音素当延续元音"的近似（与 mock pipeline 一致）。不实现
   # render：测试不走合成。
-  @behaviour Neume.Engine.DiffSingerWorker
+  @behaviour NeumeOpuDs.Worker
 
   @impl true
   def call(%{action: "encode", notes: notes}, _config) do

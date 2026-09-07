@@ -16,8 +16,8 @@ defmodule Neume.Editor do
   alias Coconut.Util.ID
   alias Neume.Channels.{DurationPin, PitchPin}
   alias Neume.{Identity, PitchCurve, TrackConfig, TrackRuntime}
-  alias Neume.Engine.{DiffSingerPipeline, MockPipeline, OrchidError}
-  alias Neume.Voicebank.{DiffSinger, Entry}
+  alias Neume.Engine.{MockPipeline, OrchidError}
+  alias Neume.Voicebank.Entry
   alias Neume.Voicebank.Registry, as: VoicebankRegistry
 
   # 后面可以用 Coconut.Util.ID.generate_id("Track_") 来代替
@@ -76,13 +76,13 @@ defmodule Neume.Editor do
            Workspace.fetch_track(project.workspace, track_id),
          expected_signature <- TrackConfig.voicebank(selected_track),
          {:ok, opts} <- prepare_selected_open_opts(expected_signature, opts),
-         {:ok, manifest} <- prepare_open_voicebank(expected_signature, opts),
+         {:ok, voicebank_entry} <- prepare_open_voicebank(expected_signature, opts),
          :ok <- validate_ticks_per_frame(ticks_per_frame),
          {:ok, %Track{module: Track.Vocal} = track} <-
            Workspace.fetch_track(project.workspace, track_id),
          {:ok, mounted} <- mounted_globals(track),
          {:ok, pipeline, pipeline_state} <-
-           compile_pipeline(manifest, track_id, ticks_per_frame, opts),
+           compile_pipeline(voicebank_entry, track_id, ticks_per_frame, opts),
          engine_config <- pipeline.engine_config(pipeline_state, track_id),
          {:ok, session} <-
            Coconut.new(project,
@@ -542,24 +542,24 @@ defmodule Neume.Editor do
     end
   end
 
-  defp render_checked(%__MODULE__{pipeline: DiffSingerPipeline} = editor, request, checked) do
-    DiffSingerPipeline.render_checked(
-      editor.pipeline_state,
-      request.snapshot,
-      checked,
-      request.globals,
-      editor.track_id
-    )
-  end
-
-  defp render_checked(editor, request, _checked) do
-    editor.pipeline.render(
-      editor.pipeline_state,
-      request.snapshot,
-      checked_pins(editor.session),
-      request.globals,
-      editor.track_id
-    )
+  defp render_checked(editor, request, checked) do
+    if function_exported?(editor.pipeline, :render_checked, 5) do
+      editor.pipeline.render_checked(
+        editor.pipeline_state,
+        request.snapshot,
+        checked,
+        request.globals,
+        editor.track_id
+      )
+    else
+      editor.pipeline.render(
+        editor.pipeline_state,
+        request.snapshot,
+        checked_pins(editor),
+        request.globals,
+        editor.track_id
+      )
+    end
   end
 
   @doc """
@@ -606,7 +606,7 @@ defmodule Neume.Editor do
            editor.pipeline.analyze_phrases(
              editor.pipeline_state,
              request.snapshot,
-             checked_pins(editor.session),
+             checked_pins(editor),
              request.globals,
              editor.track_id
            ),
@@ -751,19 +751,15 @@ defmodule Neume.Editor do
   defp entry_patch_id(id) when is_binary(id), do: {:ok, id}
   defp entry_patch_id(_other), do: :error
 
-  # 从最近一次静态 check 的 assemble 结果里取 pins（无 patch 时为空 map）。
-  # DiffSinger 图挂在 score_plan 输入上，mock 图挂在 pitch step 输入上。
-  defp checked_pins(session) do
-    case Coconut.checked(session) do
-      {:ok, %{data: data}} when is_map(data) ->
-        %{
-          pitch: get_in(data, [:score_plan, :pitch_pins]) || get_in(data, [:pitch, :pins]) || %{},
-          duration: get_in(data, [:score_plan, :duration_pins]) || %{}
-        }
+  # 端口路径属于 runtime 图实现；Editor 只传递静态 check 的 assemble 数据。
+  defp checked_pins(%__MODULE__{} = editor) do
+    data =
+      case Coconut.checked(editor.session) do
+        {:ok, %{data: data}} when is_map(data) -> data
+        _other -> %{}
+      end
 
-      _other ->
-        %{pitch: %{}, duration: %{}}
-    end
+    editor.pipeline.checked_pins(data)
   end
 
   # ---- 轨道挂载的 globals（extras 是持久化事实，session.globals 是派生视图）----
@@ -888,7 +884,7 @@ defmodule Neume.Editor do
 
   defp prepare_open_voicebank(expected_signature, opts) do
     case Keyword.get(opts, :voicebank_entry) do
-      %Entry{} = entry -> {:ok, entry.manifest}
+      %Entry{} = entry -> {:ok, entry}
       nil when is_nil(expected_signature) -> {:ok, nil}
       nil -> {:error, {:voicebank_selection_required, expected_signature}}
     end
@@ -920,8 +916,7 @@ defmodule Neume.Editor do
         VoicebankRegistry.resolve(registry, expected_signature)
 
       {nil, nil, path} when is_binary(path) ->
-        with {:ok, mode} <- fetch_voicebank_mode(opts),
-             {:ok, entry} <- entry_from_path(path, mode, opts),
+        with {:ok, entry} <- VoicebankRegistry.entry_from_path(path, opts),
              :ok <- compare_signature(expected_signature, entry.signature) do
           {:ok, entry}
         end
@@ -946,39 +941,8 @@ defmodule Neume.Editor do
     end
   end
 
-  defp fetch_voicebank_mode(opts) do
-    case Keyword.fetch(opts, :voicebank_mode) do
-      {:ok, mode} when mode in [:stock, :modified] -> {:ok, mode}
-      {:ok, mode} -> {:error, {:invalid_voicebank_mode, mode}}
-      :error -> {:error, :voicebank_mode_required}
-    end
-  end
-
-  defp entry_from_path(path, :stock, _opts) do
-    with {:ok, manifest} <- DiffSinger.scan(path), do: {:ok, Entry.stock(manifest)}
-  end
-
-  defp entry_from_path(path, :modified, opts) do
-    with {:ok, manifest} <- DiffSinger.scan(path) do
-      fp_opts = [
-        voicebank_digest: manifest.digest,
-        build?: Keyword.get(opts, :fp_build, true),
-        python: Keyword.get(opts, :fp_python, ["python"])
-      ]
-
-      fp_opts = if opts[:fp_dir], do: Keyword.put(fp_opts, :dir, opts[:fp_dir]), else: fp_opts
-
-      with {:ok, fp} <- Neume.Engine.DiffSingerFp.for_voicebank(manifest.root, fp_opts) do
-        {:ok, Entry.modified(manifest, fp)}
-      end
-    end
-  end
-
   defp apply_voicebank_entry(opts, %Entry{} = entry) do
-    opts
-    |> Keyword.put(:voicebank_entry, entry)
-    |> Keyword.put(:voicebank_manifest, entry.manifest)
-    |> Keyword.put(:fp, entry.fp || false)
+    Keyword.put(opts, :voicebank_entry, entry)
   end
 
   defp compare_signature(nil, _actual), do: :ok
@@ -993,36 +957,21 @@ defmodule Neume.Editor do
     end
   end
 
-  defp compile_pipeline(%DiffSinger{} = manifest, track_id, _ticks_per_frame, opts) do
-    pipeline_opts =
-      [manifest: manifest, track_id: track_id]
-      |> put_option(:output_dir, opts, :output_dir)
-      |> put_option(:python, opts, :python)
-      |> put_option(:backend, opts, :diffsinger_backend)
-      |> put_option(:worker, opts, :diffsinger_worker)
-      |> put_option(:client, opts, :diffsinger_client)
-      |> put_option(:client_config, opts, :diffsinger_client_config)
-      |> put_option(:speaker, opts, :speaker)
-      |> put_option(:gender, opts, :gender)
-      |> put_option(:velocity, opts, :velocity)
-      |> put_option(:depth, opts, :depth)
-      |> put_option(:steps, opts, :steps)
-      |> put_option(:cache, opts, :cache)
-      |> put_option(:seed, opts, :seed)
-      |> put_option(:fp, opts, :fp)
-      |> put_option(:fp_dir, opts, :fp_dir)
-      |> put_option(:fp_build, opts, :fp_build)
-      |> put_option(:fp_python, opts, :fp_python)
+  defp compile_pipeline(%Entry{runtime: runtime} = entry, track_id, ticks_per_frame, opts)
+       when is_atom(runtime) do
+    runtime_opts =
+      opts
+      |> Keyword.put(:entry, entry)
+      |> Keyword.put(:track_id, track_id)
+      |> Keyword.put(:ticks_per_frame, ticks_per_frame)
 
-    with {:ok, state} <- DiffSingerPipeline.compile(pipeline_opts) do
-      {:ok, DiffSingerPipeline, state}
-    end
-  end
-
-  defp put_option(target, target_key, source, source_key) do
-    case Keyword.fetch(source, source_key) do
-      {:ok, value} -> Keyword.put(target, target_key, value)
-      :error -> target
+    with true <- Code.ensure_loaded?(runtime),
+         true <- function_exported?(runtime, :compile, 1),
+         {:ok, state} <- runtime.compile(runtime_opts) do
+      {:ok, runtime, state}
+    else
+      false -> {:error, {:runtime_unavailable, runtime}}
+      {:error, _} = error -> error
     end
   end
 end

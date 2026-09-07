@@ -3,7 +3,7 @@ defmodule Neumu.VoicebankFixture do
 
   # 测试用 OpenUtau 格式 DiffSinger 声库目录：配置、八个模型占位、
   # 字典与 speaker embedding 齐全，供 DiffSinger.scan/1 严格校验通过。
-  # 与 apps/neume/test/support/voicebank_fixture.ex 同构；umbrella 各 app 的
+  # 与 apps/neume_opu_ds/test/support/voicebank_fixture.ex 同构；umbrella 各 app 的
   # test/support 不互相共享，这里保留一份最小拷贝。
 
   def diffsinger(parent, opts \\ []) do

@@ -17,8 +17,11 @@ defmodule Neume.Engine.MockPipeline do
   alias Neume.Engine.MockPipeline.Steps.{Acoustic, Pitch, ScorePlan}
   alias Oi.Flowgraph
 
+  @behaviour Neume.Runtime
+
   @type state :: %{compiled: Oi.Compiled.t(), ticks_per_frame: pos_integer()}
 
+  @impl true
   @spec compile(keyword()) :: {:ok, state()} | {:error, term()}
   def compile(opts) when is_list(opts) do
     with {:ok, ticks_per_frame} <- fetch_ticks_per_frame(opts) do
@@ -38,9 +41,19 @@ defmodule Neume.Engine.MockPipeline do
   end
 
   @doc "mock 无声库：pin 输入底料的声音库事实分量为 nil。"
+  @impl true
   @spec voicebank_digest(state()) :: nil
   def voicebank_digest(_state), do: nil
 
+  @impl true
+  def checked_pins(data) when is_map(data) do
+    %{
+      pitch: get_in(data, [:pitch, :pins]) || %{},
+      duration: get_in(data, [:score_plan, :duration_pins]) || %{}
+    }
+  end
+
+  @impl true
   @spec engine_config(state(), term()) :: map()
   def engine_config(%{compiled: compiled}, track_id) do
     %{
@@ -68,6 +81,7 @@ defmodule Neume.Engine.MockPipeline do
   end
 
   @doc "逐乐句运行 mock analyze，并保留与真实管线一致的定位形状。"
+  @impl true
   @spec analyze_phrases(state(), Snapshot.t(), map(), map(), term()) ::
           {:ok, [{Neume.Phrase.t(), Analysis.t()}], [map()]} | {:error, term()}
   def analyze_phrases(state, %Snapshot{} = snapshot, pins, globals, track_id) do
@@ -120,6 +134,7 @@ defmodule Neume.Engine.MockPipeline do
   （lyric 拆字 + 续音取头末音素）。pin 底料自 2026-09-05 起为输入事实
   签名（`Neume.Identity`），本产物只服务于 duration pin 的界内校验。
   """
+  @impl true
   @spec phonemes(state(), Snapshot.t(), term()) ::
           {:ok, Neume.Identity.note_phonemes()} | {:error, term()}
   def phonemes(_state, %Snapshot{} = snapshot, track_id) do
@@ -134,6 +149,7 @@ defmodule Neume.Engine.MockPipeline do
   end
 
   @doc "整轨执行 mock 图并取出制品（mock 不做分窗与缓存；全局旋钮不消费）。"
+  @impl true
   @spec render(state(), Snapshot.t(), map(), map(), term()) ::
           {:ok, Neume.RenderArtifact.t()} | {:error, term()}
   def render(%{compiled: compiled}, %Snapshot{} = snapshot, pins, _globals, track_id) do

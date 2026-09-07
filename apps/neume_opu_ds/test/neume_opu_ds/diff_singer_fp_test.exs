@@ -1,8 +1,9 @@
 defmodule Neume.DiffSingerFpTest do
   use ExUnit.Case, async: true
 
-  alias Neume.Engine.{DiffSingerFp, DiffSingerPipeline}
-  alias Neume.Voicebank.DiffSinger
+  alias NeumeOpuDs.Fp, as: DiffSingerFp
+  alias NeumeOpuDs.Pipeline, as: DiffSingerPipeline
+  alias NeumeOpuDs.Voicebank.Manifest, as: DiffSinger
   alias Neume.VoicebankFixture
 
   @tag tmp_dir: true

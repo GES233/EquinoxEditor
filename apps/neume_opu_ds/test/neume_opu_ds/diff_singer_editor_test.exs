@@ -5,7 +5,7 @@ defmodule Neume.DiffSingerEditorTest do
   alias Neume.VoicebankFixture
 
   defmodule FakeClient do
-    @behaviour Neume.Engine.DiffSingerWorker
+    @behaviour NeumeOpuDs.Worker
 
     @impl true
     def call(%{action: "encode", notes: notes}, _config) do
@@ -73,7 +73,7 @@ defmodule Neume.DiffSingerEditorTest do
   end
 
   defmodule RecordingClient do
-    @behaviour Neume.Engine.DiffSingerWorker
+    @behaviour NeumeOpuDs.Worker
 
     @impl true
     def call(%{action: "expand", words: words} = payload, _config) do

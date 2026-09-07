@@ -199,7 +199,8 @@ class ExpandVectorsTest(unittest.TestCase):
         from pathlib import Path
 
         fixture = (
-            Path(__file__).resolve().parents[2]
+            Path(__file__).resolve().parents[3]
+            / "neume"
             / "test"
             / "fixtures"
             / "expand_vectors.json"

@@ -1,13 +1,13 @@
-defmodule Neume.Voicebank.DiffSingerTest do
+defmodule NeumeOpuDs.Voicebank.ManifestTest do
   use ExUnit.Case, async: true
 
-  alias Neume.Voicebank.{DiffSinger, Entry}
+  alias NeumeOpuDs.Voicebank.{Manifest, Provider}
 
   @tag tmp_dir: true
   test "扫描完整声库并用语义资产生成稳定签名", %{tmp_dir: tmp_dir} do
     root = Neume.VoicebankFixture.diffsinger(tmp_dir)
 
-    assert {:ok, first} = DiffSinger.scan(root)
+    assert {:ok, first} = Manifest.scan(root)
     assert first.name == "Test Singer"
     assert first.author == "Test Author"
     assert first.languages == %{"zh" => 1}
@@ -16,13 +16,13 @@ defmodule Neume.Voicebank.DiffSingerTest do
     assert MapSet.member?(first.capabilities, :breathiness)
     assert MapSet.member?(first.capabilities, :predict_tension)
 
-    signature = Entry.stock(first).signature
+    signature = Provider.stock(first).signature
     assert signature.name == "Test Singer (Stock)"
     assert signature.engine == :diffsinger_stock
     assert byte_size(signature.digest) == 64
 
     assert :ok = File.write(first.models.acoustic, "acoustic-v2")
-    assert {:ok, second} = DiffSinger.scan(root)
+    assert {:ok, second} = Manifest.scan(root)
     refute first.digest == second.digest
   end
 
@@ -34,6 +34,6 @@ defmodule Neume.Voicebank.DiffSingerTest do
     File.write!(acoustic_config, String.replace(config, "acoustic.onnx", "../../outside.onnx"))
 
     assert {:error, {:invalid_asset, :acoustic, {:asset_outside_voicebank, "../../outside.onnx"}}} =
-             DiffSinger.scan(root)
+             Manifest.scan(root)
   end
 end

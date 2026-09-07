@@ -5,7 +5,7 @@ defmodule Neumu.InferenceBackendTest do
   alias Neumu.ProjectStub
 
   defmodule Client do
-    @behaviour Neume.Engine.DiffSingerWorker
+    @behaviour NeumeOpuDs.Worker
 
     @impl true
     def call(payload, config) do

@@ -2,7 +2,7 @@ defmodule Neume.DiffSingerIntegrationTest do
   @moduledoc """
   本机真声库冒烟测试。默认排除；显式运行：
 
-      mix test --include integration test/neume/diff_singer_integration_test.exs
+      mix test --include integration test/neume_opu_ds/diff_singer_integration_test.exs
 
   可用 `DS_VOICEBANK` / `DS_PYTHON` 覆盖机器相关路径。
   """

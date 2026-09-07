@@ -7,7 +7,7 @@ defmodule NeumeLab.DemoClient do
   `ArgumentError`），check 返回假预测。不实现 render：notebook 试听走
   `NeumeLab.SineRenderer`。
   """
-  @behaviour Neume.Engine.DiffSingerWorker
+  @behaviour NeumeOpuDs.Worker
 
   @impl true
   def call(%{action: "encode", notes: notes}, _config) do

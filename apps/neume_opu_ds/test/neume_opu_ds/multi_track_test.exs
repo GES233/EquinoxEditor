@@ -3,8 +3,9 @@ defmodule Neume.MultiTrackTest do
 
   alias Coconut.Edit.Workspace
   alias Neume.{MixPipeline, MultiTrack, TrackConfig}
-  alias Neume.Voicebank.{Entry, Registry}
+  alias Neume.Voicebank.Registry
   alias Neume.VoicebankFixture
+  alias NeumeOpuDs.Voicebank.Provider
 
   @tag tmp_dir: true
   test "逐轨持久化不同声库身份，并按 signature 打开独立 runtime", %{tmp_dir: tmp_dir} do
@@ -282,6 +283,6 @@ defmodule Neume.MultiTrackTest do
       noise_version: 1
     }
 
-    Entry.modified(stock.manifest, fp)
+    Provider.modified(stock.manifest, fp)
   end
 end

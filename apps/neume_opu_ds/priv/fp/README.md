@@ -18,13 +18,13 @@ host noise：相同输入、声库、运行时与 seed 应逐比特复现，改�
 ## 手工构建
 
 ```sh
-python apps/neume/priv/fp/freeze_noise.py <voicebank> --out tmp/onnx_fp/<name>
+python apps/neume_opu_ds/priv/fp/freeze_noise.py <voicebank> --out tmp/onnx_fp/<name>
 ```
 
 ## 真机验收
 
 ```sh
-cd apps/neume
+cd apps/neume_opu_ds
 mix run priv/fp/fp_acceptance.exs
 ```
 

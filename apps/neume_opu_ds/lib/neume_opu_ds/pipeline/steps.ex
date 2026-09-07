@@ -1,4 +1,4 @@
-defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
+defmodule NeumeOpuDs.Pipeline.Steps.ScorePlan do
   @moduledoc false
 
   use Oi.Step, name: :score_plan
@@ -284,7 +284,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.ScorePlan do
     do: TempoMap.tick_to_sec(tempo_map, tick)
 end
 
-defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
+defmodule NeumeOpuDs.Pipeline.Steps.Analysis do
   @moduledoc false
 
   # 模型级 probe：G2P（按需）+ duration/pitch 预测 + 元音锚定对齐，
@@ -611,7 +611,7 @@ defmodule Neume.Engine.DiffSingerPipeline.Steps.Analysis do
   end
 end
 
-defmodule Neume.Engine.DiffSingerPipeline.Steps.Synthesis do
+defmodule NeumeOpuDs.Pipeline.Steps.Synthesis do
   @moduledoc false
 
   # 粗粒度 worker 边界：acoustic/vocoder 的中间张量留在同一 Python 进程内。

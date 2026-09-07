@@ -1,5 +1,5 @@
 # Asaritsu Pure-FP 真机验收：
-#   cd apps/neume
+#   cd apps/neume_opu_ds
 #   mix run priv/fp/fp_acceptance.exs
 
 voicebank = System.get_env("DS_VOICEBANK") || "E:/ProgramAssets/OpenUTAUSingers/Asaritsu"

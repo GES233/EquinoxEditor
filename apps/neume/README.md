@@ -9,8 +9,10 @@ runtime、Oi/NIF 以及 Neume/Neumu/UI 职责见
 
 ## 当前闭环
 
-无声库时使用确定性的 mock 图；传入仓库外的 OpenUtau DiffSinger 目录时，
-走 `Coconut -> CoconutOi -> Oi -> Python/ONNX -> WAV`：
+Neume 只定义稳定的编辑/pin 语义和 `Neume.Runtime`、
+`Neume.Voicebank.Provider` 契约；无声库时使用确定性的 mock 图。当前
+OpenUTAU DiffSinger 实现位于 [`apps/neume_opu_ds`](../neume_opu_ds)，由
+`neumu` composition root 显式装配。传入仓库外声库目录时仍可沿用原 facade：
 
 ```elixir
 {:ok, editor} =
@@ -43,7 +45,7 @@ Stock 与 Modified 是两个独立声库身份（`:diffsinger_stock` / `:diffsin
 `RenderArtifact.phonemes` 返回实际渲染帧网上的绝对音素边界。
 
 歌词语言逐音符由 `metadata["language"]` 指定（默认 `"zh"`），G2P 在 worker
-侧按声库 `dsdict-{lang}.yaml` 字典执行（`priv/diffsinger/g2p.py` 纯函数）：
+侧按声库 `dsdict-{lang}.yaml` 字典执行（`../neume_opu_ds/priv/diffsinger/g2p.py` 纯函数）：
 
 - 中文：非 ASCII 歌词经 `pypinyin` 逐音节查 `dsdict-zh.yaml`。
 - 英文：ASCII 歌词按整词查 `dsdict-en.yaml`；未收录的词不会猜测或拆分，

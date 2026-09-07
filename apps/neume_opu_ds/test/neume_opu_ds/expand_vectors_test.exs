@@ -1,6 +1,6 @@
 defmodule Neume.ExpandVectorsTest do
   @moduledoc """
-  黄金向量（`test/fixtures/expand_vectors.json`）的 Elixir 侧消费。
+  黄金向量（`apps/neume/test/fixtures/expand_vectors.json`）的 Elixir 侧消费。
 
   - 替身近似成立（`within_fake_approximation`）的用例：假 client 的输出
     必须与真 worker 的期望逐字节一致；
@@ -15,7 +15,7 @@ defmodule Neume.ExpandVectorsTest do
   alias Neume.FakePhonemes
 
   @vectors __DIR__
-           |> Path.join("../fixtures/expand_vectors.json")
+           |> Path.join("../../../neume/test/fixtures/expand_vectors.json")
            |> Path.expand()
            |> File.read!()
            |> Jason.decode!()

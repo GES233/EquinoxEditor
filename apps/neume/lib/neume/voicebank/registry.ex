@@ -1,14 +1,12 @@
 defmodule Neume.Voicebank.Registry do
   @moduledoc """
-  Neume 的只读多声库发现结果。
+  Neume 的通用只读声库发现结果。
 
-  `discover/2` 扫描给定目录本身及其直接子目录。每个有效 DiffSinger 目录
-  总会产生一个 Stock entry；只有已存在且校验通过的修改 manifest 才产生
-  Modified entry。发现操作绝不执行模型修改。
+  registry 不理解 OpenUTAU、模型文件或变体工艺；这些职责由 entry 指向的
+  `Neume.Voicebank.Provider` 实现。
   """
 
-  alias Neume.Engine.DiffSingerFp
-  alias Neume.Voicebank.{DiffSinger, Entry}
+  alias Neume.Voicebank.Entry
 
   @enforce_keys [:entries, :diagnostics]
   defstruct entries: %{}, diagnostics: []
@@ -16,34 +14,36 @@ defmodule Neume.Voicebank.Registry do
   @type diagnostic :: %{path: Path.t(), reason: term()}
   @type t :: %__MODULE__{entries: %{String.t() => Entry.t()}, diagnostics: [diagnostic()]}
 
+  @spec new([Entry.t()], [diagnostic()]) :: t()
+  def new(entries \\ [], diagnostics \\ []) do
+    Enum.reduce(entries, %__MODULE__{entries: %{}, diagnostics: diagnostics}, &put_entry(&2, &1))
+  end
+
   @spec configured_roots() :: [Path.t()]
   def configured_roots do
     Application.get_env(:neume, :voicebank_roots, [])
   end
 
-  @spec discover_configured(keyword()) :: {:ok, t()}
+  @spec default_provider() :: module() | nil
+  def default_provider do
+    Application.get_env(:neume, :voicebank_provider)
+  end
+
+  @spec discover_configured(keyword()) :: {:ok, t()} | {:error, term()}
   def discover_configured(opts \\ []) do
     discover(Keyword.get(opts, :roots, configured_roots()), Keyword.delete(opts, :roots))
   end
 
-  @spec discover([Path.t()] | Path.t(), keyword()) :: {:ok, t()}
+  @spec discover([Path.t()] | Path.t(), keyword()) :: {:ok, t()} | {:error, term()}
   def discover(roots, opts \\ []) do
-    roots = if is_binary(roots), do: [roots], else: roots
+    provider = Keyword.get(opts, :provider, default_provider())
+    dispatch(provider, :discover, [roots, Keyword.delete(opts, :provider)])
+  end
 
-    candidates =
-      roots
-      |> Enum.flat_map(&candidates/1)
-      |> Enum.uniq()
-      |> Enum.sort()
-
-    registry =
-      Enum.reduce(
-        candidates,
-        %__MODULE__{entries: %{}, diagnostics: []},
-        &discover_candidate(&1, &2, opts)
-      )
-
-    {:ok, %{registry | diagnostics: Enum.reverse(registry.diagnostics)}}
+  @spec entry_from_path(Path.t(), keyword()) :: {:ok, Entry.t()} | {:error, term()}
+  def entry_from_path(path, opts) when is_binary(path) and is_list(opts) do
+    provider = Keyword.get(opts, :voicebank_provider, default_provider())
+    dispatch(provider, :entry_from_path, [path, opts])
   end
 
   @spec list(t()) :: [Entry.t()]
@@ -69,59 +69,25 @@ defmodule Neume.Voicebank.Registry do
 
   @spec prepare_modified(t(), String.t(), keyword()) :: {:ok, t(), Entry.t()} | {:error, term()}
   def prepare_modified(%__MODULE__{} = registry, stock_id, opts \\ []) do
-    with {:ok, %Entry{mode: :stock, manifest: manifest}} <- fetch(registry, stock_id),
-         {:ok, fp} <-
-           DiffSingerFp.for_voicebank(
-             manifest.root,
-             Keyword.merge([voicebank_digest: manifest.digest], opts)
-           ) do
-      entry = Entry.modified(manifest, fp)
+    with {:ok, %Entry{provider: provider} = stock} <- fetch(registry, stock_id),
+         {:ok, entry} <- dispatch(provider, :prepare_modified, [stock, opts]) do
       {:ok, put_entry(registry, entry), entry}
-    else
-      {:ok, %Entry{mode: mode}} -> {:error, {:modified_requires_stock_entry, mode}}
-      {:error, _} = error -> error
     end
   end
 
-  defp candidates(root) when is_binary(root) do
-    root = Path.expand(root)
-
-    if File.dir?(root) do
-      [root | root |> Path.join("*") |> Path.wildcard() |> Enum.filter(&File.dir?/1)]
-    else
-      [root]
-    end
-  end
-
-  defp discover_candidate(path, registry, opts) do
-    case DiffSinger.scan(path) do
-      {:ok, manifest} ->
-        registry
-        |> put_entry(Entry.stock(manifest))
-        |> maybe_put_fp(manifest, opts)
-
-      {:error, reason} ->
-        %{registry | diagnostics: [%{path: path, reason: reason} | registry.diagnostics]}
-    end
-  end
-
-  defp maybe_put_fp(registry, manifest, _opts) do
-    fp_opts = [voicebank_digest: manifest.digest, build?: false]
-
-    case DiffSingerFp.for_voicebank(manifest.root, fp_opts) do
-      {:ok, fp} ->
-        put_entry(registry, Entry.modified(manifest, fp))
-
-      {:error, {:fp_manifest_missing, _path}} ->
-        registry
-
-      {:error, reason} ->
-        diagnostic = %{path: manifest.root, reason: {:invalid_modified_variant, reason}}
-        %{registry | diagnostics: [diagnostic | registry.diagnostics]}
-    end
-  end
-
-  defp put_entry(%__MODULE__{} = registry, %Entry{} = entry) do
+  @spec put_entry(t(), Entry.t()) :: t()
+  def put_entry(%__MODULE__{} = registry, %Entry{} = entry) do
     %{registry | entries: Map.put(registry.entries, entry.id, entry)}
   end
+
+  defp dispatch(provider, function, args) when is_atom(provider) do
+    if Code.ensure_loaded?(provider) and function_exported?(provider, function, length(args)) do
+      apply(provider, function, args)
+    else
+      {:error, {:voicebank_provider_unavailable, provider}}
+    end
+  end
+
+  defp dispatch(provider, _function, _args),
+    do: {:error, {:invalid_voicebank_provider, provider}}
 end

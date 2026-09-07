@@ -1,4 +1,4 @@
-defmodule Neume.Voicebank.DiffSinger do
+defmodule NeumeOpuDs.Voicebank.Manifest do
   @moduledoc """
   OpenUtau 格式 DiffSinger 声库的只读描述符与扫描器。
 
