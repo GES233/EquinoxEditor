@@ -269,6 +269,106 @@ defmodule Neume.EditorTest do
              Editor.check(editor)
   end
 
+  describe "replace_pin/4" do
+    alias Neume.Pin.Schema
+
+    defp duration_patch_id(editor) do
+      editor.session
+      |> Coconut.workspace()
+      |> then(& &1.tracks[editor.track_id])
+      |> Map.get(:patches)
+      |> Enum.find(&(&1.channel == :duration))
+      |> Map.get(:id)
+    end
+
+    defp duration_payload(editor) do
+      editor.session
+      |> Coconut.workspace()
+      |> then(& &1.tracks[editor.track_id])
+      |> Map.get(:patches)
+      |> Enum.find(&(&1.channel == :duration))
+      |> Map.get(:patch)
+      |> Map.get(:payload)
+    end
+
+    test "同 schema 替换（不要求冲突态）：一条历史边，undo 一次还原", %{editor: editor} do
+      assert {:ok, editor} =
+               Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+      assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+      old_id = duration_patch_id(editor)
+
+      assert {:ok, editor, result} = Editor.replace_pin(editor, old_id, [[1, 120]])
+
+      assert %{replaced_patch_id: ^old_id, payload_schema: "phoneme_duration_v1"} = result
+      assert result.patch_id != old_id
+      assert duration_payload(editor) == [[1, 120]]
+
+      # 一条历史边：undo 一次完整还原旧 payload。
+      assert {:ok, editor} = Editor.undo(editor)
+      assert duration_patch_id(editor) == old_id
+      assert duration_payload(editor) == [[0, 96]]
+
+      assert {:ok, editor} = Editor.redo(editor)
+      assert duration_payload(editor) == [[1, 120]]
+      assert {:ok, _editor, _report} = Editor.check(editor)
+    end
+
+    test "legacy → v2 升级（显式升级手势）", %{editor: editor} do
+      assert {:ok, editor} =
+               Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+      assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+
+      v2 =
+        Schema.phoneme_duration_v2_payload([
+          %{segment: %{unit: "n1", member: 0, index: 1}, duration_tick: 120}
+        ])
+
+      assert {:ok, editor, %{payload_schema: "phoneme_duration_v2"}} =
+               Editor.replace_pin(editor, duration_patch_id(editor), v2)
+
+      # 升级后签 correspondence 底料：改词以外的编辑不再炸。
+      assert {:ok, editor} = Editor.edit_note(editor, "n1", %{pitch: 62})
+      assert {:ok, _editor, _report} = Editor.check(editor)
+    end
+
+    test "v2 → legacy 降级被拒绝", %{editor: editor} do
+      assert {:ok, editor} =
+               Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+      v2 =
+        Schema.phoneme_duration_v2_payload([
+          %{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 96}
+        ])
+
+      assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", v2)
+      patch_id = duration_patch_id(editor)
+
+      assert {:error, {:pin_schema_downgrade, "phoneme_duration_v2", "phoneme_duration_v1"}} =
+               Editor.replace_pin(editor, patch_id, [[0, 96]])
+
+      assert duration_patch_id(editor) == patch_id
+    end
+
+    test "不在册 patch 与非法 payload 拒绝，状态不变", %{editor: editor} do
+      assert {:ok, editor} =
+               Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
+
+      assert {:error, {:patch_not_alive, "patch-x"}} =
+               Editor.replace_pin(editor, "patch-x", [[0, 60]])
+
+      assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+      patch_id = duration_patch_id(editor)
+
+      assert {:error, {:unknown_duration_payload_schema, _}} =
+               Editor.replace_pin(editor, patch_id, %{"bogus" => true})
+
+      assert duration_patch_id(editor) == patch_id
+      assert duration_payload(editor) == [[0, 96]]
+    end
+  end
+
   defp notes(editor) do
     {:ok, notes} = Editor.notes(editor)
     notes

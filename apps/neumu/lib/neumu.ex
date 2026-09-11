@@ -489,18 +489,39 @@ defmodule Neumu do
   end
 
   @doc """
-  在音符上挂载逐音素的稀疏时长 pin：`[[音素下标, tick 时长], ...]`；
-  下标指向 probe 物化序列中的音素。
+  在音符上挂载逐音素的稀疏时长 pin。
+
+  `durations` 两形：旧 `[[音素下标, tick 时长], ...]` 点列（legacy），或
+  批次 D 的 `phoneme_duration_v2` envelope plain map——
+  `%{schema: "phoneme_duration_v2", values: [%{segment: %{unit, member,
+  index}, duration_tick: ticks}]}`，segment ref 指向锚定音符自身
+  （unit = 组头 note_id、member = 组内序号、index = 成员内音素下标）。
   """
   @spec mount_phoneme_duration(
           RenderJob.project_id(),
           Coconut.Edit.Track.track_id(),
           term(),
-          [[non_neg_integer()]],
+          term(),
           map()
         ) :: {:ok, history_pin()} | {:error, term()}
   def mount_phoneme_duration(project_id, track_id, note_id, durations, probe) do
     edit(project_id, {:mount_pin, track_id, note_id, :duration, {:durations, durations}, probe})
+  end
+
+  @doc """
+  替换 pin 手势（批次 D）：丢弃在册 patch 并以当前事实挂载新 payload，
+  一条历史边（undo 一次还原旧 pin）。`patch_id` 为快照 `pins` 投影的
+  `id`；`payload` 自描述 schema——允许同 schema 替换与 legacy → v2
+  升级，v2 → legacy 降级返回 `{:error, {:pin_schema_downgrade, _, _}}`。
+  patch 不要求处于冲突态（语义即"换内容"）。
+
+  成功返回 `{:ok, history_pin, result}`，`result` 含 `patch_id`（新）、
+  `replaced_patch_id`（旧）与 `payload_schema`。
+  """
+  @spec replace_pin(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term(), term()) ::
+          {:ok, history_pin(), map()} | {:error, term()}
+  def replace_pin(project_id, track_id, patch_id, payload) do
+    edit(project_id, {:replace_pin, track_id, patch_id, payload})
   end
 
   @doc """

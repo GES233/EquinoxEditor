@@ -176,6 +176,90 @@ defmodule Neumu.PinFacadeTest do
     refute_received {:project_changed, _, _}
   end
 
+  test "mount_phoneme_duration 接受 phoneme_duration_v2 envelope", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+
+    v2 = %{
+      schema: "phoneme_duration_v2",
+      values: [%{segment: %{unit: "n1", member: 0, index: 1}, duration_tick: 96}]
+    }
+
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", v2, probe)
+    assert_received {:project_changed, ^id, 3}
+
+    assert [
+             %{
+               channel: :duration,
+               payload: %{
+                 schema: "phoneme_duration_v2",
+                 values: [%{segment: %{unit: "n1", member: 0, index: 1}, duration_tick: 96}]
+               }
+             }
+           ] = pins!(id)
+
+    assert_plain_data(snapshot!(id))
+    refute_received {:project_changed, _, _}
+  end
+
+  test "replace_pin：legacy → v2 升级一条边一次事件，undo 还原", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], probe)
+    assert_received {:project_changed, ^id, 3}
+
+    [%{id: old_id}] = pins!(id)
+
+    v2 = %{
+      schema: "phoneme_duration_v2",
+      values: [%{segment: %{unit: "n1", member: 0, index: 1}, duration_tick: 120}]
+    }
+
+    assert {:ok, 4, result} = Neumu.replace_pin(id, "lead", old_id, v2)
+    assert_received {:project_changed, ^id, 4}
+
+    assert %{
+             replaced_patch_id: ^old_id,
+             payload_schema: "phoneme_duration_v2",
+             patch_id: new_id
+           } = result
+
+    assert new_id != old_id
+    assert [%{id: ^new_id, payload: %{schema: "phoneme_duration_v2"}}] = pins!(id)
+    assert_plain_data(result)
+
+    # 一条历史边：undo 一次完整还原旧 legacy pin。
+    assert {:ok, 3} = Neumu.undo(id)
+    assert_received {:project_changed, ^id, 3}
+    assert [%{id: ^old_id, payload: [[0, 96]]}] = pins!(id)
+
+    refute_received {:project_changed, _, _}
+  end
+
+  test "replace_pin：v2 → legacy 降级拒绝，不改状态不发事件", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+
+    v2 = %{
+      schema: "phoneme_duration_v2",
+      values: [%{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 96}]
+    }
+
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", v2, probe)
+    assert_received {:project_changed, ^id, 3}
+    [%{id: patch_id}] = pins!(id)
+
+    assert {:error, {:pin_schema_downgrade, "phoneme_duration_v2", "phoneme_duration_v1"}} =
+             Neumu.replace_pin(id, "lead", patch_id, [[0, 96]])
+
+    assert {:error, {:patch_not_alive, "no-such"}} =
+             Neumu.replace_pin(id, "lead", "no-such", [[0, 96]])
+
+    assert {:ok, 3} = Neumu.history_pin(id)
+    assert [%{id: ^patch_id}] = pins!(id)
+    refute_received {:project_changed, _, _}
+  end
+
   test "mount_pitch_curve 接受 plain-map payload 并原样投影", %{project_id: id} do
     :ok = Neumu.subscribe(id)
     assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")

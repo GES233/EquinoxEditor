@@ -467,6 +467,10 @@ defmodule Neumu.ProjectServer do
     Neume.MultiTrack.repatch(multi_track, track_id, patch_ids)
   end
 
+  defp apply_edit(multi_track, {:replace_pin, track_id, patch_id, payload}) do
+    Neume.MultiTrack.replace_pin(multi_track, track_id, patch_id, payload)
+  end
+
   defp apply_edit(multi_track, {:unmount_pin, track_id, note_id, channel}) do
     Neume.MultiTrack.unmount_pin(multi_track, track_id, note_id, channel)
   end

@@ -38,7 +38,18 @@ defmodule Neume.Pin.Semantics do
   """
   @callback requires_probe?(Descriptor.t(), term()) :: boolean()
 
-  @optional_callbacks requires_probe?: 2
+  @doc """
+  re-patch 的 payload 机械重写（批次 D，可选）：组归属漂移等情形下，
+  把 payload 里的引用按当前上下文重写（如 duration v2 的 segment ref
+  按锚定音符的当前 membership 重定 unit/member，index 不变）。
+
+  仅在 `expressible?/4` 失败后被 repatch 计划尝试；重写结果会再经
+  `expressible?/4` 复核，仍失败则降级。无法重写返回 `:error`。
+  """
+  @callback redirect(Context.t(), Tamale.Anchor.t(), Descriptor.t(), term()) ::
+              {:ok, term()} | :error
+
+  @optional_callbacks requires_probe?: 2, redirect: 4
 
   @doc """
   入口校验：module 是否实现了本 behaviour 的全部必填回调。

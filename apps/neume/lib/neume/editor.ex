@@ -369,10 +369,18 @@ defmodule Neume.Editor do
   defp curve_payload(payload), do: PitchCurve.normalize(payload)
 
   @doc """
-  在音符上挂载逐音素的稀疏时长 pin：`[[音素下标, tick 时长], ...]`。
+  在音符上挂载逐音素的稀疏时长 pin。
 
-  底料与裁决同 `mount_pitch/4`；下标指向 probe 物化序列中的音素。
-  选项同 `mount_pitch/4`。
+  payload 两形：旧 `[[音素下标, tick 时长], ...]` 点列
+  （`phoneme_duration_v1`，legacy 签 `pin_input_v1`），或批次 D 的
+  `phoneme_duration_v2` envelope——`%{schema: "phoneme_duration_v2",
+  values: [%{segment: %{unit, member, index}, duration_tick: ticks}]}`，
+  segment ref 须指向锚定音符自身（unit = 组头 note_id、member = 组内
+  序号），签 `phoneme_correspondence_v1` 底料（track/note + unit 全组
+  输入事实 + phonology digest）。
+
+  底料与裁决同 `mount_pitch/4`；下标/ref 的界内与归属校验在
+  check/repatch/消费边界进行。选项同 `mount_pitch/4`。
   """
   @spec mount_phoneme_duration(t(), term(), [[non_neg_integer()]], keyword()) ::
           {:ok, t()} | {:error, term()}
@@ -553,6 +561,116 @@ defmodule Neume.Editor do
     end
   end
 
+  @doc """
+  替换 pin 手势（2026-09-11 拍板语义，随批次 D 接线）。
+
+  丢弃在册 patch 并以当前事实挂载新 payload，复用 repatch 的
+  discard/attach 批次落**一条历史边**（undo 一次完整还原旧 pin 的
+  payload 与底料）。新 payload 的校验与 mount 同构（`describe/1` →
+  `expressible?/4` → `base/4` 现场推导）；锚定不变（同
+  track/note/channel）。patch 不要求处于冲突态——语义即"换内容"。
+
+  payload schema 自描述：允许同 schema 替换与 legacy → v2 升级（设计
+  文档 §5 的显式升级手势）；v2 → legacy 降级返回
+  `{:error, {:pin_schema_downgrade, old_schema, new_schema}}`。
+
+  成功返回 `{:ok, editor, %{patch_id: 新 patch id, replaced_patch_id:
+  旧 patch id, payload_schema: schema}}`。
+  """
+  @spec replace_pin(t(), map() | Coconut.Util.ID.t(), term(), keyword()) ::
+          {:ok, t(), map()} | {:error, term()}
+  def replace_pin(%__MODULE__{} = editor, patch_ref, new_payload, _opts \\ []) do
+    with {:ok, [patch]} <- fetch_alive_patches(editor, [patch_ref]),
+         {:ok, semantics} <- fetch_semantics(editor.session.channels, patch.channel),
+         {:ok, old_descriptor} <- semantics.describe(patch.patch.payload),
+         {:ok, descriptor} <- semantics.describe(new_payload),
+         :ok <- ensure_no_schema_downgrade(old_descriptor, descriptor),
+         {:ok, track} <- current_track(editor),
+         {:ok, request} <- Coconut.request(editor.session),
+         {:ok, sequences} <-
+           probe_for_payload(editor, request, semantics, descriptor, new_payload),
+         {:ok, context} <-
+           replace_context(editor, track, patch, sequences),
+         :ok <- semantics.expressible?(context, patch.anchor, descriptor, new_payload),
+         {:ok, fresh_base} <- semantics.base(context, patch.anchor, descriptor, new_payload),
+         {:ok, resigned} <- Tamale.Patch.new(fresh_base, new_payload),
+         {:ok, replacement} <-
+           Patch.new(%{
+             track_id: patch.track_id,
+             channel: patch.channel,
+             anchor: %Tamale.Anchor.Ordinal{
+               refs: patch.anchor.refs,
+               at_version: track.space.version
+             },
+             patch: resigned
+           }),
+         {:ok, session} <-
+           Coconut.run(
+             editor.session,
+             Command.repatch_patches([{patch.track_id, patch.id, :replaced}], [replacement])
+           ) do
+      # attach 的 patch id 在 apply 期才铸（replay 纪律），从落账后的
+      # 轨道上按 anchor + channel 取回。
+      new_editor = %{editor | session: session}
+
+      with {:ok, new_patch_id} <- replacement_patch_id(new_editor, patch) do
+        {:ok, new_editor,
+         %{
+           patch_id: new_patch_id,
+           replaced_patch_id: patch.id,
+           payload_schema: descriptor.payload_schema
+         }}
+      end
+    end
+  end
+
+  defp replacement_patch_id(%__MODULE__{} = editor, patch) do
+    with {:ok, track} <- current_track(editor) do
+      case Enum.find(track.patches, fn alive ->
+             alive.channel == patch.channel and alive.anchor.refs == patch.anchor.refs
+           end) do
+        %Patch{id: id} -> {:ok, id}
+        nil -> {:error, {:replacement_patch_missing, patch.id}}
+      end
+    end
+  end
+
+  # 降级门卫：只允许同世代或向上替换（legacy → v2 是显式升级手势），
+  # v2 → legacy 拒绝。
+  defp ensure_no_schema_downgrade(old_descriptor, descriptor) do
+    old_generation = Schema.payload_generation(old_descriptor.payload_schema)
+    new_generation = Schema.payload_generation(descriptor.payload_schema)
+
+    if new_generation >= old_generation do
+      :ok
+    else
+      {:error, {:pin_schema_downgrade, old_descriptor.payload_schema, descriptor.payload_schema}}
+    end
+  end
+
+  # 按新 payload 的 probe 需求决定是否调 phonemes/3（与 repatch 同一
+  # 规则：无法判定时保守 probe）。
+  defp probe_for_payload(editor, request, semantics, descriptor, payload) do
+    requires? =
+      function_exported?(semantics, :requires_probe?, 2) and
+        semantics.requires_probe?(descriptor, payload)
+
+    if requires? or not function_exported?(semantics, :requires_probe?, 2),
+      do: editor.pipeline.phonemes(editor.pipeline_state, request.snapshot, editor.track_id),
+      else: {:ok, nil}
+  end
+
+  defp replace_context(editor, track, patch, sequences) do
+    digest = voicebank_digest(editor)
+
+    {:ok,
+     Context.new(track, patch.track_id, digest,
+       phonology_digest: phonology_digest(editor),
+       legacy_probe: sequences,
+       legacy_bases: Identity.base_by_note(track, digest)
+     )}
+  end
+
   # 只有声明需要 probe 的 payload（如旧 duration 的裸 ph_index）才调
   # pipeline.phonemes/3；纯 Pin<S>（pitch）批次不强迫引擎实现音素展开。
   # 无法判定时保守按需要 probe 处理，后续校验会给出 tagged error。
@@ -664,8 +782,23 @@ defmodule Neume.Editor do
   defp probe_and_adjudicate(%__MODULE__{} = editor) do
     %{request: request} = editor.session.last_round
 
-    with {:ok, pins} <- lowered_pins(editor, request),
-         {:ok, phrase_results, model_errors} <-
+    case lowered_pins(editor, request) do
+      {:ok, pins} ->
+        probe_with_pins(editor, request, pins)
+
+      {:error, {:check_failed, pin_entries}} ->
+        # lowering 失败的 v2 pin 必然也身份冲突（segment 失配 ⇒ 组归属/
+        # 底料已变）：补跑身份裁决，让携 patch 的冲突 entry 与 pin entry
+        # 在同一界面聚合（repatch 以冲突 entry 为入口）。
+        case adjudicate_identity_errors(editor, nil) do
+          {:ok, identity_errors} -> {:error, {:check_failed, pin_entries ++ identity_errors}}
+          {:error, _} -> {:error, {:check_failed, pin_entries}}
+        end
+    end
+  end
+
+  defp probe_with_pins(%__MODULE__{} = editor, request, pins) do
+    with {:ok, phrase_results, model_errors} <-
            editor.pipeline.analyze_phrases(
              editor.pipeline_state,
              request.snapshot,
@@ -818,11 +951,17 @@ defmodule Neume.Editor do
         with {:ok, semantics} <- fetch_semantics(channels, patch.channel),
              {:ok, _sequence} <- fetch_sequence(sequences, note_id),
              {:ok, descriptor} <- semantics.describe(patch.patch.payload),
-             :ok <-
-               semantics.expressible?(context, patch.anchor, descriptor, patch.patch.payload),
+             {:ok, effective_payload, redirected?} <-
+               expressible_or_redirect(
+                 context,
+                 patch.anchor,
+                 descriptor,
+                 patch.patch.payload,
+                 semantics
+               ),
              {:ok, fresh_base} <-
-               semantics.base(context, patch.anchor, descriptor, patch.patch.payload),
-             {:ok, resigned} <- Tamale.Patch.new(fresh_base, patch.patch.payload),
+               semantics.base(context, patch.anchor, descriptor, effective_payload),
+             {:ok, resigned} <- Tamale.Patch.new(fresh_base, effective_payload),
              {:ok, replacement} <-
                Patch.new(%{
                  track_id: patch.track_id,
@@ -834,7 +973,12 @@ defmodule Neume.Editor do
                  patch: resigned
                }) do
           entry = {patch.track_id, patch.id, :rebased}
-          result = %{patch_id: patch.id, status: :repatched}
+
+          result =
+            if redirected?,
+              do: %{patch_id: patch.id, status: :repatched, redirected: true},
+              else: %{patch_id: patch.id, status: :repatched}
+
           {[entry | discards], [replacement | attaches], [result | results]}
         else
           {:error, reason} ->
@@ -844,6 +988,25 @@ defmodule Neume.Editor do
       end)
 
     {:ok, Enum.reverse(discards), Enum.reverse(attaches), Enum.reverse(results)}
+  end
+
+  # 可表达性优先；失败且 channel 语义提供 `redirect/4`（批次 D，如
+  # duration v2 的 segment ref 机械重定）时尝试重写 payload 并复核，
+  # 重写仍失败则报原始失败原因降级。
+  defp expressible_or_redirect(context, anchor, descriptor, payload, semantics) do
+    case semantics.expressible?(context, anchor, descriptor, payload) do
+      :ok ->
+        {:ok, payload, false}
+
+      {:error, reason} ->
+        with true <- function_exported?(semantics, :redirect, 4),
+             {:ok, rewritten} <- semantics.redirect(context, anchor, descriptor, payload),
+             :ok <- semantics.expressible?(context, anchor, descriptor, rewritten) do
+          {:ok, rewritten, true}
+        else
+          _failed -> {:error, reason}
+        end
+    end
   end
 
   # 只允许重挂在册 patch。entry 可以是 check 冲突 entry（携完整 patch），

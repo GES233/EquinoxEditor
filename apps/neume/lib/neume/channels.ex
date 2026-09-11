@@ -125,21 +125,35 @@ defmodule Neume.Channels.DurationPin do
   @moduledoc """
   逐音素 duration pin channel（probe 期身份底料，§6.6）。
 
-  payload：`[[ph_index, dur_tick], ...]` 音符内稀疏时长钉
-  （`phoneme_duration_v1`），carrier 为 `Pin<Co<S,Ph>>`
-  （`:correspondence`——同时引用音素 segment 与谱面 tick 预算）。迁移期
-  底座不变：继续签 `pin_input_v1` 输入事实底料（见 `Neume.Identity`）；
-  `ph_index` 越界等可表达性校验在消费边界（ScorePlan/Analysis）与
-  re-patch 手势里（后者读 `Context.legacy_probe` 的 probe 物化词内音素
-  序列）。stable segment ref（`phoneme_duration_v2`）见
-  `design-2026-09-pin-carriers` 批次 D。
+  payload 两形（`describe/1` 按 payload 分派），carrier 均为
+  `Pin<Co<S,Ph>>`（`:correspondence`——同时引用音素 segment 与谱面
+  tick 预算）：
+
+  - 旧 `[[ph_index, dur_tick], ...]` 点列（`phoneme_duration_v1`）：
+    legacy，继续签 `pin_input_v1` 输入事实底料（见 `Neume.Identity`）；
+    `ph_index` 越界等可表达性校验在消费边界（ScorePlan/Analysis）与
+    re-patch 手势里（后者读 `Context.legacy_probe` 的 probe 物化词内
+    音素序列），行为不变；
+  - `phoneme_duration_v2` envelope（批次 D）：stable segment ref
+    （`%{unit, member, index}`，`Neume.Phonology.Ref`）替代裸
+    `ph_index`，签 `phoneme_correspondence_v1` 底料——钉 track/note、
+    unit（组头 note_id）与全组输入事实（各成员歌词/显式音素）+
+    字典级 phonology digest。改音高、拖动、模型刷新（Stock/Modified
+    切换）不炸；改词、词典/G2P 变化、melisma 晋升/断组会炸，repatch
+    经 `redirect/4` 按锚定音符的当前 membership 机械重定 ref
+    （unit/member 重写、index 不变），映射不成立则降级。
   """
 
   @behaviour Coconut.Render.Channel
   @behaviour Neume.Pin.Semantics
 
-  alias Coconut.Edit.Patch
+  alias Coconut.Edit.{Patch, Track}
+  alias Neume.Phonology.Ref
   alias Neume.Pin.{Context, Descriptor, Schema}
+  alias Neume.Syllable
+
+  @phoneme_duration_v2 Schema.phoneme_duration_v2()
+  @correspondence_v1 Schema.base_phoneme_correspondence_v1()
 
   @impl Coconut.Render.Channel
   def projection(_ws, _patch), do: {:error, :probe_stage_channel}
@@ -157,18 +171,81 @@ defmodule Neume.Channels.DurationPin do
       {:ok,
        %Descriptor{
          payload_schema: schema,
-         base_schema: Schema.base_pin_input_v1(),
+         base_schema: base_schema(schema),
          carrier: :correspondence
        }}
     end
   end
 
+  defp base_schema(@phoneme_duration_v2), do: @correspondence_v1
+  defp base_schema(_legacy), do: Schema.base_pin_input_v1()
+
   @impl Neume.Pin.Semantics
+  def base(%Context{} = context, anchor, %Descriptor{base_schema: @correspondence_v1}, _payload),
+    do: correspondence_base(context, anchor)
+
   def base(%Context{} = context, anchor, _descriptor, _payload),
     do: Neume.Identity.legacy_base(context, anchor)
 
-  # 所有 pin 下标须在 probe 物化序列（legacy_probe）界内。
+  # v2 底料：谱面区域（track/note）+ unit 组成与全组输入事实 + 字典级
+  # phonology digest。续音符的序列派生自组头（延续元音取头词元音），
+  # 故底料覆盖全组成员而非只锚定音符自身。声库在场但 runtime 未提供
+  # phonology digest 时拒绝签名（不静默回退全量摘要）。
+  defp correspondence_base(%Context{} = context, %Tamale.Anchor.Ordinal{refs: [note_id | _]}) do
+    with :ok <- ensure_phonology_digest(context),
+         {:ok, membership} <- fetch_membership(context.track, note_id) do
+      notes = Map.new(Track.view(context.track), fn {id, note, _span} -> {id, note} end)
+
+      members =
+        context.track
+        |> memberships()
+        |> Ref.units()
+        |> Map.fetch!(membership.head_id)
+        |> Enum.map(fn id ->
+          note = Map.fetch!(notes, id)
+          %{note: id, lyric: note.lyric, phonemes: explicit_phonemes(note)}
+        end)
+
+      {:ok,
+       %{
+         schema: @correspondence_v1,
+         track: context.track_id,
+         note: note_id,
+         unit: membership.head_id,
+         members: members,
+         phonology_digest: Context.phonology_digest(context)
+       }}
+    end
+  end
+
+  defp correspondence_base(%Context{}, other), do: {:error, {:unsupported_anchor, other}}
+
+  defp ensure_phonology_digest(%Context{} = context) do
+    if Context.voicebank_digest(context) != nil and Context.phonology_digest(context) == nil,
+      do: {:error, {:missing_phonology_digest, context.track_id}},
+      else: :ok
+  end
+
+  defp explicit_phonemes(note), do: Map.get(note.metadata || %{}, "phonemes")
+
+  # v2：segment ref 必须指向锚定音符自身（unit/member 与当前 membership
+  # 一致）且 index 在 probe 物化序列界内。legacy：所有下标界内。
   @impl Neume.Pin.Semantics
+  def expressible?(
+        %Context{} = context,
+        anchor,
+        %Descriptor{payload_schema: @phoneme_duration_v2},
+        %{
+          values: values
+        }
+      ) do
+    with {:ok, note_id} <- probe_note_id(anchor),
+         {:ok, membership} <- fetch_membership(context.track, note_id),
+         {:ok, sequence} <- probe_sequence(context, note_id) do
+      check_segments(values, note_id, membership, sequence)
+    end
+  end
+
   def expressible?(%Context{} = context, anchor, _descriptor, durations) do
     with {:ok, note_id} <- probe_note_id(anchor),
          {:ok, fresh} <- probe_sequence(context, note_id) do
@@ -176,8 +253,81 @@ defmodule Neume.Channels.DurationPin do
     end
   end
 
+  # 组归属漂移后的 payload 机械重写（批次 D）：segment ref 按锚定音符的
+  # 当前 membership 重定 unit/member，index 不变；value 形状不完整时
+  # 放弃重写（交由降级报告）。重写结果由 repatch 计划再经
+  # `expressible?/4` 复核。
+  @impl Neume.Pin.Semantics
+  def redirect(%Context{} = context, anchor, %Descriptor{payload_schema: @phoneme_duration_v2}, %{
+        values: values
+      }) do
+    with {:ok, note_id} <- probe_note_id(anchor),
+         {:ok, membership} <- fetch_membership(context.track, note_id),
+         true <- Enum.all?(values, &segment_value?/1) do
+      rewritten =
+        Enum.map(values, fn value ->
+          %{value | segment: Ref.segment(membership, value.segment.index)}
+        end)
+
+      {:ok, %{schema: @phoneme_duration_v2, values: rewritten}}
+    else
+      _other -> :error
+    end
+  end
+
+  def redirect(%Context{}, _anchor, _descriptor, _payload), do: :error
+
+  defp segment_value?(%{
+         segment: %{unit: _unit, member: member, index: index},
+         duration_tick: ticks
+       })
+       when is_integer(member) and member >= 0 and is_integer(index) and index >= 0 and
+              is_integer(ticks) and ticks > 0,
+       do: true
+
+  defp segment_value?(_other), do: false
+
+  defp check_segments(values, note_id, membership, sequence) do
+    Enum.reduce_while(values, :ok, fn
+      %{segment: %{unit: unit, member: member, index: index}, duration_tick: ticks}, :ok
+      when is_integer(member) and member >= 0 and is_integer(index) and index >= 0 and
+             is_integer(ticks) and ticks > 0 ->
+        ref = %{unit: unit, member: member, index: index}
+
+        cond do
+          unit != membership.head_id or member != membership.member_index ->
+            {:halt, {:error, {:segment_ref_mismatch, note_id, ref}}}
+
+          index >= length(sequence) ->
+            {:halt, {:error, {:phoneme_index_out_of_range, index, length(sequence)}}}
+
+          true ->
+            {:cont, :ok}
+        end
+
+      other, :ok ->
+        {:halt, {:error, {:invalid_duration_value, other}}}
+    end)
+  end
+
   defp probe_note_id(%Tamale.Anchor.Ordinal{refs: [note_id | _]}), do: {:ok, note_id}
   defp probe_note_id(other), do: {:error, {:unsupported_anchor, other}}
+
+  defp memberships(%Track{} = track) do
+    track
+    |> Track.view()
+    |> Enum.map(fn {id, note, {start_tick, end_tick}} ->
+      {id, start_tick, end_tick, Syllable.flagged?(note.metadata)}
+    end)
+    |> Ref.memberships()
+  end
+
+  defp fetch_membership(track, note_id) do
+    case Map.fetch(memberships(track), note_id) do
+      {:ok, membership} -> {:ok, membership}
+      :error -> {:error, {:unknown_note, note_id}}
+    end
+  end
 
   defp probe_sequence(%Context{legacy_probe: nil}, note_id),
     do: {:error, {:unknown_note, note_id}}
@@ -201,7 +351,8 @@ defmodule Neume.Channels.DurationPin do
     end)
   end
 
-  # 旧 duration payload 以裸 `ph_index` 引用 probe 物化序列，必须 probe。
+  # duration pin 引用 probe 物化序列（legacy 裸下标 / v2 segment ref 的
+  # 界内判定），必须 probe。
   @impl Neume.Pin.Semantics
   def requires_probe?(_descriptor, _payload), do: true
 end

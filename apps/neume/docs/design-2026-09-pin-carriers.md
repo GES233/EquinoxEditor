@@ -17,7 +17,12 @@
 > 批次 C 已实施（2026-09-11）：Manifest 字典级摘要、`phonology_digest/1`
 > 回调与 `Context` 扩展、`Neume.Phonology.Ref` 派生/解析、双 runtime
 > ref 契约向量落地；无用户可见 payload 变化（duration v2 属批次 D）。
-> 批次 D 待施工。
+> 批次 D 已实施（2026-09-11）：`phoneme_duration_v2` envelope（stable
+> segment ref）+ `phoneme_correspondence_v1` 底料落地；repatch 从
+> "下标界内"升级为"segment 可重定向"（`Semantics.redirect/4` 机械重定
+> ref，payload 重写同边落账）；`Editor.replace_pin/4` 接线（同 schema
+> 替换与 legacy → v2 升级，v2 → legacy 拒绝）；lowering 失败的 v2 pin
+> 与身份冲突在同一 check 界面聚合。legacy payload 行为不变。
 
 ## 1. 问题
 
@@ -374,11 +379,33 @@ Neume 负责：
    资产，当前唯一消费方是合成管线；等发音编辑手势带来第二个消费方时
    再评估 `Neume.Phonology` 契约。✅（决策）
 
-### 批次 D：duration v2
+### 批次 D：duration v2（已实施，2026-09-11）
 
-- 新 duration mount 使用 stable segment ref。
-- repatch 从“下标界内”升级为“segment 可重定向”。
-- `neume_opu_ds` 在消费边界降为现有 worker index，worker 协议可暂时不变。
+- 新 duration mount 使用 stable segment ref：✅ `phoneme_duration_v2`
+  envelope（`%{schema, values: [%{segment: %{unit, member, index},
+  duration_tick}]}`），签 `phoneme_correspondence_v1` 底料（track/note +
+  unit 全组输入事实 + phonology digest；续音符序列派生自组头，故底料
+  覆盖全组）。改音高/拖动/邻居编辑/模型刷新存活；改词、词典/G2P 变化、
+  melisma 晋升/断组、split 引入续音成员冲突。survival matrix 见
+  `apps/neume/test/neume/phoneme_duration_v2_test.exs`。
+- repatch 从“下标界内”升级为“segment 可重定向”：✅ `Semantics.redirect/4`
+  optional callback——expressible? 失败后按锚定音符的当前 membership
+  机械重写 ref（unit/member 重定、index 不变），复核通过则以重写后的
+  payload 重签（结果报告 `redirected: true`），否则降级。
+- `neume_opu_ds` 在消费边界降为现有 worker index，worker 协议不变：✅
+  `Neume.Pin.Lower` 把 segment ref 降为成员自身序列内下标（legacy 同形），
+  ref 与 snapshot 派生的 membership 不一致即 `{:segment_ref_mismatch, _,
+  _}` loud 报错；index 界内仍由消费边界复核（lowering 不做 probe）。
+- `Editor.replace_pin/4` 接线（2026-09-11 拍板语义）：丢弃在册 patch +
+  以当前事实挂载新 payload，复用 repatch 的 discard/attach 批次落一条
+  历史边；patch 不要求处于冲突态（语义即“换内容”）；允许同 schema
+  替换与 legacy → v2 升级（§5 预留的显式升级手势），v2 → legacy 降级
+  返回 `{:pin_schema_downgrade, _, _}`（`Schema.payload_generation/1`
+  门卫）；facade `Neumu.replace_pin/4` 同步透出。ref 重定向是它的
+  server 侧受限变体，共用同一 discard/attach 管线。
+- lowering 失败的 v2 pin（如漂移 ref）与身份裁决在同一 check 界面聚合：
+  `kind :pin` entry + 携 patch 的 `kind :conflict` entry 同时出现，
+  repatch 以冲突 entry 为入口。
 
 ## 10. 验收条件
 
@@ -405,4 +432,5 @@ Neume 负责：
    提供 opaque 字符串，范围 = 字典级资产 + G2P 算法版本戳，不用整个
    runtime manifest digest；不拆独立 G2P 实体（见批次 C 施工要点）。
 
-批次 A/B/C 已完成；批次 D（duration v2）待施工。
+批次 A/B/C/D 已完成。后续方向：legacy 双轨是迁移期兼容层，不长期保留
+（§5）；v2 实战验证后可评估 legacy 通道退役（读档兼容保留）。

@@ -460,6 +460,12 @@ defmodule Neume.MultiTrack do
   def repatch(runtime, track_id, entries),
     do: invoke_track(runtime, track_id, &Editor.repatch(&1, entries))
 
+  @doc "替换 pin 手势（一条历史边；语义见 `Neume.Editor.replace_pin/4`）。"
+  @spec replace_pin(t(), Track.track_id(), term(), term()) ::
+          {:ok, t(), map()} | {:error, term()}
+  def replace_pin(runtime, track_id, patch_ref, new_payload),
+    do: invoke_track(runtime, track_id, &Editor.replace_pin(&1, patch_ref, new_payload))
+
   @spec export_debug(t(), Track.track_id(), Path.t(), keyword()) ::
           {:ok, t(), Path.t()} | {:error, term()}
   def export_debug(runtime, track_id, path, opts \\ []),

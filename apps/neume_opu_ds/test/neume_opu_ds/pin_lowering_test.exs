@@ -50,18 +50,53 @@ defmodule NeumeOpuDs.PinLoweringTest do
         "n1",
         Schema.score_pitch_v2_payload([[0, 61.0], [120, 72.0]])
       ),
-      resolved("phoneme_duration_v1", "pin_input_v1", :correspondence, "n1", [[0, 96]])
+      resolved("phoneme_duration_v1", "pin_input_v1", :correspondence, "n1", [[0, 96]]),
+      resolved(
+        "phoneme_duration_v2",
+        "phoneme_correspondence_v1",
+        :correspondence,
+        "n1",
+        Schema.phoneme_duration_v2_payload([
+          %{segment: %{unit: "n1", member: 0, index: 1}, duration_tick: 48}
+        ])
+      )
     ]
 
     assert {:ok, pins} = NeumeOpuDs.Runtime.lower_pins(nil, snapshot, resolved, track_id)
 
-    # note_tick 偏移按 snapshot 起点（240）平移为绝对 tick；legacy 透传。
+    # note_tick 偏移按 snapshot 起点（240）平移为绝对 tick；legacy 透传；
+    # v2 duration 的 segment ref 降为成员内下标（同 note/channel 后写
+    # 覆盖，v2 条目覆盖同音符的 legacy 条目）。
     assert pins == %{
              pitch: %{"n1" => [[240, 61.0], [360, 72.0]]},
-             duration: %{"n1" => [[0, 96]]}
+             duration: %{"n1" => [[1, 48]]}
            }
 
     assert {:ok, ^pins} =
+             Neume.Engine.MockPipeline.lower_pins(nil, snapshot, resolved, track_id)
+  end
+
+  test "v2 duration 的 segment ref 失配，两个 runtime 同样 loud 报错", %{
+    snapshot: snapshot,
+    track_id: track_id
+  } do
+    resolved = [
+      resolved(
+        "phoneme_duration_v2",
+        "phoneme_correspondence_v1",
+        :correspondence,
+        "n1",
+        Schema.phoneme_duration_v2_payload([
+          %{segment: %{unit: "n9", member: 0, index: 0}, duration_tick: 48}
+        ])
+      )
+    ]
+
+    expected = {:error, {:segment_ref_mismatch, "n1", %{unit: "n9", member: 0, index: 0}}}
+
+    assert ^expected = NeumeOpuDs.Runtime.lower_pins(nil, snapshot, resolved, track_id)
+
+    assert ^expected =
              Neume.Engine.MockPipeline.lower_pins(nil, snapshot, resolved, track_id)
   end
 

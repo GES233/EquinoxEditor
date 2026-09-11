@@ -48,7 +48,7 @@
     notes: [%{id, start_tick, end_tick, pitch, lyric, annotation, metadata}],
     pins: [%{id, channel: :pitch|:duration,
              anchor: %{type: :ordinal, refs: [note_id], at_version},
-             payload: term}]      # pitch 点列 / Bezier plain map / 时长下标列
+             payload: term}]      # v2 envelope / legacy 点列 / Bezier plain map
   }]
 }
 ```
@@ -67,7 +67,8 @@
 | `undo/1` `redo/1` | `{:ok, pin}`；空栈 `{:error, :nothing_to_undo|:nothing_to_redo}` |
 | `mount_pitch/5` `mount_pitch_curve/5` `mount_phoneme_duration/5` | `{:ok, pin}`；`{:error, {:stale_pin, _}}` 见下 |
 | `unmount_pin/4` | `{:ok, pin}`；无存活 pin `{:error, {:pin_not_found, _, _}}` |
-| `repatch/3` | `{:ok, pin, results}`；results 逐项 `%{patch_id, status: :repatched|:degraded, reason?}`；全部降级不落边 |
+| `repatch/3` | `{:ok, pin, results}`；results 逐项 `%{patch_id, status: :repatched|:degraded, reason?}`（批次 D 起 ref 被机械重写的重签附 `redirected: true`）；全部降级不落边 |
+| `replace_pin/4` | `{:ok, pin, %{patch_id, replaced_patch_id, payload_schema}}`；v2 → legacy 降级 `{:error, {:pin_schema_downgrade, _, _}}`；不在册 `{:error, {:patch_not_alive, _}}` |
 
 ## 查询（只读，不产生历史边、不派发事件）
 
@@ -100,6 +101,14 @@
 2. 三个 mount 携 probe 令牌提交；probe 之后工程被编辑则
    `{:error, {:stale_pin, _}}`——**重新 probe 后重放**，令牌绑定
    track/note，张冠李戴返回 `{:error, {:invalid_pin_probe, _, _, _}}`。
+   duration 还接受批次 D 的 `phoneme_duration_v2` envelope（stable
+   segment ref：`%{unit: 组头 note_id, member: 组内序号, index: 成员内
+   音素下标}`），签 `phoneme_correspondence_v1` 底料（track/note +
+   unit 全组输入事实 + phonology digest）。
+3. 冲突 entry 的三个出口：`repatch/3`（内容不变、接受新事实；ref 漂移
+   时 server 机械重定并报告 `redirected: true`）、`replace_pin/4`
+   （放弃旧内容、按当前事实重写；同 schema 或 legacy → v2 升级，一条
+   历史边，undo 一次还原）、`unmount_pin/4`（卸载）。
 
 ## 乐观交互约定（薄壳/共享前端）
 
