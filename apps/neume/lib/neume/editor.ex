@@ -402,6 +402,15 @@ defmodule Neume.Editor do
   defp voicebank_digest(%__MODULE__{} = editor),
     do: editor.pipeline.voicebank_digest(editor.pipeline_state)
 
+  # 字典级 phonology 摘要分量（批次 C）：runtime 未实现回调时为 nil——
+  # legacy 路径不消费本分量；v2 Ph/Co 语义（批次 D）在缺失时给 tagged
+  # error，不在此回退全量摘要。
+  defp phonology_digest(%__MODULE__{} = editor) do
+    if function_exported?(editor.pipeline, :phonology_digest, 1),
+      do: editor.pipeline.phonology_digest(editor.pipeline_state),
+      else: nil
+  end
+
   @doc """
   按 `(note_id, channel)` 卸载 pin：存活 patch 移入墓地，记一条历史边
   （undo 一次还原）。该音符该 channel 无存活 pin 时返回
@@ -536,6 +545,7 @@ defmodule Neume.Editor do
              sequences,
              track,
              voicebank_digest(editor),
+             phonology_digest(editor),
              editor.session.channels
            ),
          {:ok, session} <- run_repatch(editor.session, discards, attaches) do
@@ -690,7 +700,9 @@ defmodule Neume.Editor do
 
       entries =
         track
-        |> Identity.adjudicate(editor.session.channels, voicebank_digest(editor))
+        |> Identity.adjudicate(editor.session.channels, voicebank_digest(editor),
+          phonology_digest: phonology_digest(editor)
+        )
         |> Enum.map(&locate_identity_error(&1, editor.track_id, phrases))
 
       {:ok, entries}
@@ -750,7 +762,11 @@ defmodule Neume.Editor do
 
   defp mount_base(%__MODULE__{} = editor, note_id, semantics, descriptor, payload, nil) do
     with {:ok, track} <- current_track(editor) do
-      context = Context.new(track, editor.track_id, voicebank_digest(editor))
+      context =
+        Context.new(track, editor.track_id, voicebank_digest(editor),
+          phonology_digest: phonology_digest(editor)
+        )
+
       anchor = %Tamale.Anchor.Ordinal{refs: [note_id], at_version: track.space.version}
       semantics.base(context, anchor, descriptor, payload)
     end
@@ -785,7 +801,7 @@ defmodule Neume.Editor do
   # （duration 下标在 probe 序列界内），可表达的以该 channel 的当前底料
   # 重签后进批量。整轨 legacy 底料预计算一次，经 Context.legacy_bases
   # 共享；channel 未注册或未完整实现语义回调时降级为 tagged error。
-  defp plan_repatch(patches, sequences, track, voicebank_digest, channels) do
+  defp plan_repatch(patches, sequences, track, voicebank_digest, phonology_digest, channels) do
     bases = Identity.base_by_note(track, voicebank_digest)
 
     {discards, attaches, results} =
@@ -794,6 +810,7 @@ defmodule Neume.Editor do
 
         context =
           Context.new(track, patch.track_id, voicebank_digest,
+            phonology_digest: phonology_digest,
             legacy_probe: sequences,
             legacy_bases: bases
           )

@@ -22,6 +22,15 @@ defmodule Neume.Runtime do
   @callback voicebank_digest(state()) :: String.t() | nil
 
   @doc """
+  字典级 phonology 摘要（opaque 字符串）：覆盖哪些资产、如何混入 G2P
+  算法版本戳由 runtime 自定；Neume 只把它签进 `Pin<Ph>`/`Pin<Co>` 的
+  v2 底料，不解释内容。无声库事实的 runtime 返回 `nil`。未实现本回调
+  的 runtime 无法挂载 v2 Ph/Co pin（批次 D 在消费边界给 tagged error，
+  不静默回退全量 `voicebank_digest/1`）。
+  """
+  @callback phonology_digest(state()) :: String.t() | nil
+
+  @doc """
   legacy 兼容入口：从 Oi assemble 数据抽取 pins。仅供未实现
   `lower_pins/4` 的 runtime 消费纯 legacy 批次时由 Editor 回退调用；
   新 runtime 应实现 `lower_pins/4`，不必再伪装旧 Oi 数据入口。
@@ -49,5 +58,8 @@ defmodule Neume.Runtime do
   @callback lower_pins(state(), Snapshot.t(), [Neume.Pin.Resolved.t()], term()) ::
               {:ok, pins()} | {:error, term()}
 
-  @optional_callbacks render_checked: 5, lower_pins: 4, checked_pins: 1
+  @optional_callbacks render_checked: 5,
+                      lower_pins: 4,
+                      checked_pins: 1,
+                      phonology_digest: 1
 end

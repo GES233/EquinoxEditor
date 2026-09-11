@@ -5,6 +5,12 @@ defmodule NeumeOpuDs.Voicebank.Manifest do
   模型、字典与 embedding 始终留在仓库外。扫描结果保存规范化绝对路径，
   `signature/1` 则只暴露可进入 `Coconut.Project` 的名称、引擎类型和内容摘要。
   摘要覆盖会影响推理的配置、模型、字典及 embedding，不覆盖立绘和说明文件。
+
+  `digest` 是全量内容摘要（legacy pin 底料的声音库事实分量）；
+  `phonology_digest` 是字典级摘要，只覆盖决定音素 inventory 与
+  歌词→音素映射的资产（phonemes/languages/dsdict 词典），供
+  `Pin<Ph>`/`Pin<Co>` 底料使用；G2P 算法版本戳由 runtime 的
+  `phonology_digest/1` 回调合成，不在本结构内。
   """
 
   @config_paths %{
@@ -20,6 +26,7 @@ defmodule NeumeOpuDs.Voicebank.Manifest do
     :name,
     :author,
     :digest,
+    :phonology_digest,
     :models,
     :dictionaries,
     :languages,
@@ -34,6 +41,7 @@ defmodule NeumeOpuDs.Voicebank.Manifest do
           name: String.t(),
           author: String.t() | nil,
           digest: String.t(),
+          phonology_digest: String.t(),
           models: %{atom() => Path.t()},
           dictionaries: %{(atom() | String.t()) => Path.t()},
           languages: %{String.t() => non_neg_integer()},
@@ -56,13 +64,15 @@ defmodule NeumeOpuDs.Voicebank.Manifest do
          :ok <- validate_languages(languages),
          {:ok, speakers} <- resolve_speakers(root, configs),
          {:ok, timing} <- resolve_timing(configs),
-         {:ok, digest} <- digest_assets(root, models, dictionaries, speakers) do
+         {:ok, digest} <- digest_assets(root, models, dictionaries, speakers),
+         {:ok, phonology_digest} <- digest_phonology(root, dictionaries) do
       {:ok,
        %__MODULE__{
          root: root,
          name: Map.get(character, "name", Path.basename(root)),
          author: Map.get(character, "author"),
          digest: digest,
+         phonology_digest: phonology_digest,
          models: models,
          dictionaries: dictionaries,
          languages: languages,
@@ -294,6 +304,17 @@ defmodule NeumeOpuDs.Voicebank.Manifest do
         Map.values(speakers) ++
         semantic_files
 
+    digest_files(files, root)
+  end
+
+  # 字典级 phonology 摘要：只覆盖音素 inventory、languages 与 dsdict 词典
+  # （含声库根目录下的 dsdict*.yaml），不覆盖模型/配置/embedding。
+  defp digest_phonology(root, dictionaries) do
+    lexical = Path.wildcard(Path.join(root, "dsdict*.yaml"))
+    digest_files(Map.values(dictionaries) ++ lexical, root)
+  end
+
+  defp digest_files(files, root) do
     files
     |> Enum.uniq()
     |> Enum.sort()

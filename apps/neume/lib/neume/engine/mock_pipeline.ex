@@ -45,6 +45,11 @@ defmodule Neume.Engine.MockPipeline do
   @spec voicebank_digest(state()) :: nil
   def voicebank_digest(_state), do: nil
 
+  @doc "mock 无声库：phonology 事实分量同为 nil。"
+  @impl true
+  @spec phonology_digest(state()) :: nil
+  def phonology_digest(_state), do: nil
+
   @impl true
   def checked_pins(data) when is_map(data) do
     %{

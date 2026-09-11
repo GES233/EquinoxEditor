@@ -140,6 +140,26 @@ defmodule NeumeOpuDs.Pipeline do
   @spec voicebank_digest(state()) :: String.t()
   def voicebank_digest(%{manifest: %{digest: digest}}), do: digest
 
+  # G2P 算法版本戳：`priv/diffsinger/g2p.py` 的转换规则是 worker 代码而非
+  # 声库资产，文件摘要覆盖不到；修改 G2P 规则时必须递增本版本，否则
+  # 音素序列静默漂移而 phonology digest 不动（pin 被静默重解释）。
+  @g2p_version "opu-g2p/1"
+
+  @doc """
+  字典级 phonology 摘要：manifest 的字典摘要混入 G2P 算法版本戳。
+  模型/embedding/FP 变体不参与——Stock/Modified 切换或模型质量刷新
+  不炸 `Pin<Ph>`/`Pin<Co>`；词典或 G2P 规则变化则冲突走 repatch。
+  """
+  @spec phonology_digest(state()) :: String.t()
+  def phonology_digest(%{manifest: %{phonology_digest: digest}}) do
+    :crypto.hash(:sha256, ["neume/phonology/1\0", digest, "\0", @g2p_version])
+    |> Base.encode16(case: :lower)
+  end
+
+  @doc false
+  @spec g2p_version() :: String.t()
+  def g2p_version, do: @g2p_version
+
   @spec engine_config(state(), term()) :: map()
   def engine_config(%{compiled: compiled}, _track_id) do
     %{

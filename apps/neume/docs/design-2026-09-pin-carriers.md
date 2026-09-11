@@ -8,7 +8,16 @@
 > `Neume.Pin.Resolved` / `Neume.Pin.Lower` 与 `Neume.Runtime.lower_pins/4`
 > lowering 边界；`score_pitch_v2` envelope + `score_region_v1` 底料落地，
 > 点列 mount 默认产 v2，legacy payload 行为不变；facade probe 令牌不再
-> 携带底料。批次 C/D 待 §11.2/11.3。
+> 携带底料。
+> §11.2/11.3 已拍板（2026-09-11）：stable segment ref 由 syllable unit
+> 输入事实确定性派生（unit = 组头 note_id，segment = `%{member, index}`
+> 成员内序号），不引入持久化 ID；phonology digest 进 `Pin<Ph>`/`Pin<Co>`
+> base，经 `Neume.Runtime.phonology_digest/1` 回调由 provider 提供
+> （字典级范围 + G2P 算法版本戳），不拆独立 G2P 实体。
+> 批次 C 已实施（2026-09-11）：Manifest 字典级摘要、`phonology_digest/1`
+> 回调与 `Context` 扩展、`Neume.Phonology.Ref` 派生/解析、双 runtime
+> ref 契约向量落地；无用户可见 payload 变化（duration v2 属批次 D）。
+> 批次 D 待施工。
 
 ## 1. 问题
 
@@ -207,6 +216,9 @@ Tamale digest 或 History 状态。字段集在第二个真实 runtime 出现前
   兼容路径或读档时出现。
 - repatch 不跨 schema 偷偷升级。升级如将来提供，必须是独立、可报告、
   可撤销的 History 手势（批次 B 不实现升级手势）。
+- 长期方向（2026-09-11 拍板）：legacy 双轨是迁移期兼容层，不长期保留；
+  v2 在实战中被验证更好后，后续批次可评估退役 legacy 通道。旧工程
+  读档兼容（按原语义打开）不受此影响。
 
 ## 6. `Pin<S>`：pitch
 
@@ -258,6 +270,21 @@ Neume 不应把 OpenUTAU/DiffSinger worker 的 `[[language, phone]]` 输出直�
 `unit_id` 指向显式 syllable group；`segment_id` 由 Neume 的语音学层生成，不能
 是 runtime word index 或数组下标。runtime provider 负责把 stable segment ref
 映射到自己的 inventory symbol/index。
+
+生成规则（§11.2 拍板，2026-09-11）：不引入持久化 ID——持久 ID 会在
+note id + melisma 旗标之外开第二条身份通道，split/merge/trim/drag 与
+undo/redo 都得双写维护，对下游是双重来源。ref 全部由谱面事实确定性
+派生：
+
+- `unit_id` = 组头 note_id（Tamale 稳定锚；组归属由 `Neume.Syllable`
+  纯派生，删头晋升/出缝断组规则不变）；
+- `segment_id` = `%{member: member_index, index: 成员内音素序号}`——
+  成员内序号是 Neume 层对确定性序列的派生，不是 runtime 展开下标。
+
+ref 仍是位置性的，安全性由 base 兜住：Co base 覆盖全组输入事实（各成员
+歌词/显式音素）+ phonology digest，任何挪动序列的编辑先冲突、走
+repatch 显式重签，不会静默重解释。代价：G2P 输出变动即使听感上是
+"同一个音素"也冲突（与批次 B 同音字假冲突的取舍同构）。
 
 本阶段不决定完整 phonology 数据模型。没有真实 pronunciation 编辑手势前，
 只冻结 namespace/ref 要求，不先造通用音系学框架。
@@ -317,11 +344,35 @@ Neume 负责：
 - survival matrix 测试：改词/换声库/拖动/trim/split/merge/跨轨（见 §6
   表格），legacy 行为不变性由 `IdentityPinTest` 与本批矩阵共同钉住。✅
 
-### 批次 C：phonology ref
+### 批次 C：phonology ref（已实施，2026-09-11）
 
-- 引入最小 syllable unit / stable segment ref。
-- 用 mock runtime 和 OPU runtime 的同一组 contract vectors 验证 lowering。
-- 尚不要求实现通用 G2P；runtime 可从歌词或显式音素生成自己的执行表征。
+- 引入最小 syllable unit / stable segment ref（生成规则见 §7）：✅
+  `Neume.Phonology.Ref`（`memberships/1`、`units/1`、`segment/2`、
+  `resolve/3`），删头晋升/出缝断组的 ref 漂移行为已钉测试。
+- 用 mock runtime 和 OPU runtime 的同一组 contract vectors 验证 lowering：✅
+  `neume_opu_ds` 的 `PhonologyRefVectorsTest` 复用 `expand_vectors.json`，
+  真身期望序列与替身序列上的 ref 解析逐一相同（`within_fake_approximation`
+  不成立的用例只消费真身一侧，替身报错由 `ExpandVectorsTest` 钉住）。
+- 尚不要求实现通用 G2P；runtime 可从歌词或显式音素生成自己的执行表征。✅（不变）
+
+实施记录：
+
+1. `NeumeOpuDs.Voicebank.Manifest` 扫描期增算 `phonology_digest`
+   （phonemes inventory、languages.json、dsdict 词典；不覆盖模型/配置/
+   embedding），与全量 `digest` 并列。✅
+2. G2P 算法版本戳：`NeumeOpuDs.Pipeline` 以 `@g2p_version` 常量
+   （`opu-g2p/1`）与字典摘要合成最终 phonology digest；测试钉住合成
+   格式（domain separator + 字典摘要 + 版本戳）。✅
+3. `Neume.Runtime.phonology_digest/1` 回调（optional）：`neume_opu_ds`
+   返回合成值，mock 返回 `nil`；`Context.voicebank_identity` 扩为
+   `%{digest, phonology_digest}`，`Identity.adjudicate` 与挂载/repatch
+   路径全程透传，legacy 路径只读 `digest`（旧工程 digest 兼容不动）。
+   runtime 未实现该回调时 v2 Ph/Co 挂载/裁决的 tagged error 由批次 D
+   在消费边界落地（本批尚无 v2 Ph/Co payload）。✅
+4. contract vectors：见上。✅
+5. 不拆独立 G2P provider 实体：G2P 的输入（字典、inventory）是引擎包
+   资产，当前唯一消费方是合成管线；等发音编辑手势带来第二个消费方时
+   再评估 `Neume.Phonology` 契约。✅（决策）
 
 ### 批次 D：duration v2
 
@@ -342,10 +393,16 @@ Neume 负责：
 
 1. ~~pitch v2 坐标采用推荐的 `note_tick`，还是继续 `project_tick`？~~
    已拍板 `note_tick`（2026-09-07，批次 B 实施）。
-2. stable phonology segment ref 的最小生成规则：显式持久化 ID，还是由
-   syllable unit 输入事实确定性派生？
-3. voicebank 的 phonology namespace/dictionary digest 是否需要进入
+2. ~~stable phonology segment ref 的最小生成规则：显式持久化 ID，还是由
+   syllable unit 输入事实确定性派生？~~ 已拍板**确定性派生**
+   （2026-09-11）：持久 ID 会造成双重身份来源；unit = 组头 note_id，
+   segment = `%{member, index}` 成员内序号，安全性由 base 覆盖全组
+   输入事实兜住（生成规则见 §7）。
+3. ~~voicebank 的 phonology namespace/dictionary digest 是否需要进入
    `Pin<Ph>` / `Pin<Co>` base；若进入，应使用 provider 提供的 phonology
-   digest，而不是整个 runtime manifest digest。
+   digest，而不是整个 runtime manifest digest。~~ 已拍板**进 base**
+   （2026-09-11）：经 `Neume.Runtime.phonology_digest/1` 回调由 provider
+   提供 opaque 字符串，范围 = 字典级资产 + G2P 算法版本戳，不用整个
+   runtime manifest digest；不拆独立 G2P 实体（见批次 C 施工要点）。
 
-批次 A/B 已完成；批次 C/D 需要决定 2 和 3。
+批次 A/B/C 已完成；批次 D（duration v2）待施工。

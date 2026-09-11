@@ -163,8 +163,9 @@ defmodule Neume.Identity do
   实现语义回调时聚合为 `{:missing_pin_semantics, module}` 冲突 entry
   （入口校验，不抛 `UndefinedFunctionError`）。返回 `[]` 表示全部通过。
   """
-  @spec adjudicate(Track.t(), %{atom() => module()}, String.t() | nil) :: [conflict_entry()]
-  def adjudicate(%Track{} = track, channels, voicebank_digest)
+  @spec adjudicate(Track.t(), %{atom() => module()}, String.t() | nil, keyword()) ::
+          [conflict_entry()]
+  def adjudicate(%Track{} = track, channels, voicebank_digest, opts \\ [])
       when is_map(channels) do
     probe_channels =
       for {name, module} <- channels,
@@ -173,18 +174,37 @@ defmodule Neume.Identity do
           do: name
 
     bases = base_by_note(track, voicebank_digest)
+    phonology_digest = Keyword.get(opts, :phonology_digest)
 
     track.patches
     |> Enum.filter(&MapSet.member?(probe_channels, &1.channel))
     |> Enum.map(
-      &adjudicate_one(&1, track, Map.fetch!(channels, &1.channel), voicebank_digest, bases)
+      &adjudicate_one(
+        &1,
+        track,
+        Map.fetch!(channels, &1.channel),
+        voicebank_digest,
+        phonology_digest,
+        bases
+      )
     )
     |> Enum.reject(&is_nil/1)
   end
 
-  defp adjudicate_one(%Patch{} = patch, %Track{} = track, semantics, voicebank_digest, bases) do
+  defp adjudicate_one(
+         %Patch{} = patch,
+         %Track{} = track,
+         semantics,
+         voicebank_digest,
+         phonology_digest,
+         bases
+       ) do
     if Semantics.implemented?(semantics) do
-      context = Context.new(track, patch.track_id, voicebank_digest, legacy_bases: bases)
+      context =
+        Context.new(track, patch.track_id, voicebank_digest,
+          phonology_digest: phonology_digest,
+          legacy_bases: bases
+        )
 
       with {:ok, descriptor} <- semantics.describe(patch.patch.payload),
            {:ok, fresh} <- semantics.base(context, patch.anchor, descriptor, patch.patch.payload) do

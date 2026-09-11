@@ -41,6 +41,9 @@ defmodule NeumeOpuDs.Runtime do
   defdelegate voicebank_digest(state), to: Pipeline
 
   @impl true
+  defdelegate phonology_digest(state), to: Pipeline
+
+  @impl true
   def checked_pins(data) when is_map(data) do
     %{
       pitch: get_in(data, [:score_plan, :pitch_pins]) || %{},
