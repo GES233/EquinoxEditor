@@ -472,10 +472,15 @@ defmodule Neumu do
   end
 
   @doc """
-  在音符上挂载 Bezier pitch 曲线；`curve` 是 plain-map payload：
+  在音符上挂载 Bezier pitch 曲线（批次 E 起落库为 `pitch_curve_v2`
+  envelope）。`curve` 是绝对 tick 的 plain-map payload：
   `%{format: :pitch_curve_v1, adapter: :bezier, coord: :absolute_tick,
   value: :absolute_midi, points: [%{tick, value, handle_left, handle_right}]}`
-  （`handle_left`/`handle_right` 为相对 anchor 的偏移，可为 nil）。
+  （`handle_left`/`handle_right` 为相对 anchor 的偏移，可为 nil）；server
+  侧按 span 起点换算为 `note_tick` 相对坐标（`offset_tick`，拖动跟随）。
+  也可显式传 `pitch_curve_v2` envelope（`%{schema: "pitch_curve_v2",
+  coordinates: "note_tick", adapter: "bezier", points: [%{offset_tick,
+  value, ...}]}`），校验后透传。
   """
   @spec mount_pitch_curve(
           RenderJob.project_id(),

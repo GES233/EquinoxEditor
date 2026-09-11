@@ -12,6 +12,7 @@ defmodule Neume.Pin.Schema do
   | 旧 duration 点列 `[[ph_index, tick]]` | `phoneme_duration_v1` | `pin_input_v1` | `:correspondence` |
   | v2 pitch envelope（批次 B） | `score_pitch_v2` | `score_region_v1` | `:score` |
   | v2 duration envelope（批次 D） | `phoneme_duration_v2` | `phoneme_correspondence_v1` | `:correspondence` |
+  | v2 Bezier envelope（批次 E） | `pitch_curve_v2` | `score_region_v1` | `:score` |
 
   `score_pitch_v2` 是自描述 envelope：`%{schema, coordinates: "note_tick",
   values: [[offset_tick, midi], ...]}`，坐标为音符内相对 tick（拖动跟随）；
@@ -26,6 +27,13 @@ defmodule Neume.Pin.Schema do
   （各成员歌词/显式音素）+ 字典级 phonology digest——改音高、拖动、
   模型刷新不炸；改词、词典/G2P 变化、melisma 晋升/断组会炸，由 repatch
   显式重签或重定向（见设计文档批次 D）。
+
+  `pitch_curve_v2` 是自描述 envelope（批次 E）：`%{schema, coordinates:
+  "note_tick", adapter: "bezier", points: [%{offset_tick, value,
+  handle_left, handle_right}, ...]}`，anchor 坐标为音符内相对 tick
+  （handle 仍是相对 anchor 的 tick/value 偏移，与 legacy 同语义），
+  value 为绝对 MIDI；base 复用 `score_region_v1`（与 `score_pitch_v2`
+  同构）。
   """
 
   @base_pin_input_v1 "pin_input_v1"
@@ -36,6 +44,7 @@ defmodule Neume.Pin.Schema do
   @phoneme_duration_v1 "phoneme_duration_v1"
   @score_pitch_v2 "score_pitch_v2"
   @phoneme_duration_v2 "phoneme_duration_v2"
+  @pitch_curve_v2 "pitch_curve_v2"
   @note_tick "note_tick"
 
   @legacy_payload_schemas [@pitch_points_v1, @pitch_curve_v1, @phoneme_duration_v1]
@@ -60,6 +69,10 @@ defmodule Neume.Pin.Schema do
   @spec phoneme_duration_v2() :: String.t()
   def phoneme_duration_v2, do: @phoneme_duration_v2
 
+  @doc "v2 Bezier envelope 的 payload schema 名（批次 E）。"
+  @spec pitch_curve_v2() :: String.t()
+  def pitch_curve_v2, do: @pitch_curve_v2
+
   @doc "音符内相对 tick 坐标系名。"
   @spec note_tick() :: String.t()
   def note_tick, do: @note_tick
@@ -76,6 +89,7 @@ defmodule Neume.Pin.Schema do
   def payload_generation(schema) when schema in @legacy_payload_schemas, do: 1
   def payload_generation(@score_pitch_v2), do: 2
   def payload_generation(@phoneme_duration_v2), do: 2
+  def payload_generation(@pitch_curve_v2), do: 2
 
   @doc "构造 `score_pitch_v2` envelope（`values` 为 `[[offset_tick, midi], ...]`）。"
   @spec score_pitch_v2_payload([[number()]]) :: map()
@@ -90,6 +104,15 @@ defmodule Neume.Pin.Schema do
   def phoneme_duration_v2_payload(values) when is_list(values),
     do: %{schema: @phoneme_duration_v2, values: values}
 
+  @doc """
+  构造 `pitch_curve_v2` envelope（批次 E）。`points` 为
+  `[%{offset_tick, value, handle_left, handle_right}, ...]`（handle 可 nil）。
+  浅构造，逐点形状校验归 `Neume.PitchCurve.normalize_v2/1` 与 channel 语义。
+  """
+  @spec pitch_curve_v2_payload([map()]) :: map()
+  def pitch_curve_v2_payload(points) when is_list(points),
+    do: %{schema: @pitch_curve_v2, coordinates: @note_tick, adapter: "bezier", points: points}
+
   @doc "分派 pitch payload 的 schema 名。"
   @spec pitch_payload(term()) :: {:ok, String.t()} | {:error, term()}
   def pitch_payload(points) when is_list(points), do: {:ok, @pitch_points_v1}
@@ -101,6 +124,18 @@ defmodule Neume.Pin.Schema do
 
   def pitch_payload(%{schema: @score_pitch_v2} = other),
     do: {:error, {:invalid_score_pitch_v2, other}}
+
+  def pitch_payload(%{
+        schema: @pitch_curve_v2,
+        coordinates: @note_tick,
+        adapter: "bezier",
+        points: points
+      })
+      when is_list(points),
+      do: {:ok, @pitch_curve_v2}
+
+  def pitch_payload(%{schema: @pitch_curve_v2} = other),
+    do: {:error, {:invalid_pitch_curve_v2, other}}
 
   def pitch_payload(other), do: {:error, {:unknown_pitch_payload_schema, other}}
 

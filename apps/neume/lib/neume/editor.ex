@@ -327,8 +327,9 @@ defmodule Neume.Editor do
   end
 
   # 批次 B：点列 mount 默认产出 `score_pitch_v2`（note_tick transport）；
-  # 绝对 tick 输入按当前 span 起点换算为相对 tick。Bezier envelope 本批
-  # 保持 legacy `pitch_curve_v1` 不变。
+  # 绝对 tick 输入按当前 span 起点换算为相对 tick。经本入口显式传入的
+  # legacy `pitch_curve_v1` plain map 保持透传（兼容路径）；批次 E 起
+  # Bezier 的默认挂载走 `mount_pitch_curve/4`，产出 `pitch_curve_v2`。
   defp pitch_mount_payload(_editor, _note_id, %{format: :pitch_curve_v1} = curve),
     do: {:ok, curve}
 
@@ -343,30 +344,47 @@ defmodule Neume.Editor do
   end
 
   @doc """
-  在音符上挂载 identity-base Bezier pitch intervention。
+  在音符上挂载 identity-base Bezier pitch intervention（批次 E 起默认产出
+  `pitch_curve_v2`）。
 
-  控制点使用绝对 tick + 绝对 MIDI；handle 是相对 anchor 的 tick/value 偏移。
-  payload 降为可 Pickle 的版本化 plain map，宿主按真实声学帧网格调用 Coconut
-  Bezier adapter 栅格化，worker 不重复实现曲线数学。
+  控制点入参使用绝对 tick + 绝对 MIDI；handle 是相对 anchor 的 tick/value
+  偏移。挂载时按当前 span 起点换算为音符内相对 tick（`note_tick`
+  transport，拖动自然跟随），payload 为自描述 envelope
+  `%{schema: "pitch_curve_v2", coordinates: "note_tick", adapter: "bezier",
+  points: [%{offset_tick, value, handle_left, handle_right}, ...]}`，
+  签 `score_region_v1` 底料（与 `score_pitch_v2` 同构；改词、换声库、
+  改音高不炸）。显式传 `pitch_curve_v2` envelope 校验后透传；legacy
+  `pitch_curve_v1` 仅经 `mount_pitch/4` 的兼容路径或读档出现。
 
-  `curve` 可以是 `Coconut.Curve.Adapter.Bezier` struct 或同语义的 plain-map
-  payload（facade 边界只传后者）。选项同 `mount_pitch/4`。
+  `curve` 可以是 `Coconut.Curve.Adapter.Bezier` struct、绝对 tick 的
+  legacy plain map，或 v2 envelope（facade 边界只传 plain map）。
+  宿主按真实声学帧网格调用 Coconut Bezier adapter 栅格化，worker 不重复
+  实现曲线数学。选项同 `mount_pitch/4`。
   """
   @spec mount_pitch_curve(t(), term(), Coconut.Curve.Adapter.Bezier.t() | map(), keyword()) ::
           {:ok, t()} | {:error, term()}
   def mount_pitch_curve(%__MODULE__{} = editor, note_id, curve, opts \\ []) do
-    with {:ok, payload} <- curve_payload(curve),
+    with {:ok, payload} <- curve_mount_payload(editor, note_id, curve),
          {:ok, editor, _patch} <- mount_pin(editor, note_id, :pitch, payload, opts) do
       {:ok, editor}
     end
   end
 
-  # Bezier struct 在 Editor 内降为 payload；facade 边界来的 plain map 直接
-  # 走版本化校验。
-  defp curve_payload(%Coconut.Curve.Adapter.Bezier{} = curve),
-    do: PitchCurve.from_bezier(curve)
+  # 批次 E：Bezier mount 默认产出 `pitch_curve_v2`——绝对 tick 的 Bezier
+  # struct / legacy plain map 按当前 span 起点换算为 offset_tick；显式 v2
+  # envelope 经 `PitchCurve.normalize_v2/1` 校验后透传。
+  defp curve_mount_payload(_editor, _note_id, %{schema: schema} = envelope) do
+    if schema == Schema.pitch_curve_v2(),
+      do: PitchCurve.normalize_v2(envelope),
+      else: {:error, {:unknown_pitch_payload_schema, envelope}}
+  end
 
-  defp curve_payload(payload), do: PitchCurve.normalize(payload)
+  defp curve_mount_payload(%__MODULE__{} = editor, note_id, curve) do
+    with {:ok, track} <- current_track(editor),
+         {:ok, {start_tick, _end_tick}} <- fetch_span(track, note_id) do
+      PitchCurve.to_v2(curve, start_tick)
+    end
+  end
 
   @doc """
   在音符上挂载逐音素的稀疏时长 pin。

@@ -2,15 +2,22 @@ defmodule Neume.PitchCurve do
   @moduledoc """
   Pitch intervention 的版本化曲线 payload 与宿主侧栅格化。
 
-  曲线仍是 identity-base Patch：绝对 tick 既是曲线坐标，也是失效展示与
-  re-patch 定位信息；Bezier 只描述 payload 的连续化方式，不改变 base 语义。
+  曲线仍是 identity-base Patch。legacy `pitch_curve_v1` 的绝对 tick 既是
+  曲线坐标，也是失效展示与 re-patch 定位信息；批次 E 的 `pitch_curve_v2`
+  envelope 把 anchor 改为音符内相对 tick（`note_tick`），handle 保持相对
+  anchor 的偏移语义，签 `score_region_v1` 底料（见
+  `design-2026-09-pin-carriers` 批次 E）。Bezier 只描述 payload 的连续化
+  方式，不改变 base 语义。
   """
 
   alias Coconut.Curve.Adapter.Bezier
   alias Coconut.Curve.ControlPoint
   alias Coconut.Score.TempoMap
+  alias Neume.Pin.Schema
 
   @format :pitch_curve_v1
+  @pitch_curve_v2 Schema.pitch_curve_v2()
+  @note_tick Schema.note_tick()
 
   @type payload :: %{
           format: :pitch_curve_v1,
@@ -66,6 +73,100 @@ defmodule Neume.PitchCurve do
   end
 
   def normalize(other), do: {:error, {:invalid_pitch_curve_payload, other}}
+
+  @doc """
+  把绝对 tick 的 Bezier 曲线换算为 `pitch_curve_v2` envelope（批次 E）。
+
+  入参为 `Coconut.Curve.Adapter.Bezier` struct 或 legacy `pitch_curve_v1`
+  plain map；anchor 按 `start_tick`（锚定音符 span 起点）换算为音符内相对
+  tick（`offset_tick`），handle 保持相对 anchor 的偏移语义不变。
+  """
+  @spec to_v2(Bezier.t() | payload(), non_neg_integer()) ::
+          {:ok, map()} | {:error, term()}
+  def to_v2(curve, start_tick) when is_integer(start_tick) and start_tick >= 0 do
+    with {:ok, %{adapter: :bezier, points: points}} <- normalize_absolute(curve) do
+      {:ok,
+       Schema.pitch_curve_v2_payload(
+         Enum.map(points, fn point ->
+           %{
+             offset_tick: point.tick - start_tick,
+             value: point.value,
+             handle_left: point.handle_left,
+             handle_right: point.handle_right
+           }
+         end)
+       )}
+    end
+  end
+
+  def to_v2(curve, start_tick),
+    do: {:error, {:invalid_pitch_curve_v2_origin, curve, start_tick}}
+
+  # 绝对 tick 输入归一：Bezier struct 先降为 legacy plain map，再走版本化校验。
+  defp normalize_absolute(%Bezier{} = curve), do: from_bezier(curve)
+  defp normalize_absolute(%{format: @format} = payload), do: normalize(payload)
+  defp normalize_absolute(other), do: {:error, {:invalid_pitch_curve, other}}
+
+  @doc "校验并规范 `pitch_curve_v2` envelope（批次 E）。"
+  @spec normalize_v2(term()) :: {:ok, map()} | {:error, term()}
+  def normalize_v2(%{
+        schema: @pitch_curve_v2,
+        coordinates: @note_tick,
+        adapter: "bezier",
+        points: points
+      })
+      when is_list(points) do
+    with {:ok, points} <- normalize_v2_points(points) do
+      {:ok, Schema.pitch_curve_v2_payload(points)}
+    end
+  end
+
+  def normalize_v2(other), do: {:error, {:invalid_pitch_curve_v2, other}}
+
+  @doc """
+  返回 v2 envelope 的绝对 tick/MIDI anchor 点列（展示与 span 校验用）。
+
+  `start_tick` 是锚定音符的 span 起点；越界 offset 原样平移，合法性判定
+  归消费边界与 channel 语义（与点列 v2 lowering 同原则）。
+  """
+  @spec display_points_v2(term(), non_neg_integer()) ::
+          {:ok, [[number()]]} | {:error, term()}
+  def display_points_v2(payload, start_tick)
+      when is_integer(start_tick) and start_tick >= 0 do
+    with {:ok, %{points: points}} <- normalize_v2(payload) do
+      {:ok, Enum.map(points, &[start_tick + &1.offset_tick, &1.value])}
+    end
+  end
+
+  defp normalize_v2_points(points) do
+    Enum.reduce_while(points, {:ok, []}, fn point, {:ok, acc} ->
+      case normalize_v2_point(point) do
+        {:ok, normalized} -> {:cont, {:ok, [normalized | acc]}}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
+    |> case do
+      {:ok, []} -> {:error, :empty_pitch_curve}
+      {:ok, normalized} -> {:ok, normalized |> Enum.reverse() |> Enum.sort_by(& &1.offset_tick)}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp normalize_v2_point(%{offset_tick: offset, value: value} = point)
+       when is_integer(offset) and is_number(value) do
+    with {:ok, left} <- normalize_handle(Map.get(point, :handle_left)),
+         {:ok, right} <- normalize_handle(Map.get(point, :handle_right)) do
+      {:ok,
+       %{
+         offset_tick: offset,
+         value: value * 1.0,
+         handle_left: left,
+         handle_right: right
+       }}
+    end
+  end
+
+  defp normalize_v2_point(point), do: {:error, {:invalid_pitch_control_point, point}}
 
   @doc "返回 payload 中用于展示和 span 校验的绝对 tick/MIDI 控制点。"
   @spec display_points(term()) :: {:ok, [[number()]]} | {:error, term()}

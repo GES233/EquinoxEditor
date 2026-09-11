@@ -149,8 +149,13 @@ defmodule Neume.DebugExportTest do
     assert {:ok, editor} = Editor.mount_pitch_curve(editor, "n1", curve)
     data = export(editor, Path.join(tmp_dir, "bezier.debug.json"))
 
+    # 批次 E：mount 默认产出 `pitch_curve_v2` envelope（note_tick 相对坐标），
+    # handle 原样保留；curves 投影按 span 起点平移回绝对 tick。
     assert [%{"payload" => payload}] = data["meta"]["patches"]
-    assert payload["format"] == "pitch_curve_v1"
+    assert payload["schema"] == "pitch_curve_v2"
+    assert payload["coordinates"] == "note_tick"
+    assert payload["adapter"] == "bezier"
+    assert get_in(payload, ["points", Access.at(0), "offset_tick"]) == 0
 
     assert get_in(payload, ["points", Access.at(0), "handle_right"]) == %{
              "tick" => 120,

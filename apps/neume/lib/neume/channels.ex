@@ -2,17 +2,18 @@ defmodule Neume.Channels.PitchPin do
   @moduledoc """
   音符级 pitch pin channel（probe 期身份底料，§6.6）。
 
-  payload 三形（`describe/1` 按 payload 分派）：
+  payload 四形（`describe/1` 按 payload 分派）：
 
   - 旧 `[[tick, midi], ...]` 折线（`pitch_points_v1`，绝对 tick）与
     `pitch_curve_v1` Bezier plain map：legacy，继续签 `pin_input_v1`
     输入事实底料（歌词/显式音素/melisma 归属/声库摘要，见
     `Neume.Identity`），行为不变；
-  - `score_pitch_v2` envelope（批次 B）：`note_tick` 相对坐标，签
-    `score_region_v1` 底料——只钉 track/note 与坐标系，不含歌词、
-    音素、声库与 runtime digest；改词、换声库、拖动均不炸，merge 锚
-    重定签（origin 变化）与跨轨移动（track 分量变化）会炸，由
-    repatch 显式重签。survival matrix 见设计文档批次 B。
+  - `score_pitch_v2` envelope（批次 B）与 `pitch_curve_v2` Bezier
+    envelope（批次 E，anchor 为 `note_tick` 相对坐标、handle 保持相对
+    anchor 偏移）：签 `score_region_v1` 底料——只钉 track/note 与坐标系，
+    不含歌词、音素、声库与 runtime digest；改词、换声库、拖动均不炸，
+    merge 锚重定签（origin 变化）与跨轨移动（track 分量变化）会炸，由
+    repatch 显式重签。survival matrix 见设计文档批次 B/E。
 
   静态 check 不做 digest 裁决；投影与签名归 `Neume.Editor` 的挂载路径。
   """
@@ -24,6 +25,7 @@ defmodule Neume.Channels.PitchPin do
   alias Neume.Pin.{Context, Descriptor, Schema}
 
   @score_pitch_v2 Schema.score_pitch_v2()
+  @pitch_curve_v2 Schema.pitch_curve_v2()
   @score_region_v1 Schema.base_score_region_v1()
 
   @impl Coconut.Render.Channel
@@ -47,7 +49,9 @@ defmodule Neume.Channels.PitchPin do
     end
   end
 
-  defp base_schema(@score_pitch_v2), do: @score_region_v1
+  defp base_schema(schema) when schema in [@score_pitch_v2, @pitch_curve_v2],
+    do: @score_region_v1
+
   defp base_schema(_legacy), do: Schema.base_pin_input_v1()
 
   # v2 底料：谱面区域事实（track + 锚定音符 + 坐标系）。不含绝对起点
@@ -88,6 +92,37 @@ defmodule Neume.Channels.PitchPin do
         payload
       ),
       do: offsets_expressible?(context, anchor, payload)
+
+  # 批次 E：Bezier envelope 只判定 anchor 的 offset_tick 界内（handle 偏移
+  # 不做 span 判定，与 legacy `validate_inside` 只查 anchor 同一规则）。
+  def expressible?(
+        %Context{} = context,
+        anchor,
+        %Descriptor{payload_schema: @pitch_curve_v2},
+        %{points: points}
+      )
+      when is_list(points) do
+    Enum.reduce_while(points, :ok, fn
+      %{offset_tick: offset, value: value}, :ok
+      when is_integer(offset) and is_number(value) ->
+        {:cont, :ok}
+
+      other, :ok ->
+        {:halt, {:error, {:invalid_pitch_curve_v2_point, other}}}
+    end)
+    |> case do
+      :ok ->
+        offsets_expressible?(context, anchor, %{
+          values: Enum.map(points, &[&1.offset_tick, &1.value])
+        })
+
+      {:error, _} = error ->
+        error
+    end
+  end
+
+  def expressible?(_context, _anchor, %Descriptor{payload_schema: @pitch_curve_v2}, other),
+    do: {:error, {:invalid_pitch_curve_v2, other}}
 
   def expressible?(_context, _anchor, _descriptor, _payload), do: :ok
 

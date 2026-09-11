@@ -96,7 +96,10 @@
    的当前状态上经 channel 语义现场推导（payload 分派 schema → `base/4`），
    客户端传回的 base 一律拒绝（`{:error, {:invalid_pin_probe, _, _, _}}`）。
    pitch 点列落库为 `score_pitch_v2` envelope（`note_tick` 相对坐标，
-   拖动跟随）；旧 `pin_input_v1` 输入事实签名见
+   拖动跟随）；Bezier 曲线传绝对 tick 的 `pitch_curve_v1` 形 plain map，
+   server 侧换算落库为 `pitch_curve_v2` envelope（批次 E，同坐标系，
+   handle 保持相对 anchor 偏移），也可显式传 v2 envelope 透传。旧
+   `pin_input_v1` 输入事实签名见
    `apps/neume/docs/decision-2026-09-pin-input-base.md`。
 2. 三个 mount 携 probe 令牌提交；probe 之后工程被编辑则
    `{:error, {:stale_pin, _}}`——**重新 probe 后重放**，令牌绑定

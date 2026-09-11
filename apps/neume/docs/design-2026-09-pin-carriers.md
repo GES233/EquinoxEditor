@@ -23,6 +23,13 @@
 > ref，payload 重写同边落账）；`Editor.replace_pin/4` 接线（同 schema
 > 替换与 legacy → v2 升级，v2 → legacy 拒绝）；lowering 失败的 v2 pin
 > 与身份冲突在同一 check 界面聚合。legacy payload 行为不变。
+> 批次 E 已实施（2026-09-11）：Bezier 相对坐标化——`pitch_curve_v2`
+> envelope（anchor 为 `note_tick` 相对 tick，handle 保持相对 anchor
+> 偏移）签 `score_region_v1` 底料；`mount_pitch_curve` 默认产 v2
+> （绝对 tick 入参按 span 起点换算），`Pin.Lower` 平移回绝对 tick 的
+> legacy 形状（栅格化与 worker 协议不变）；`replace_pin` 支持
+> `pitch_curve_v1` → `pitch_curve_v2` 显式升级。legacy curve 经
+> `mount_pitch` 兼容路径行为不变。
 
 ## 1. 问题
 
@@ -260,8 +267,13 @@ Tamale digest 或 History 状态。字段集在第二个真实 runtime 出现前
 | merge | into 上 pin 存活；被吸收音符的 pin 因 note origin 失配冲突，repatch = 显式接受新 origin 重签 |
 | 跨轨移动 | facade 手势本就不迁移 pin；若底层跨轨移动 patch，base 的 track 分量失配 → 冲突，repatch 显式重签 |
 
-Bezier envelope（`pitch_curve_v1`）本批保持 legacy：控制点仍为绝对
-tick，签 `pin_input_v1`；相对坐标曲线留待后续批次拍板。
+Bezier envelope 已在批次 E 迁移：`pitch_curve_v2`（anchor 为 `note_tick`
+相对 tick，handle 保持相对 anchor 偏移，value 仍为绝对 MIDI）签
+`score_region_v1` 底料，`mount_pitch_curve` 默认产 v2；survival matrix
+与点列 v2 同构（见批次 E 小节与
+`apps/neume/test/neume/pitch_curve_v2_test.exs`）。legacy
+`pitch_curve_v1` 继续签 `pin_input_v1`，经 `mount_pitch` 兼容路径或
+读档出现。
 
 ## 7. `Pin<Ph>`：稳定 phonology
 
@@ -407,6 +419,35 @@ Neume 负责：
   `kind :pin` entry + 携 patch 的 `kind :conflict` entry 同时出现，
   repatch 以冲突 entry 为入口。
 
+### 批次 E：pitch curve v2（已实施，2026-09-11）
+
+- 新增 `pitch_curve_v2` payload schema：✅ 自描述 envelope
+  `%{schema, coordinates: "note_tick", adapter: "bezier", points:
+  [%{offset_tick, value, handle_left, handle_right}, ...]}`——anchor 为
+  音符内相对 tick，handle 保持相对 anchor 的 tick/value 偏移（legacy
+  同语义），value 为绝对 MIDI。base 复用 `score_region_v1`（与
+  `score_pitch_v2` 同构）。独立 schema 而非给 `score_pitch_v2` 加
+  adapter 字段：schema 名 = payload 形状标签，describe/lowering/
+  世代分派保持 1:1。
+- `mount_pitch_curve` 默认产 v2：✅ 绝对 tick 的 Bezier struct / legacy
+  plain map 按当前 span 起点换算为 `offset_tick`（`PitchCurve.to_v2/2`）；
+  显式 v2 envelope 经 `PitchCurve.normalize_v2/1` 校验透传；legacy
+  curve map 仅经 `mount_pitch/4` 兼容路径透产 legacy。
+- 语义与 lowering：✅ `PitchPin.expressible?/4` 只判 anchor offset 界内
+  （handle 不做 span 判定，与 legacy `validate_inside` 同规则）；
+  `Pin.Lower` 把 envelope 平移回绝对 tick 的 `pitch_curve_v1` plain
+  map，栅格化（`PitchCurve.rasterize_ticks`）、mock steps 与 worker
+  协议零改动；DebugExport `curves` 投影按 span 起点平移回绝对 tick，
+  画图 schema 不变。
+- `replace_pin` 升级通路：✅ `payload_generation("pitch_curve_v2") = 2`，
+  `pitch_curve_v1` → `pitch_curve_v2` 一条历史边可 undo，反向拒绝。
+- survival matrix（`pitch_curve_v2_test.exs` 钉住）：改词/改音高/邻居
+  编辑/拖动存活（拖动后栅格化轮廓逐帧不变）；trim 界内存活、越界
+  repatch 经 `expressible?/4` 降级（mock 曲线消费边界不做 span 复核，
+  与 legacy 曲线同规则；真实 worker 路径由 `to_worker_points/5` 复核）；
+  merge 锚重定签冲突 → repatch 显式重签；undo/redo 与存读往返保持
+  envelope；与 legacy 直接挂载的栅格化结果逐帧一致。
+
 ## 10. 验收条件
 
 - 改词、换声库或 G2P 更新不应让 `Pin<S>` 冲突。
@@ -432,5 +473,5 @@ Neume 负责：
    提供 opaque 字符串，范围 = 字典级资产 + G2P 算法版本戳，不用整个
    runtime manifest digest；不拆独立 G2P 实体（见批次 C 施工要点）。
 
-批次 A/B/C/D 已完成。后续方向：legacy 双轨是迁移期兼容层，不长期保留
+批次 A/B/C/D/E 已完成。后续方向：legacy 双轨是迁移期兼容层，不长期保留
 （§5）；v2 实战验证后可评估 legacy 通道退役（读档兼容保留）。

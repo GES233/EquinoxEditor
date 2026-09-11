@@ -13,6 +13,9 @@ defmodule Neume.Pin.Lower do
   - `score_pitch_v2`（`note_tick`）按 snapshot 的音符起点平移为绝对
     tick 点列，降为 `pitch_points_v1` 同形；span 合法性仍由消费边界
     复核（与 legacy 同一错误形状），lowering 不吞点、不裁点；
+  - `pitch_curve_v2`（批次 E）：anchor `offset_tick` 平移为绝对 tick，
+    降为 `pitch_curve_v1` plain map（handle 原样携带），栅格化与 worker
+    协议不变；
   - `phoneme_duration_v2`（批次 D）：segment ref 降为成员自身序列内
     下标（`[[index, duration_tick]]`，与 `phoneme_duration_v1` 同形）——
     ref 的 unit/member 必须与锚定音符在 snapshot 中派生的 membership
@@ -30,6 +33,7 @@ defmodule Neume.Pin.Lower do
 
   @score_pitch_v2 Schema.score_pitch_v2()
   @phoneme_duration_v2 Schema.phoneme_duration_v2()
+  @pitch_curve_v2 Schema.pitch_curve_v2()
 
   @spec lower([Resolved.t()], Snapshot.t(), term()) :: {:ok, map()} | {:error, term()}
   def lower(resolved, %Snapshot{} = snapshot, track_id) when is_list(resolved) do
@@ -94,6 +98,36 @@ defmodule Neume.Pin.Lower do
     with {:ok, {start_tick, _end_tick}} <- fetch_span(derived.spans, note_id),
          {:ok, values} <- fetch_values(payload) do
       {:ok, Enum.map(values, fn [offset, midi] -> [start_tick + offset, midi] end)}
+    end
+  end
+
+  # v2 Bezier（批次 E）：anchor offset_tick → 绝对 tick 的 `pitch_curve_v1`
+  # plain map（handle 保持相对 anchor 偏移，原样携带）；消费边界
+  # （`Neume.PitchCurve` 栅格化 / mock steps / worker 协议）形状不变。
+  # 越界 offset 原样平移，span 合法性由消费边界复核。
+  defp lower_payload(
+         %Resolved{descriptor: %Descriptor{payload_schema: @pitch_curve_v2}, payload: payload},
+         note_id,
+         derived
+       ) do
+    with {:ok, {start_tick, _end_tick}} <- fetch_span(derived.spans, note_id),
+         {:ok, points} <- fetch_curve_points(payload) do
+      {:ok,
+       %{
+         format: :pitch_curve_v1,
+         adapter: :bezier,
+         coord: :absolute_tick,
+         value: :absolute_midi,
+         points:
+           Enum.map(points, fn point ->
+             %{
+               tick: start_tick + point.offset_tick,
+               value: point.value,
+               handle_left: point.handle_left,
+               handle_right: point.handle_right
+             }
+           end)
+       }}
     end
   end
 
@@ -168,6 +202,33 @@ defmodule Neume.Pin.Lower do
   end
 
   defp fetch_values(other), do: {:error, {:invalid_score_pitch_v2, other}}
+
+  defp fetch_curve_points(%{schema: @pitch_curve_v2, points: points}) when is_list(points) do
+    Enum.reduce_while(points, {:ok, []}, fn
+      %{offset_tick: offset, value: value} = point, {:ok, acc}
+      when is_integer(offset) and is_number(value) ->
+        {:cont,
+         {:ok,
+          [
+            %{
+              offset_tick: offset,
+              value: value * 1.0,
+              handle_left: Map.get(point, :handle_left),
+              handle_right: Map.get(point, :handle_right)
+            }
+            | acc
+          ]}}
+
+      other, {:ok, _acc} ->
+        {:halt, {:error, {:invalid_pitch_curve_v2_point, other}}}
+    end)
+    |> case do
+      {:ok, points} -> {:ok, Enum.reverse(points)}
+      {:error, _} = error -> error
+    end
+  end
+
+  defp fetch_curve_points(other), do: {:error, {:invalid_pitch_curve_v2, other}}
 
   defp put_pin(by_channel, channel, note_id, payload) do
     Map.update(by_channel, channel, %{note_id => payload}, &Map.put(&1, note_id, payload))

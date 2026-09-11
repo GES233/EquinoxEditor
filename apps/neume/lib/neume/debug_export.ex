@@ -352,6 +352,14 @@ defmodule Neume.DebugExport do
             {:error, :unknown_anchor_note}
         end
 
+      %{schema: "pitch_curve_v2"} = payload ->
+        # 批次 E：Bezier anchor 同样按 span 起点平移；handle 保留在
+        # meta.patches.payload，投影只给 anchor 点。
+        case resolved_span(patch.anchor, view) do
+          [start_tick, _end_tick] -> Neume.PitchCurve.display_points_v2(payload, start_tick)
+          nil -> {:error, :unknown_anchor_note}
+        end
+
       payload ->
         Neume.PitchCurve.display_points(payload)
     end

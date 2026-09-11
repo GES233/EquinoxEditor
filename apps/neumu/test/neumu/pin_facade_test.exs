@@ -260,7 +260,7 @@ defmodule Neumu.PinFacadeTest do
     refute_received {:project_changed, _, _}
   end
 
-  test "mount_pitch_curve 接受 plain-map payload 并原样投影", %{project_id: id} do
+  test "mount_pitch_curve 接受绝对 tick plain map，落 v2 envelope", %{project_id: id} do
     :ok = Neumu.subscribe(id)
     assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
 
@@ -278,17 +278,23 @@ defmodule Neumu.PinFacadeTest do
     assert {:ok, 3} = Neumu.mount_pitch_curve(id, "lead", "n1", curve, probe)
     assert_received {:project_changed, ^id, 3}
 
+    # 批次 E：facade 仍传绝对 tick plain map，server 侧按 span 起点换算为
+    # `pitch_curve_v2` envelope（offset_tick），handle 原样携带。
     assert [%{channel: :pitch, payload: payload}] = pins!(id)
 
     assert payload == %{
-             format: :pitch_curve_v1,
-             adapter: :bezier,
-             coord: :absolute_tick,
-             value: :absolute_midi,
+             schema: "pitch_curve_v2",
+             coordinates: "note_tick",
+             adapter: "bezier",
              points: [
-               %{tick: 0, value: 60.0, handle_left: nil, handle_right: %{tick: 120, value: 1.5}},
                %{
-                 tick: 479,
+                 offset_tick: 0,
+                 value: 60.0,
+                 handle_left: nil,
+                 handle_right: %{tick: 120, value: 1.5}
+               },
+               %{
+                 offset_tick: 479,
                  value: 62.0,
                  handle_left: %{tick: -120, value: -1.5},
                  handle_right: nil
