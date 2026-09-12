@@ -96,7 +96,7 @@ defmodule Coconut.ResolveTest do
           refs: [note_id],
           at_version: ws.tracks[@track].space.version
         },
-        patch: tp
+        tamale_patch: tp
       })
 
     {:ok, ws, _minted} = Workspace.attach_patch(ws, cp)
@@ -190,7 +190,7 @@ defmodule Coconut.ResolveTest do
         track_id: @track,
         channel: :pitch,
         anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: ws.tracks[@track].space.version},
-        patch: %Tamale.Patch{base_digest: "whatever", payload: %{}}
+        tamale_patch: %Tamale.Patch{base_digest: "whatever", payload: %{}}
       })
 
     {:ok, ws, _minted} = Workspace.attach_patch(ws, cp)
@@ -211,7 +211,7 @@ defmodule Coconut.ResolveTest do
         track_id: @track,
         channel: :pitch,
         anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: ws.tracks[@track].space.version},
-        patch: tp
+        tamale_patch: tp
       })
 
     {:ok, ws, _minted} = Workspace.attach_patch(ws, cp)
@@ -233,7 +233,7 @@ defmodule Coconut.ResolveTest do
         track_id: @track,
         channel: :duration,
         anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: ws.tracks[@track].space.version},
-        patch: tp
+        tamale_patch: tp
       })
 
     {:ok, ws, _minted} = Workspace.attach_patch(ws, cp)
@@ -256,7 +256,7 @@ defmodule Coconut.ResolveTest do
         track_id: @track,
         channel: :probe_pin,
         anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: ws.tracks[@track].space.version},
-        patch: tp
+        tamale_patch: tp
       })
 
     {:ok, ws, _minted} = Workspace.attach_patch(ws, cp)
@@ -282,7 +282,7 @@ defmodule Coconut.ResolveTest do
         track_id: @track,
         channel: :probe_pin,
         anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: ws.tracks[@track].space.version},
-        patch: tp
+        tamale_patch: tp
       })
 
     {:ok, ws, _minted} = Workspace.attach_patch(ws, cp)

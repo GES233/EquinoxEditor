@@ -135,7 +135,7 @@ defmodule Neume.PinSemanticsTest do
     test "两个 channel 的底料与 Identity.base_for/3 完全一致", %{editor: editor} do
       {:ok, editor} = mount_legacy_duration(editor, "n1", [[0, 96]])
       patch = hd(current_track(editor).patches)
-      {:ok, descriptor} = DurationPin.describe(patch.patch.payload)
+      {:ok, descriptor} = DurationPin.describe(patch.tamale_patch.payload)
 
       assert {:ok, expected} = Identity.base_for(current_track(editor), "n1", nil)
       assert {:ok, ^expected} = DurationPin.base(context(editor), patch.anchor, descriptor, nil)
@@ -200,7 +200,7 @@ defmodule Neume.PinSemanticsTest do
       {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
       track = current_track(editor)
       [patch] = track.patches
-      broken = put_in(patch.patch.payload, "not-a-list")
+      broken = put_in(patch.tamale_patch.payload, "not-a-list")
       track = %{track | patches: [broken]}
 
       assert [%{kind: :conflict, stage: :probe, reason: {:unknown_duration_payload_schema, _}}] =
@@ -233,7 +233,7 @@ defmodule Neume.PinSemanticsTest do
       assert {:ok, expected} = Identity.base_for(track, "n1", nil)
 
       assert {:ok, ^expected} =
-               DurationPin.base(context, patch.anchor, descriptor, patch.patch.payload)
+               DurationPin.base(context, patch.anchor, descriptor, patch.tamale_patch.payload)
 
       # 预计算底料覆盖时，音符不在册也按 unknown_note 拒绝（行为不变）。
       assert {:error, {:unknown_note, "n9"}} =

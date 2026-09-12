@@ -101,7 +101,7 @@ IO.inspect(art.payload.notes, label: "render (flat)")
   Patch.new(%{
     track_id: track_a,
     anchor: %Tamale.Anchor.Ordinal{refs: ["a1"], at_version: ws.tracks[track_a].space.version},
-    patch: %Tamale.Patch{base_digest: "aaa", payload: %{}}
+    tamale_patch: %Tamale.Patch{base_digest: "aaa", payload: %{}}
   })
 
 {:ok, ws, _minted} = Workspace.attach_patch(ws, cp_a)

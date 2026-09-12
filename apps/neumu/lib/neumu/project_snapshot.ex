@@ -113,7 +113,7 @@ defmodule Neumu.ProjectSnapshot do
       id: patch.id,
       channel: patch.channel,
       anchor: project_anchor(patch.anchor),
-      payload: patch.patch.payload
+      payload: patch.tamale_patch.payload
     }
   end
 

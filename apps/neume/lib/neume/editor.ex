@@ -653,7 +653,7 @@ defmodule Neume.Editor do
   def replace_pin(%__MODULE__{} = editor, patch_ref, new_payload, _opts \\ []) do
     with {:ok, [patch]} <- fetch_alive_patches(editor, [patch_ref]),
          {:ok, semantics} <- fetch_semantics(editor.session.channels, patch.channel),
-         {:ok, old_descriptor} <- semantics.describe(patch.patch.payload),
+         {:ok, old_descriptor} <- semantics.describe(patch.tamale_patch.payload),
          {:ok, descriptor} <- semantics.describe(new_payload),
          :ok <- ensure_no_schema_downgrade(old_descriptor, descriptor),
          {:ok, track} <- current_track(editor),
@@ -673,7 +673,7 @@ defmodule Neume.Editor do
                refs: patch.anchor.refs,
                at_version: track.space.version
              },
-             patch: resigned
+             tamale_patch: resigned
            }),
          {:ok, session} <-
            Coconut.run(
@@ -757,8 +757,8 @@ defmodule Neume.Editor do
     with {:ok, semantics} <- Map.fetch(channels, patch.channel),
          true <- Semantics.implemented?(semantics),
          true <- function_exported?(semantics, :requires_probe?, 2),
-         {:ok, descriptor} <- semantics.describe(patch.patch.payload) do
-      semantics.requires_probe?(descriptor, patch.patch.payload)
+         {:ok, descriptor} <- semantics.describe(patch.tamale_patch.payload) do
+      semantics.requires_probe?(descriptor, patch.tamale_patch.payload)
     else
       _other -> true
     end
@@ -1021,13 +1021,13 @@ defmodule Neume.Editor do
 
         with {:ok, semantics} <- fetch_semantics(channels, patch.channel),
              {:ok, _sequence} <- fetch_sequence(sequences, note_id),
-             {:ok, descriptor} <- semantics.describe(patch.patch.payload),
+             {:ok, descriptor} <- semantics.describe(patch.tamale_patch.payload),
              {:ok, effective_payload, redirected?} <-
                expressible_or_redirect(
                  context,
                  patch.anchor,
                  descriptor,
-                 patch.patch.payload,
+                 patch.tamale_patch.payload,
                  semantics
                ),
              {:ok, fresh_base} <-
@@ -1041,7 +1041,7 @@ defmodule Neume.Editor do
                    refs: patch.anchor.refs,
                    at_version: track.space.version
                  },
-                 patch: resigned
+                 tamale_patch: resigned
                }) do
           entry = {patch.track_id, patch.id, :rebased}
 
@@ -1169,12 +1169,12 @@ defmodule Neume.Editor do
       track.patches
       |> Enum.reduce_while({:ok, []}, fn %Patch{} = patch, {:ok, acc} ->
         with {:ok, semantics} <- fetch_semantics(editor.session.channels, patch.channel),
-             {:ok, descriptor} <- semantics.describe(patch.patch.payload) do
+             {:ok, descriptor} <- semantics.describe(patch.tamale_patch.payload) do
           resolved = %Resolved{
             channel: patch.channel,
             descriptor: descriptor,
             anchor: patch.anchor,
-            payload: patch.patch.payload
+            payload: patch.tamale_patch.payload
           }
 
           {:cont, {:ok, [resolved | acc]}}

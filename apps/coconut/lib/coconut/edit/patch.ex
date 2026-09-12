@@ -26,11 +26,11 @@ defmodule Coconut.Edit.Patch do
           id: ID.t() | nil,
           track_id: Coconut.Edit.Track.track_id(),
           anchor: Tamale.Anchor.t(),
-          patch: Tamale.Patch.t(),
+          tamale_patch: Tamale.Patch.t(),
           channel: atom()
         }
 
-  @keys [:id, :track_id, :anchor, :patch, channel: :default]
+  @keys [:id, :track_id, :anchor, :tamale_patch, channel: :default]
   defstruct @keys
 
   @doc "Create a new patch from the given attributes, then validate it."

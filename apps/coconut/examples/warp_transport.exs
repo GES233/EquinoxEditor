@@ -129,7 +129,7 @@ mount = fn from, to, channel, payload ->
   probe = %Patch{track_id: track, anchor: anchor, channel: channel}
   {:ok, base} = Coconut.Examples.WarpChannel.projection(ws, probe)
   {:ok, tp} = Tamale.Patch.new(base, payload)
-  {:ok, cp} = Patch.new(%{track_id: track, anchor: anchor, channel: channel, patch: tp})
+  {:ok, cp} = Patch.new(%{track_id: track, anchor: anchor, channel: channel, tamale_patch: tp})
   cp
 end
 

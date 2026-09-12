@@ -6,7 +6,7 @@ defmodule Coconut.Pickle.Patch do
 
   - `id` / `track_id` / `channel` 原样直出；
   - `anchor` 走 `Coconut.Pickle.Anchor` codec（嵌套带 `module` 标签的 map）；
-  - `patch`（`Tamale.Patch`）摊平为
+  - `tamale_patch`（`Tamale.Patch`）摊平为
     `%{module: Tamale.Patch, base_digest: ..., payload: ...}`：
     `base_digest` 是 binary 直出，`payload` 按 `Coconut.Pickle` 契约原样透传，
     不做深度规整。
@@ -15,6 +15,10 @@ defmodule Coconut.Pickle.Patch do
   `new/2`（吃 base 原文现算 digest），无法从 `base_digest` 反演，故直接
   `struct/2` 重建；最后整体经 `Coconut.Edit.Patch.new/1` 重建（coord
   支持性校验生效）。非法输入返回 error tuple，不 raise。
+
+  load 兼容旧档的 `:patch` 键（2026-09 改名批次包 3 前 `tamale_patch`
+  叫 `patch`——`Pickle.Struct` 是字段名驱动的，缺键会静默产出 nil，
+  必须显式搬键）；dump 只写 `:tamale_patch`。
   """
 
   @behaviour Coconut.Pickle
@@ -26,7 +30,7 @@ defmodule Coconut.Pickle.Patch do
   def dump(patch), do: Struct.dump(Patch, patch, fields())
 
   @impl true
-  def load(data), do: Struct.load(Patch, data, fields())
+  def load(data), do: Struct.load(Patch, move_legacy_patch_key(data), fields())
 
   # fun 捕获无法注入模块属性（Macro.escape 不支持 fun），规格由函数返回
   defp fields do
@@ -35,7 +39,7 @@ defmodule Coconut.Pickle.Patch do
       :track_id,
       :channel,
       {:anchor, {:codec, Anchor}},
-      {:patch, {&dump_tamale_patch/1, &load_tamale_patch/1}}
+      {:tamale_patch, {&dump_tamale_patch/1, &load_tamale_patch/1}}
     ]
   end
 
@@ -49,4 +53,15 @@ defmodule Coconut.Pickle.Patch do
   end
 
   defp load_tamale_patch(other), do: {:error, {:invalid_tamale_patch_dump, other}}
+
+  # 旧档读档兼容：改名前的 dump 用 `:patch` 键。新旧键同时在场（不合法
+  # 形状）时以新键为准。
+  defp move_legacy_patch_key(%{} = data) do
+    case Map.fetch(data, :patch) do
+      {:ok, legacy} -> data |> Map.delete(:patch) |> Map.put_new(:tamale_patch, legacy)
+      :error -> data
+    end
+  end
+
+  defp move_legacy_patch_key(other), do: other
 end

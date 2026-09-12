@@ -176,7 +176,7 @@ defmodule Neume.ScorePitchV2Test do
       assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[120, 72]])
 
       assert %{
-               patch: %{
+               tamale_patch: %{
                  payload: %{
                    schema: "score_pitch_v2",
                    coordinates: "note_tick",
@@ -192,7 +192,7 @@ defmodule Neume.ScorePitchV2Test do
 
       assert {:ok, editor} = Editor.mount_pitch(editor, "n2", [[600, 72]])
 
-      assert %{patch: %{payload: %{values: [[120, 72.0]]}}} = alive_patch(editor, :pitch)
+      assert %{tamale_patch: %{payload: %{values: [[120, 72.0]]}}} = alive_patch(editor, :pitch)
     end
 
     test "未知音符挂载被拒绝", %{editor: editor} do
@@ -322,7 +322,7 @@ defmodule Neume.ScorePitchV2Test do
       # 重签后 digest 是 pin_input_v1 输入事实底料（schema 不跨级升级）。
       assert {:ok, expected} = Identity.base_for(current_track(editor), "n1", nil)
       assert {:ok, digest} = Tamale.Digest.digest(expected)
-      assert alive_patch(editor, :pitch).patch.base_digest == digest
+      assert alive_patch(editor, :pitch).tamale_patch.base_digest == digest
     end
   end
 

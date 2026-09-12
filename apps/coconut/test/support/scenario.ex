@@ -135,7 +135,7 @@ defmodule Coconut.Scenario do
         track_id: @vocal_track,
         channel: channel,
         anchor: %Tamale.Anchor.Ordinal{refs: [note_id], at_version: track.space.version},
-        patch: tp
+        tamale_patch: tp
       })
 
     {:ok, ws, _minted} = Workspace.attach_patch(ws, cp)

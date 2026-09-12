@@ -142,7 +142,7 @@ defmodule Coconut.Edit.DiffTest do
           track_id: @track,
           channel: :lyric,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "d", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "d", payload: %{}}
         })
 
       {:ok, ws, _minted} = Workspace.attach_patch(ws, patch)

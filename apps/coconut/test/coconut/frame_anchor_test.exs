@@ -77,7 +77,7 @@ defmodule Coconut.Edit.FrameAnchorTest do
         track_id: track_id,
         channel: :energy,
         anchor: %Tamale.Anchor.Metric{coord: coord, from: from, to: to, at_version: at_version},
-        patch: %Tamale.Patch{base_digest: "d", payload: %{}}
+        tamale_patch: %Tamale.Patch{base_digest: "d", payload: %{}}
       })
 
     patch
@@ -185,7 +185,7 @@ defmodule Coconut.Edit.FrameAnchorTest do
           track_id: @track,
           channel: :lyric,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 2},
-          patch: %Tamale.Patch{base_digest: "d", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "d", payload: %{}}
         })
 
       {:ok, ws, _} = Workspace.attach_patch(ws, ordinal)

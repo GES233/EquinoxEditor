@@ -291,7 +291,7 @@ defmodule Coconut.AudioTest do
           track_id: @track,
           channel: :default,
           anchor: %Tamale.Anchor.Ordinal{refs: ["c1"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "d", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "d", payload: %{}}
         })
 
       {:ok, ws, _minted} = Workspace.attach_patch(ws, patch)
@@ -310,7 +310,7 @@ defmodule Coconut.AudioTest do
           track_id: @track,
           channel: :default,
           anchor: %Tamale.Anchor.Metric{coord: :tick, from: 0, to: 100, at_version: 0},
-          patch: %Tamale.Patch{base_digest: "d", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "d", payload: %{}}
         })
 
       assert {:error, {:anchor_coord_mismatch, :tick, :frame}} =
@@ -325,7 +325,7 @@ defmodule Coconut.AudioTest do
           track_id: @track,
           channel: :default,
           anchor: %Tamale.Anchor.Metric{coord: :frame, from: 0, to: 100, at_version: 0},
-          patch: %Tamale.Patch{base_digest: "d", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "d", payload: %{}}
         })
 
       {:ok, ws, _minted} = Workspace.attach_patch(ws, patch)

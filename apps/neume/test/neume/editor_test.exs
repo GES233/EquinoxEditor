@@ -299,7 +299,7 @@ defmodule Neume.EditorTest do
       |> then(& &1.tracks[editor.track_id])
       |> Map.get(:patches)
       |> Enum.find(&(&1.channel == :duration))
-      |> Map.get(:patch)
+      |> Map.get(:tamale_patch)
       |> Map.get(:payload)
     end
 

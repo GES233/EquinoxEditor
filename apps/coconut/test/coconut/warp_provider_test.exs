@@ -151,7 +151,7 @@ defmodule Coconut.WarpProviderTest do
         track_id: "vocal",
         channel: :energy,
         anchor: %Tamale.Anchor.Metric{coord: :tick, from: 4800, to: 5000, at_version: 1},
-        patch: %Tamale.Patch{base_digest: "d", payload: %{}}
+        tamale_patch: %Tamale.Patch{base_digest: "d", payload: %{}}
       }
 
       wp = provider(spans, [patch])
@@ -224,7 +224,7 @@ defmodule Coconut.WarpProviderTest do
         track_id: "vocal",
         channel: :energy,
         anchor: %Tamale.Anchor.Metric{coord: :frame, from: 0, to: 50, at_version: 1},
-        patch: %Tamale.Patch{base_digest: "d", payload: %{}}
+        tamale_patch: %Tamale.Patch{base_digest: "d", payload: %{}}
       }
 
       wp = frame_provider(spans, [patch])
@@ -252,7 +252,7 @@ defmodule Coconut.WarpProviderTest do
         track_id: "vocal",
         channel: :energy,
         anchor: %Tamale.Anchor.Metric{coord: :frame, from: 50, to: 100, at_version: 1},
-        patch: %Tamale.Patch{base_digest: "d", payload: %{}}
+        tamale_patch: %Tamale.Patch{base_digest: "d", payload: %{}}
       }
 
       wp = frame_provider(spans, [patch], context)

@@ -206,8 +206,9 @@ defmodule Neume.Identity do
           legacy_bases: bases
         )
 
-      with {:ok, descriptor} <- semantics.describe(patch.patch.payload),
-           {:ok, fresh} <- semantics.base(context, patch.anchor, descriptor, patch.patch.payload) do
+      with {:ok, descriptor} <- semantics.describe(patch.tamale_patch.payload),
+           {:ok, fresh} <-
+             semantics.base(context, patch.anchor, descriptor, patch.tamale_patch.payload) do
         resolve_entry(patch, fresh)
       else
         {:error, {:unknown_note, _note_id}} -> entry(patch, :identity_unavailable)
@@ -219,7 +220,7 @@ defmodule Neume.Identity do
   end
 
   defp resolve_entry(patch, fresh) do
-    case Tamale.Patch.resolve(patch.patch, fresh) do
+    case Tamale.Patch.resolve(patch.tamale_patch, fresh) do
       {:ok, _payload} -> nil
       {:conflict, reason} -> entry(patch, reason)
       {:error, reason} -> entry(patch, reason)

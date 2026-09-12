@@ -711,25 +711,28 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: [], at_version: 0},
-          patch: %Tamale.Patch{base_digest: "a", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "a", payload: %{}}
         })
 
       {:ok, cp2} =
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: [], at_version: 0},
-          patch: %Tamale.Patch{base_digest: "b", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "b", payload: %{}}
         })
 
       {:ok, ws, _minted} = Workspace.attach_patch(ws, cp1)
-      assert [%{patch: %Tamale.Patch{base_digest: "a"}, id: id1}] = ws.tracks[@track].patches
+
+      assert [%{tamale_patch: %Tamale.Patch{base_digest: "a"}, id: id1}] =
+               ws.tracks[@track].patches
+
       assert is_binary(id1)
 
       {:ok, ws, _minted} = Workspace.attach_patches(ws, [cp2])
 
       assert [
-               %{patch: %Tamale.Patch{base_digest: "a"}},
-               %{patch: %Tamale.Patch{base_digest: "b"}}
+               %{tamale_patch: %Tamale.Patch{base_digest: "a"}},
+               %{tamale_patch: %Tamale.Patch{base_digest: "b"}}
              ] =
                ws.tracks[@track].patches
     end
@@ -805,7 +808,7 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{lyric: "ら"}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{lyric: "ら"}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp])
@@ -837,7 +840,7 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp])
@@ -891,7 +894,7 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 2},
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp])
@@ -938,7 +941,7 @@ defmodule Coconut.Edit.OperationTest do
             to: 200,
             at_version: 1
           },
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp])
@@ -973,7 +976,7 @@ defmodule Coconut.Edit.OperationTest do
             to: 200,
             at_version: 0
           },
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp])
@@ -1005,7 +1008,7 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Metric{coord: :tick, from: 100, to: 200, at_version: 1},
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp])
@@ -1060,7 +1063,7 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Metric{coord: :tick, from: 100, to: 200, at_version: 1},
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp])
@@ -1106,14 +1109,14 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "a", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "a", payload: %{}}
         })
 
       {:ok, cp2} =
         Coconut.Edit.Patch.new(%{
           track_id: other_track,
           anchor: %Tamale.Anchor.Ordinal{refs: [], at_version: 0},
-          patch: %Tamale.Patch{base_digest: "b", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "b", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp1, cp2])
@@ -1160,7 +1163,7 @@ defmodule Coconut.Edit.OperationTest do
       Coconut.Edit.Patch.new(%{
         track_id: @track,
         anchor: %Tamale.Anchor.Relative{ref: "n1", from_offset: 50, to_offset: 100, at_version: 2},
-        patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+        tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
       })
 
     ws = put_in(ws.tracks[@track].patches, [cp])
@@ -1208,7 +1211,7 @@ defmodule Coconut.Edit.OperationTest do
       Coconut.Edit.Patch.new(%{
         track_id: @track,
         anchor: %Tamale.Anchor.Relative{ref: "n1", from_offset: 50, to_offset: 100, at_version: 1},
-        patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+        tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
       })
 
     ws = put_in(ws.tracks[@track].patches, [cp])
@@ -1248,7 +1251,7 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp])
@@ -1293,7 +1296,7 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [cp])
@@ -1332,14 +1335,14 @@ defmodule Coconut.Edit.OperationTest do
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "old", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "old", payload: %{}}
         })
 
       {:ok, fresh} =
         Coconut.Edit.Patch.new(%{
           track_id: @track,
           anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "fresh", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "fresh", payload: %{}}
         })
 
       ws = put_in(ws.tracks[@track].patches, [old])
@@ -1362,14 +1365,14 @@ defmodule Coconut.Edit.OperationTest do
       anchor = %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 1}
       tp = %Tamale.Patch{base_digest: "d", payload: %{}}
 
-      {:ok, p1} = Coconut.Edit.Patch.new(%{track_id: @track, anchor: anchor, patch: tp})
+      {:ok, p1} = Coconut.Edit.Patch.new(%{track_id: @track, anchor: anchor, tamale_patch: tp})
 
       {:ok, p2} =
         Coconut.Edit.Patch.new(%{
           id: "Patch_explicit",
           track_id: @track,
           anchor: anchor,
-          patch: tp
+          tamale_patch: tp
         })
 
       {:ok, ws, _minted} = Workspace.attach_patches(ws, [p1, p2])

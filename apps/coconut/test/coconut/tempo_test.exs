@@ -164,7 +164,7 @@ defmodule Coconut.TempoTest do
         Coconut.Edit.Patch.new(%{
           track_id: "global:tempo",
           anchor: %Tamale.Anchor.Ordinal{refs: ["t0"], at_version: 1},
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.globals["global:tempo"].patches, [cp])
@@ -194,7 +194,7 @@ defmodule Coconut.TempoTest do
         Coconut.Edit.Patch.new(%{
           track_id: "global:tempo",
           anchor: %Tamale.Anchor.Metric{coord: :tick, from: 100, to: 200, at_version: 1},
-          patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: %{}}
         })
 
       ws = put_in(ws.globals["global:tempo"].patches, [cp])

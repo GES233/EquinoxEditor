@@ -227,7 +227,7 @@ defmodule Coconut do
              track_id: track_id,
              anchor: anchor,
              channel: channel,
-             patch: tamale_patch
+             tamale_patch: tamale_patch
            }),
          {:ok, session} <-
            run(session, Command.attach_patches([patch]), Keyword.take(opts, [:pin])) do

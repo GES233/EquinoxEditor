@@ -10,7 +10,7 @@ defmodule Coconut.PatchTest do
       track_id: "vocal",
       channel: :energy,
       anchor: %Tamale.Anchor.Metric{coord: coord, from: 0, to: 480, at_version: 0},
-      patch: tamale_patch()
+      tamale_patch: tamale_patch()
     })
   end
 
@@ -30,7 +30,7 @@ defmodule Coconut.PatchTest do
                  track_id: "vocal",
                  channel: :lyric,
                  anchor: %Tamale.Anchor.Ordinal{refs: ["n1"], at_version: 0},
-                 patch: tamale_patch()
+                 tamale_patch: tamale_patch()
                })
 
       assert {:ok, %Patch{}} =
@@ -38,7 +38,7 @@ defmodule Coconut.PatchTest do
                  track_id: "vocal",
                  channel: :lyric,
                  anchor: %Tamale.Anchor.Relative{ref: "n1", from_offset: 0, to_offset: 480},
-                 patch: tamale_patch()
+                 tamale_patch: tamale_patch()
                })
     end
   end

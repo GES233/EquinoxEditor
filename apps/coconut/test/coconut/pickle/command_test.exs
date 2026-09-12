@@ -42,7 +42,7 @@ defmodule Coconut.Pickle.CommandTest do
         track_id: "vocal",
         channel: :lyric,
         anchor: %Tamale.Anchor.Ordinal{refs: [note_id], at_version: track.space.version},
-        patch: tp
+        tamale_patch: tp
       })
 
     patch

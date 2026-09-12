@@ -70,7 +70,7 @@ defmodule Coconut.Edit.CrossTrackDragTest do
         track_id: track_id,
         channel: :lyric,
         anchor: %Tamale.Anchor.Ordinal{refs: [note_id], at_version: track.space.version},
-        patch: tp
+        tamale_patch: tp
       })
 
     {:ok, ws, minted} = Workspace.attach_patch(ws, patch)

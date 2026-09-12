@@ -203,7 +203,7 @@ defmodule Neume.PitchCurveV2Test do
       assert {:ok, editor} = Editor.mount_pitch_curve(editor, "n1", handled_bezier())
 
       assert %{
-               patch: %{
+               tamale_patch: %{
                  payload: %{
                    schema: "pitch_curve_v2",
                    coordinates: "note_tick",
@@ -235,7 +235,7 @@ defmodule Neume.PitchCurveV2Test do
                Editor.mount_pitch_curve(editor, "n2", legacy_curve_map([{600, 70}, {959, 66}]))
 
       assert %{
-               patch: %{
+               tamale_patch: %{
                  payload: %{
                    schema: "pitch_curve_v2",
                    points: [
@@ -258,7 +258,7 @@ defmodule Neume.PitchCurveV2Test do
 
       # normalize_v2 按 offset_tick 排序。
       assert %{
-               patch: %{
+               tamale_patch: %{
                  payload: %{
                    schema: "pitch_curve_v2",
                    points: [%{offset_tick: 0}, %{offset_tick: 240}]
@@ -279,7 +279,7 @@ defmodule Neume.PitchCurveV2Test do
       assert {:ok, editor} =
                Editor.mount_pitch(editor, "n1", legacy_curve_map([{0, 60}, {479, 62}]))
 
-      assert %{patch: %{payload: %{format: :pitch_curve_v1}}} = alive_patch(editor, :pitch)
+      assert %{tamale_patch: %{payload: %{format: :pitch_curve_v1}}} = alive_patch(editor, :pitch)
     end
   end
 
@@ -497,10 +497,12 @@ defmodule Neume.PitchCurveV2Test do
                Editor.replace_pin(editor, patch.id, v2)
 
       assert replaced_id == patch.id
-      assert %{patch: %{payload: %{schema: "pitch_curve_v2"}}} = alive_patch(editor, :pitch)
+
+      assert %{tamale_patch: %{payload: %{schema: "pitch_curve_v2"}}} =
+               alive_patch(editor, :pitch)
 
       assert {:ok, editor} = Editor.undo(editor)
-      assert %{patch: %{payload: %{format: :pitch_curve_v1}}} = alive_patch(editor, :pitch)
+      assert %{tamale_patch: %{payload: %{format: :pitch_curve_v1}}} = alive_patch(editor, :pitch)
     end
 
     test "同 schema 替换更新内容", %{editor: editor} do
@@ -516,7 +518,7 @@ defmodule Neume.PitchCurveV2Test do
       assert {:ok, editor, %{payload_schema: "pitch_curve_v2"}} =
                Editor.replace_pin(editor, patch.id, v2)
 
-      assert %{patch: %{payload: %{points: [%{value: 58.0}, %{value: 59.0}]}}} =
+      assert %{tamale_patch: %{payload: %{points: [%{value: 58.0}, %{value: 59.0}]}}} =
                alive_patch(editor, :pitch)
     end
 

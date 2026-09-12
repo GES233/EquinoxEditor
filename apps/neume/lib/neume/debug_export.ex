@@ -288,7 +288,7 @@ defmodule Neume.DebugExport do
       channel: patch.channel,
       anchor: anchor_json(patch.anchor),
       span_ticks: resolved_span(patch.anchor, view),
-      payload: patch.patch.payload
+      payload: patch.tamale_patch.payload
     }
   end
 
@@ -342,7 +342,7 @@ defmodule Neume.DebugExport do
   # v2 envelope（`note_tick`）按锚定音符当前起点投影回绝对 tick；legacy
   # payload 已是绝对坐标，走 `PitchCurve.display_points/1`。
   defp display_points(patch, view) do
-    case patch.patch.payload do
+    case patch.tamale_patch.payload do
       %{schema: "score_pitch_v2", values: values} ->
         case resolved_span(patch.anchor, view) do
           [start_tick, _end_tick] ->

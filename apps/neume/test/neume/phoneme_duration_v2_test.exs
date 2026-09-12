@@ -63,7 +63,7 @@ defmodule Neume.PhonemeDurationV2Test do
       assert {:ok, editor} =
                Editor.mount_phoneme_duration(editor, "n1", v2_payload("n1", 0, 1, 96))
 
-      assert %{patch: %{payload: %{schema: "phoneme_duration_v2"}}} =
+      assert %{tamale_patch: %{payload: %{schema: "phoneme_duration_v2"}}} =
                alive_patch(editor, :duration)
 
       assert {:ok, _editor, _report} = Editor.check(editor)
@@ -81,7 +81,7 @@ defmodule Neume.PhonemeDurationV2Test do
       assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[1, 96], [0, 48]])
 
       assert %{
-               patch: %{
+               tamale_patch: %{
                  payload: %{
                    schema: "phoneme_duration_v2",
                    values: [
@@ -105,7 +105,7 @@ defmodule Neume.PhonemeDurationV2Test do
       assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1b", [[0, 96]])
 
       assert %{
-               patch: %{
+               tamale_patch: %{
                  payload: %{
                    schema: "phoneme_duration_v2",
                    values: [%{segment: %{unit: "n1", member: 1, index: 0}, duration_tick: 96}]
@@ -119,7 +119,7 @@ defmodule Neume.PhonemeDurationV2Test do
     test "显式 v2 envelope 透传不动", %{editor: editor} do
       payload = v2_payload("n1", 0, 1, 96)
       assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", payload)
-      assert %{patch: %{payload: ^payload}} = alive_patch(editor, :duration)
+      assert %{tamale_patch: %{payload: ^payload}} = alive_patch(editor, :duration)
     end
 
     test "list 元素形状非法：tagged error，不落历史边", %{editor: editor} do
@@ -230,7 +230,7 @@ defmodule Neume.PhonemeDurationV2Test do
 
       # payload 的 ref 被机械重写为晋升后的 membership（index 不变）。
       assert %{
-               patch: %{
+               tamale_patch: %{
                  payload: %{
                    values: [%{segment: %{unit: "n1b", member: 0, index: 0}, duration_tick: 96}]
                  }

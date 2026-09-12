@@ -227,7 +227,7 @@ defmodule Coconut.FacadeTest do
           refs: ["n1"],
           at_version: Coconut.workspace(session).tracks[@track].space.version
         },
-        patch: resigned
+        tamale_patch: resigned
       })
 
     assert {:ok, session} =
@@ -236,7 +236,7 @@ defmodule Coconut.FacadeTest do
                Command.repatch_patches([{@track, old.id, :base_changed}], [replacement])
              )
 
-    assert [%{id: new_id, patch: ^resigned}] =
+    assert [%{id: new_id, tamale_patch: ^resigned}] =
              Coconut.workspace(session).tracks[@track].patches
 
     refute new_id == old.id

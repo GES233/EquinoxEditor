@@ -118,7 +118,7 @@ defmodule Coconut.Pickle.TrackTest do
           id: "Patch_1",
           track_id: "vocal",
           anchor: %Ordinal{refs: ["n1"], at_version: 0},
-          patch: %Tamale.Patch{base_digest: "abc", payload: [[0, 60]]},
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: [[0, 60]]},
           channel: :pitch
         })
 
@@ -141,7 +141,7 @@ defmodule Coconut.Pickle.TrackTest do
           id: "Patch_1",
           track_id: "vocal",
           anchor: %Ordinal{refs: ["n1"], at_version: 0},
-          patch: %Tamale.Patch{base_digest: "abc", payload: []},
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: []},
           channel: :pitch
         })
 
@@ -204,7 +204,7 @@ defmodule Coconut.Pickle.TrackTest do
           id: "Patch_1",
           track_id: "vocal",
           anchor: %Ordinal{refs: ["n1"], at_version: 0},
-          patch: %Tamale.Patch{base_digest: "abc", payload: []},
+          tamale_patch: %Tamale.Patch{base_digest: "abc", payload: []},
           channel: :pitch
         })
 
