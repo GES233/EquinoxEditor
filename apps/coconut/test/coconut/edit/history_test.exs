@@ -311,14 +311,14 @@ defmodule Coconut.Edit.HistoryTest do
       h = Enum.reduce(1..12, h, fn i, acc -> insert(acc, "s#{i}") end)
 
       assert h.seq == 12
-      assert h.seq - h.base_seq <= 5
+      assert h.seq - h.root_seq <= 5
       assert length(note_ids(h)) == 12
 
       assert {:error, {:unknown_node, 0}} = History.state_at(h, 0)
 
       h = Enum.reduce(1..12, h, fn _, acc -> unwind_one(acc) end)
       # stopped at the squash frontier: 12 - 8 = 4 undo steps happened
-      assert h.cursor == h.base_seq
+      assert h.cursor == h.root_seq
       assert length(note_ids(h)) == 8
 
       h = Enum.reduce(1..12, h, fn _, acc -> rewind_one(acc) end)
@@ -342,7 +342,7 @@ defmodule Coconut.Edit.HistoryTest do
 
       # full undo sweep reaches the squash frontier, full redo returns
       h = Enum.reduce(1..200, h, fn _, acc -> unwind_one(acc) end)
-      assert h.cursor == h.base_seq
+      assert h.cursor == h.root_seq
       h = Enum.reduce(1..200, h, fn _, acc -> rewind_one(acc) end)
       assert h.cursor == h.seq
       assert_replay_consistent(h)

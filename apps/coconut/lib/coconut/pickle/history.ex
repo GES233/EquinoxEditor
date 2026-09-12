@@ -9,11 +9,14 @@ defmodule Coconut.Pickle.History do
     `record` 走 `Coconut.Pickle.Command` codec（nil 直出——root 与 squash
     frontier 无 record），`checkpoint` 走 `Coconut.Pickle.Workspace` codec
     （nil 直出），`parent` / `label` / `timestamp` 原样直出；
-  - `cursor` / `seq` / `base_seq` / `checkpoint_interval` / `max_edges`
+  - `cursor` / `seq` / `root_seq` / `checkpoint_interval` / `max_edges`
     原样直出；
   - `present` **不入档**——load 终点是 `Coconut.Edit.History.restore/1`，
     从 cursor 最近的 checkpoint 重 fold 派生 present（replay 与 live 共用
     `Command.execute/3`，§12.4），窗口不变量在 restore 复检。
+
+  load 兼容旧档的 `:base_seq` 键（2026-09 改名批次包 2 前 `root_seq`
+  叫 `base_seq`）；dump 只写 `:root_seq`。
 
   load 对未知/非法形状返回 error tuple，不 raise。
   """
@@ -31,7 +34,7 @@ defmodule Coconut.Pickle.History do
          nodes: nodes,
          cursor: hist.cursor,
          seq: hist.seq,
-         base_seq: hist.base_seq,
+         root_seq: hist.root_seq,
          checkpoint_interval: hist.checkpoint_interval,
          max_edges: hist.max_edges
        }}
@@ -47,7 +50,8 @@ defmodule Coconut.Pickle.History do
         nodes: nodes,
         cursor: Map.get(data, :cursor),
         seq: Map.get(data, :seq),
-        base_seq: Map.get(data, :base_seq),
+        # 旧档读档兼容：改名前的 dump 用 `:base_seq` 键。
+        root_seq: Map.get(data, :root_seq) || Map.get(data, :base_seq),
         checkpoint_interval: Map.get(data, :checkpoint_interval),
         max_edges: Map.get(data, :max_edges)
       })

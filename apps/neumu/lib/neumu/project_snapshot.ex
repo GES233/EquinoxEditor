@@ -75,7 +75,7 @@ defmodule Neumu.ProjectSnapshot do
     %{
       project_id: project_id,
       history_pin: History.current(history).node_id,
-      can_undo: history.cursor > history.base_seq,
+      can_undo: history.cursor > history.root_seq,
       can_redo: history.cursor < history.seq,
       time_sigs: deep_lists(workspace.time_sigs),
       tempo_steps: Neume.MultiTrack.tempo_steps(multi_track),

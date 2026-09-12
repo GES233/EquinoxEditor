@@ -86,13 +86,13 @@ defmodule Coconut.Pickle.HistoryTest do
 
     assert restored.cursor == hist.cursor
     assert restored.seq == hist.seq
-    assert restored.base_seq == hist.base_seq
+    assert restored.root_seq == hist.root_seq
     assert restored.checkpoint_interval == hist.checkpoint_interval
     assert restored.max_edges == hist.max_edges
     assert restored.present == hist.present
 
     # 每个活节点的 materialize 结果一致（含分支另一臂）。
-    for seq <- hist.base_seq..hist.seq do
+    for seq <- hist.root_seq..hist.seq do
       assert {:ok, ws} = History.state_at(restored, seq)
       assert {:ok, ^ws} = History.state_at(hist, seq)
     end
@@ -112,14 +112,31 @@ defmodule Coconut.Pickle.HistoryTest do
     assert {:error, {:invalid_history_window, _}} = PickleHistory.load(bad, @registry)
 
     # 窗口不稠密（挖掉中间节点）
-    middle = div(hist.base_seq + hist.seq, 2)
+    middle = div(hist.root_seq + hist.seq, 2)
     bad = %{dumped | nodes: Map.delete(dumped.nodes, middle)}
     assert {:error, {:non_dense_history_window, _}} = PickleHistory.load(bad, @registry)
 
     # 根节点缺 checkpoint
-    bad = put_in(dumped.nodes[dumped.base_seq].checkpoint, nil)
+    bad = put_in(dumped.nodes[dumped.root_seq].checkpoint, nil)
     assert {:error, {:missing_root_checkpoint, _}} = PickleHistory.load(bad, @registry)
 
     assert {:error, {:invalid_history_dump, _}} = PickleHistory.load("nope", @registry)
+  end
+
+  test "旧档（:base_seq 键）可读，新 dump 只写 :root_seq" do
+    hist = build_history()
+    {:ok, dumped} = PickleHistory.dump(hist, @registry)
+
+    # 新 dump 只写 :root_seq，不含旧键。
+    assert Map.has_key?(dumped, :root_seq)
+    refute Map.has_key?(dumped, :base_seq)
+
+    # 旧形状 dump（2026-09 改名批次前字段叫 :base_seq）load 成功，
+    # 窗口根与派生 present 与新档一致。
+    legacy = dumped |> Map.delete(:root_seq) |> Map.put(:base_seq, hist.root_seq)
+
+    assert {:ok, restored} = PickleHistory.load(legacy, @registry)
+    assert restored.root_seq == hist.root_seq
+    assert restored.present == hist.present
   end
 end

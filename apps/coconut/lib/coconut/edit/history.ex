@@ -61,7 +61,7 @@ defmodule Coconut.Edit.History do
           nodes: %{node_id() => tree_node()},
           cursor: node_id(),
           seq: non_neg_integer(),
-          base_seq: node_id(),
+          root_seq: node_id(),
           present: Workspace.t(),
           checkpoint_interval: pos_integer(),
           max_edges: pos_integer()
@@ -70,7 +70,7 @@ defmodule Coconut.Edit.History do
   defstruct nodes: %{},
             cursor: 0,
             seq: 0,
-            base_seq: 0,
+            root_seq: 0,
             present: nil,
             checkpoint_interval: @default_checkpoint_interval,
             max_edges: @default_max_edges
@@ -89,7 +89,7 @@ defmodule Coconut.Edit.History do
       nodes: %{0 => %{parent: nil, record: nil, checkpoint: ws, label: nil, timestamp: now()}},
       cursor: 0,
       seq: 0,
-      base_seq: 0,
+      root_seq: 0,
       present: ws,
       checkpoint_interval: Keyword.get(opts, :checkpoint_interval, @default_checkpoint_interval),
       max_edges: Keyword.get(opts, :max_edges, @default_max_edges)
@@ -122,8 +122,8 @@ defmodule Coconut.Edit.History do
   `present` is not archived; it is re-derived here by folding from the
   nearest checkpoint at or behind `cursor` (the same `materialize/2` path as
   cursor jumps, so replay shares `Command.execute/3` with live writes,
-  §12.4). Invariants re-checked: window ordering (`base_seq <= cursor <=
-  seq`), dense node coverage of `base_seq..seq`, and a checkpoint on the
+  §12.4). Invariants re-checked: window ordering (`root_seq <= cursor <=
+  seq`), dense node coverage of `root_seq..seq`, and a checkpoint on the
   window root (initial root or squash frontier, §12.3).
   """
   @spec restore(map()) :: {:ok, t()} | {:error, term()}
@@ -142,11 +142,11 @@ defmodule Coconut.Edit.History do
     with {:ok, nodes} <- fetch_field(attrs, :nodes),
          {:ok, cursor} <- fetch_field(attrs, :cursor),
          {:ok, seq} <- fetch_field(attrs, :seq),
-         {:ok, base_seq} <- fetch_field(attrs, :base_seq),
+         {:ok, root_seq} <- fetch_field(attrs, :root_seq),
          {:ok, interval} <- fetch_field(attrs, :checkpoint_interval),
          {:ok, max_edges} <- fetch_field(attrs, :max_edges),
          true <- is_map(nodes) and Enum.all?(nodes, fn {k, v} -> is_integer(k) and is_map(v) end),
-         true <- Enum.all?([cursor, seq, base_seq], &(is_integer(&1) and &1 >= 0)),
+         true <- Enum.all?([cursor, seq, root_seq], &(is_integer(&1) and &1 >= 0)),
          true <- is_integer(interval) and interval > 0,
          true <- is_integer(max_edges) and max_edges > 0 do
       {:ok,
@@ -154,7 +154,7 @@ defmodule Coconut.Edit.History do
          nodes: nodes,
          cursor: cursor,
          seq: seq,
-         base_seq: base_seq,
+         root_seq: root_seq,
          present: nil,
          checkpoint_interval: interval,
          max_edges: max_edges
@@ -172,18 +172,18 @@ defmodule Coconut.Edit.History do
   end
 
   defp validate_window(hist) do
-    expected = MapSet.new(hist.base_seq..hist.seq)
+    expected = MapSet.new(hist.root_seq..hist.seq)
     actual = MapSet.new(Map.keys(hist.nodes))
 
     cond do
-      not (hist.base_seq <= hist.cursor and hist.cursor <= hist.seq) ->
-        {:error, {:invalid_history_window, {hist.base_seq, hist.cursor, hist.seq}}}
+      not (hist.root_seq <= hist.cursor and hist.cursor <= hist.seq) ->
+        {:error, {:invalid_history_window, {hist.root_seq, hist.cursor, hist.seq}}}
 
       not MapSet.equal?(expected, actual) ->
-        {:error, {:non_dense_history_window, {hist.base_seq, hist.seq}}}
+        {:error, {:non_dense_history_window, {hist.root_seq, hist.seq}}}
 
-      is_nil(Map.fetch!(hist.nodes, hist.base_seq).checkpoint) ->
-        {:error, {:missing_root_checkpoint, hist.base_seq}}
+      is_nil(Map.fetch!(hist.nodes, hist.root_seq).checkpoint) ->
+        {:error, {:missing_root_checkpoint, hist.root_seq}}
 
       true ->
         :ok
@@ -258,7 +258,7 @@ defmodule Coconut.Edit.History do
   @doc "Move to the next-lower live seq (Vim `g-` semantics)."
   @spec undo(t()) :: {:ok, t()} | {:error, :nothing_to_undo}
   def undo(hist) do
-    if hist.cursor > hist.base_seq do
+    if hist.cursor > hist.root_seq do
       {:ok, move_cursor(hist, hist.cursor - 1)}
     else
       {:error, :nothing_to_undo}
@@ -330,7 +330,7 @@ defmodule Coconut.Edit.History do
   # dense seq suffix); every kept node whose parent fell out of the window
   # first gets a materialized checkpoint, then the old nodes are dropped.
   defp squash(hist) do
-    if hist.seq - hist.base_seq <= hist.max_edges do
+    if hist.seq - hist.root_seq <= hist.max_edges do
       hist
     else
       new_base = hist.seq - hist.max_edges + 1
@@ -340,8 +340,8 @@ defmodule Coconut.Edit.History do
           fix_frontier(%{hist | nodes: acc}, seq, new_base)
         end)
 
-      nodes = Map.drop(nodes, Enum.to_list(hist.base_seq..(new_base - 1)))
-      %{hist | nodes: nodes, base_seq: new_base}
+      nodes = Map.drop(nodes, Enum.to_list(hist.root_seq..(new_base - 1)))
+      %{hist | nodes: nodes, root_seq: new_base}
     end
   end
 
