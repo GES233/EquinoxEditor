@@ -39,6 +39,15 @@ defmodule Neume.Runtime do
 
   @callback analyze_phrases(state(), Snapshot.t(), pins(), map(), term()) ::
               {:ok, list(), [map()]} | {:error, term()}
+
+  @doc """
+  不产出音频的 analyze/align 闭环（`Editor.export_debug/2` 的 `raw?: true`
+  无干预对照使用）。未实现本回调的 runtime 无法做 raw 对照，Editor 以
+  tagged error 拒绝，不静默跳过。
+  """
+  @callback analyze(state(), Snapshot.t(), pins(), map(), term()) ::
+              {:ok, Neume.Analysis.t()} | {:error, term()}
+
   @callback phonemes(state(), Snapshot.t(), term()) :: {:ok, map()} | {:error, term()}
   @callback render(state(), Snapshot.t(), pins(), map(), term()) ::
               {:ok, Neume.RenderArtifact.t()} | {:error, term()}
@@ -61,5 +70,6 @@ defmodule Neume.Runtime do
   @optional_callbacks render_checked: 5,
                       lower_pins: 4,
                       checked_pins: 1,
-                      phonology_digest: 1
+                      phonology_digest: 1,
+                      analyze: 5
 end

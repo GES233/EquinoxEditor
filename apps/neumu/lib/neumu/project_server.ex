@@ -67,7 +67,7 @@ defmodule Neumu.ProjectServer do
     end
   end
 
-  @doc "子进程规格；由 `Neumu.open_project/3` 经 DynamicSupervisor 启动。"
+  @doc "子进程规格；由 `Neumu.open_project/2` 经 DynamicSupervisor 启动。"
   def child_spec(opts) do
     %{
       id: {__MODULE__, Keyword.fetch!(opts, :project_id)},
@@ -446,8 +446,9 @@ defmodule Neumu.ProjectServer do
     Neume.MultiTrack.update_globals(multi_track, track_id, knobs)
   end
 
-  # 两阶段 pin 挂载：probe 令牌绑定 track/note 且携底料与 pin；pin 校验
-  # 由 History 的 stale-write 机制完成（probe 期间被编辑 → stale_pin）。
+  # 两阶段 pin 挂载：probe 令牌绑定 track/note 与 pin（精确三键，不携底料，
+  # 见 mount_probe_opts/3）；pin 校验由 History 的 stale-write 机制完成
+  # （probe 期间被编辑 → stale_pin）。
   defp apply_edit(multi_track, {:mount_pin, track_id, note_id, channel, payload, probe}) do
     with {:ok, opts} <- mount_probe_opts(probe, track_id, note_id) do
       case {channel, payload} do

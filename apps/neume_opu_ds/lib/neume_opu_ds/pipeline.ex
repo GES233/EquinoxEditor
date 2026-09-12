@@ -300,11 +300,6 @@ defmodule NeumeOpuDs.Pipeline do
     end
   end
 
-  @spec fetch_artifact(Oi.Result.t()) :: {:ok, Neume.RenderArtifact.t()} | {:error, term()}
-  def fetch_artifact(%Oi.Result{} = result) do
-    Oi.Result.reify(result, {:diffsinger, :artifact})
-  end
-
   defp fetch_vocal_view(%Snapshot{tracks: tracks}, track_id) do
     case Map.fetch(tracks, track_id) do
       {:ok, %{module: Coconut.Edit.Track.Vocal} = view} -> {:ok, view}

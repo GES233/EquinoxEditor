@@ -2,8 +2,9 @@ defmodule NeumeOpuDs.Voicebank.Manifest do
   @moduledoc """
   OpenUtau 格式 DiffSinger 声库的只读描述符与扫描器。
 
-  模型、字典与 embedding 始终留在仓库外。扫描结果保存规范化绝对路径，
-  `signature/1` 则只暴露可进入 `Coconut.Project` 的名称、引擎类型和内容摘要。
+  模型、字典与 embedding 始终留在仓库外。扫描结果保存规范化绝对路径；
+  进入 `Coconut.Project` 的名称、引擎类型和内容摘要签名由
+  `NeumeOpuDs.Provider`（stock/modified）构造，不在本模块。
   摘要覆盖会影响推理的配置、模型、字典及 embedding，不覆盖立绘和说明文件。
 
   `digest` 是全量内容摘要（legacy pin 底料的声音库事实分量）；

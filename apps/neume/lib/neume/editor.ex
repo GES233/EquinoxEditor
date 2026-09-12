@@ -317,7 +317,7 @@ defmodule Neume.Editor do
   - `:pin` — History cursor 版本钉；与当前 cursor 不符时返回
     `{:error, {:stale_pin, _}}`，不落历史边。
   """
-  @spec mount_pitch(t(), term(), [[number()]], keyword()) :: {:ok, t()} | {:error, term()}
+  @spec mount_pitch(t(), term(), [[number()]] | map(), keyword()) :: {:ok, t()} | {:error, term()}
   def mount_pitch(%__MODULE__{} = editor, note_id, points, opts \\ []) do
     with {:ok, normalized} <- PitchCurve.normalize(points),
          {:ok, payload} <- pitch_mount_payload(editor, note_id, normalized),
@@ -400,7 +400,7 @@ defmodule Neume.Editor do
   底料与裁决同 `mount_pitch/4`；下标/ref 的界内与归属校验在
   check/repatch/消费边界进行。选项同 `mount_pitch/4`。
   """
-  @spec mount_phoneme_duration(t(), term(), [[non_neg_integer()]], keyword()) ::
+  @spec mount_phoneme_duration(t(), term(), [[non_neg_integer()]] | map(), keyword()) ::
           {:ok, t()} | {:error, term()}
   def mount_phoneme_duration(%__MODULE__{} = editor, note_id, durations, opts \\ []) do
     case mount_pin(editor, note_id, :duration, durations, opts) do
@@ -522,13 +522,17 @@ defmodule Neume.Editor do
   defp maybe_raw_probe(_editor, _request, raw?) when raw? in [nil, false], do: {:ok, nil}
 
   defp maybe_raw_probe(editor, request, true) do
-    editor.pipeline.analyze(
-      editor.pipeline_state,
-      request.snapshot,
-      %{},
-      request.globals,
-      editor.track_id
-    )
+    if function_exported?(editor.pipeline, :analyze, 5) do
+      editor.pipeline.analyze(
+        editor.pipeline_state,
+        request.snapshot,
+        %{},
+        request.globals,
+        editor.track_id
+      )
+    else
+      {:error, {:raw_probe_unsupported, editor.pipeline}}
+    end
   end
 
   defp alive_patches(editor) do

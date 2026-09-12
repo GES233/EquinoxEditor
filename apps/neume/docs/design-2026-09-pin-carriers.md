@@ -457,21 +457,19 @@ Neume 负责：
   error，不能静默改义。
 - 旧工程不迁移也能按原语义打开、check、repatch 和渲染。
 
-## 11. 尚待拍板
+## 11. 拍板记录（已闭环）
 
-1. ~~pitch v2 坐标采用推荐的 `note_tick`，还是继续 `project_tick`？~~
-   已拍板 `note_tick`（2026-09-07，批次 B 实施）。
-2. ~~stable phonology segment ref 的最小生成规则：显式持久化 ID，还是由
-   syllable unit 输入事实确定性派生？~~ 已拍板**确定性派生**
+1. pitch v2 transport 采用 **`note_tick`**（2026-09-07，批次 B 实施），
+   弃 `project_tick` 绝对坐标方案。
+2. stable phonology segment ref **确定性派生**，不引入持久化 ID
    （2026-09-11）：持久 ID 会造成双重身份来源；unit = 组头 note_id，
    segment = `%{member, index}` 成员内序号，安全性由 base 覆盖全组
    输入事实兜住（生成规则见 §7）。
-3. ~~voicebank 的 phonology namespace/dictionary digest 是否需要进入
-   `Pin<Ph>` / `Pin<Co>` base；若进入，应使用 provider 提供的 phonology
-   digest，而不是整个 runtime manifest digest。~~ 已拍板**进 base**
-   （2026-09-11）：经 `Neume.Runtime.phonology_digest/1` 回调由 provider
-   提供 opaque 字符串，范围 = 字典级资产 + G2P 算法版本戳，不用整个
-   runtime manifest digest；不拆独立 G2P 实体（见批次 C 施工要点）。
+3. phonology digest **进** `Pin<Ph>`/`Pin<Co>` base（2026-09-11）：经
+   `Neume.Runtime.phonology_digest/1` 回调由 provider 提供 opaque
+   字符串，范围 = 字典级资产 + G2P 算法版本戳，不用整个 runtime
+   manifest digest；不拆独立 G2P 实体（见批次 C 施工要点）。
 
 批次 A/B/C/D/E 已完成。后续方向：legacy 双轨是迁移期兼容层，不长期保留
-（§5）；v2 实战验证后可评估 legacy 通道退役（读档兼容保留）。
+（§5）；legacy 通道退役施工见 `plan-2026-09-pin-legacy-retirement.md`
+（读档兼容保留）。

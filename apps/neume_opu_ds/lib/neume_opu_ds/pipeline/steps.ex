@@ -25,7 +25,7 @@ defmodule NeumeOpuDs.Pipeline.Steps.ScorePlan do
     end
   end
 
-  # 公开给挂载 probe（`DiffSingerPipeline.phonemes/3`）：pins 传 %{} 时
+  # 公开给挂载 probe（`NeumeOpuDs.Pipeline.phonemes/3`）：pins 传 %{} 时
   # 只产出 score 装配（notes/groups/时基），不带任何 override。
   @doc false
   @spec build(Snapshot.t(), map(), map(), term()) :: {:ok, map()} | {:error, term()}
@@ -347,9 +347,10 @@ defmodule NeumeOpuDs.Pipeline.Steps.Analysis do
   defp probe(%{notes: []}, _opts), do: {:error, :empty_score}
   defp probe(plan, _opts), do: {:error, {:invalid_score_plan, plan}}
 
-  # G2P（按需）+ 词/组装配：probe 与挂载 probe（`DiffSingerPipeline.phonemes/3`）
-  # 的共用前段。不做任何模型推理、不消费 overrides——pin 不改变音素身份，
-  # 挂载时刻的有效底料等于当前 score 的物化序列（无 lyric 短路型干预）。
+  # G2P（按需）+ 词/组装配：probe 与挂载 probe（`NeumeOpuDs.Pipeline.phonemes/3`）
+  # 的共用前段。不做任何模型推理、不消费 overrides——pin 不改变音素身份；
+  # 产物只服务于 duration pin 的可表达性校验与词内下标平移，pin 底料自
+  # 2026-09-05 起为输入事实签名（`Neume.Identity`），与本序列无关。
   @doc false
   @spec prepare(map(), module(), map()) :: {:ok, map()} | {:error, term()}
   def prepare(%{notes: notes} = plan, client, config) when is_list(notes) and notes != [] do

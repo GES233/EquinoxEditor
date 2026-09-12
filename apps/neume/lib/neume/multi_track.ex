@@ -450,11 +450,6 @@ defmodule Neume.MultiTrack do
   def update_globals(runtime, track_id, knobs),
     do: invoke_track(runtime, track_id, &Editor.update_globals(&1, knobs))
 
-  @spec globals(t(), Track.track_id()) :: {:ok, map()} | {:error, term()}
-  def globals(%__MODULE__{} = runtime, track_id) do
-    with {:ok, editor} <- attach_editor(runtime, track_id), do: {:ok, Editor.globals(editor)}
-  end
-
   @spec repatch(t(), Track.track_id(), [map() | Coconut.Util.ID.t()]) ::
           {:ok, t(), [map()]} | {:error, term()}
   def repatch(runtime, track_id, entries),
@@ -465,11 +460,6 @@ defmodule Neume.MultiTrack do
           {:ok, t(), map()} | {:error, term()}
   def replace_pin(runtime, track_id, patch_ref, new_payload),
     do: invoke_track(runtime, track_id, &Editor.replace_pin(&1, patch_ref, new_payload))
-
-  @spec export_debug(t(), Track.track_id(), Path.t(), keyword()) ::
-          {:ok, t(), Path.t()} | {:error, term()}
-  def export_debug(runtime, track_id, path, opts \\ []),
-    do: invoke_track(runtime, track_id, &Editor.export_debug(&1, path, opts))
 
   @spec put_mix(t(), Track.track_id(), map()) :: {:ok, t()} | {:error, term()}
   def put_mix(%__MODULE__{} = runtime, track_id, attrs) do

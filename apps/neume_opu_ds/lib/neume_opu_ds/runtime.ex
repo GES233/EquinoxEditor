@@ -1,7 +1,6 @@
 defmodule NeumeOpuDs.Runtime do
   @moduledoc "OpenUTAU DiffSinger 声库包的 Neume runtime 适配器。"
 
-  alias Neume.Voicebank.Entry
   alias NeumeOpuDs.Pipeline
 
   @behaviour Neume.Runtime
@@ -61,6 +60,9 @@ defmodule NeumeOpuDs.Runtime do
   defdelegate analyze_phrases(state, snapshot, pins, globals, track_id), to: Pipeline
 
   @impl true
+  defdelegate analyze(state, snapshot, pins, globals, track_id), to: Pipeline
+
+  @impl true
   defdelegate phonemes(state, snapshot, track_id), to: Pipeline
 
   @impl true
@@ -68,10 +70,6 @@ defmodule NeumeOpuDs.Runtime do
 
   @impl true
   defdelegate render_checked(state, snapshot, checked, globals, track_id), to: Pipeline
-
-  @spec entry?(term()) :: boolean()
-  def entry?(%Entry{runtime: __MODULE__}), do: true
-  def entry?(_entry), do: false
 
   defp put_option(target, target_key, source, source_key) do
     case Keyword.fetch(source, source_key) do

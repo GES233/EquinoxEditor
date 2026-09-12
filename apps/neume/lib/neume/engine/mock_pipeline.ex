@@ -123,6 +123,7 @@ defmodule Neume.Engine.MockPipeline do
   end
 
   @doc "无声库环境的确定性 analyze：音符按 ticks_per_frame 投影成帧边界。"
+  @impl true
   @spec analyze(state(), Snapshot.t(), map(), map(), term()) ::
           {:ok, Analysis.t()} | {:error, term()}
   def analyze(
