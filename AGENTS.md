@@ -292,7 +292,9 @@ Neume.Editor
   `Neumu.repatch/3` 按 patch id 批量重挂，回复 `{:ok, pin, results}`；
   `Neumu.unmount_pin/4` 按 `(track_id, note_id, channel)` 卸载；
   `Neumu.replace_pin/4` 替换在册 pin 的 payload（见批次 D）；
-  `Neumu.note_phonemes/1` 只读查询物化音素序列（见 E0b）。快照含
+  `Neumu.note_phonemes/1` 只读查询物化音素序列（见 E0b）；
+  `Neumu.history_tree/1` 只读投影 undo 树（`%{root_seq, seq, cursor,
+  nodes}`，历史树视图用）。快照含
   `time_sigs`、`can_undo`/`can_redo` 与逐轨 `pins`（存活 patch 的
   id/channel/anchor/payload）投影，全部 plain data。
 

@@ -154,6 +154,17 @@ defmodule Neumu do
     call_project(project_id, :history_pin)
   end
 
+  @doc """
+  查询工程的 undo 树投影（历史树视图用）：`%{root_seq, seq, cursor,
+  nodes}`；`cursor` 即当前 `history_pin`，`nodes` 按 seq 升序，逐项
+  `%{seq, parent, label, has_checkpoint}`——全部 plain data。
+  只读：不产生历史边、不派发事件。
+  """
+  @spec history_tree(RenderJob.project_id()) :: {:ok, map()} | {:error, term()}
+  def history_tree(project_id) do
+    call_project(project_id, :history_tree)
+  end
+
   @doc "按 `artifact_id` 查询运行时制品。"
   @spec artifact(artifact_id()) ::
           {:ok, RenderJob.artifact()} | {:error, Neumu.ArtifactStore.not_found()}

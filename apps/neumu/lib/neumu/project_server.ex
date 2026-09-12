@@ -182,6 +182,27 @@ defmodule Neumu.ProjectServer do
     {:reply, {:ok, current_pin(state.multi_track)}, state}
   end
 
+  # 历史树只读投影：undo 树（节点单 parent，遍历按全局 seq）供 UI 树
+  # 视图。plain data，不落边、不发事件。
+  def handle_call(:history_tree, _from, state) do
+    history = state.multi_track.session.history
+
+    nodes =
+      history.nodes
+      |> Enum.sort_by(fn {seq, _node} -> seq end)
+      |> Enum.map(fn {seq, node} ->
+        %{
+          seq: seq,
+          parent: node.parent,
+          label: node.label,
+          has_checkpoint: not is_nil(node.checkpoint)
+        }
+      end)
+
+    tree = %{root_seq: history.root_seq, seq: history.seq, cursor: history.cursor, nodes: nodes}
+    {:reply, {:ok, tree}, state}
+  end
+
   # UI 只读快照：纯投影，不产生 History 边、不派发事件。
   def handle_call(:snapshot, _from, state) do
     snapshot = Neumu.ProjectSnapshot.build(state.multi_track, state.project_id)

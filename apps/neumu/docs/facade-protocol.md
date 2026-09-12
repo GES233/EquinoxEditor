@@ -73,6 +73,9 @@
 ## 查询（只读，不产生历史边、不派发事件）
 
 - `snapshot/1`、`history_pin/1`
+- `history_tree/1` → `{:ok, %{root_seq, seq, cursor, nodes}}`：undo 树
+  投影（历史树视图用），`cursor` 即当前 `history_pin`，`nodes` 按 seq
+  升序，逐项 `%{seq, parent, label, has_checkpoint}`，全部 plain data
 - `list_voicebanks/1` → `{:ok, [%{id, name, mode, engine, digest}]}`
 - `check/1` → `{:ok, %{history_pin, status: :ok|:failed, entries: [...]}}`；
   冲突条目 plain data（patch 只留 `patch_id`/`channel`/`note_id`），

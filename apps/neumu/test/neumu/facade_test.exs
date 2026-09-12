@@ -466,6 +466,39 @@ defmodule Neumu.FacadeTest do
     refute_received {:project_changed, _, _}
   end
 
+  test "history_tree 投影 undo 树（含分叉），plain data 且只读无副作用", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+
+    assert {:ok, 2} = Neumu.rename_track(id, "lead", "主唱")
+    assert_received {:project_changed, ^id, 2}
+
+    # undo 后另写 → 分叉：节点 3 与节点 2 同 parent。
+    assert {:ok, 1} = Neumu.undo(id)
+    assert_received {:project_changed, ^id, 1}
+    assert {:ok, 3} = Neumu.rename_track(id, "lead", "vocal")
+    assert_received {:project_changed, ^id, 3}
+
+    assert {:ok, tree} = Neumu.history_tree(id)
+    assert %{root_seq: 0, seq: 3, cursor: 3, nodes: nodes} = tree
+
+    assert [
+             %{seq: 0, parent: nil},
+             %{seq: 1, parent: 0},
+             %{seq: 2, parent: 1},
+             %{seq: 3, parent: 1}
+           ] = Enum.map(nodes, &Map.take(&1, [:seq, :parent]))
+
+    assert Enum.all?(nodes, &(Map.has_key?(&1, :label) and Map.has_key?(&1, :has_checkpoint)))
+    # 根永远有 checkpoint。
+    assert Enum.at(nodes, 0).has_checkpoint == true
+
+    assert_plain_data(tree)
+
+    # 只读：不产生历史边、不派发事件。
+    assert {:ok, 3} = Neumu.history_pin(id)
+    refute_received {:project_changed, _, _}
+  end
+
   test "快照投影 can_undo/can_redo 跟随 History cursor", %{project_id: id} do
     assert %{history_pin: 1, can_undo: true, can_redo: false} = snapshot!(id)
 
