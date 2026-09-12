@@ -59,6 +59,32 @@ defmodule Neumu.PinFacadeTest do
     end
   end
 
+  # 递归断言结构化投影字段不含 tuple（`:reason` 键例外：facade 契约保持
+  # 结构化 tagged term，末端转换归壳层——见 docs/facade-protocol.md）。
+  defp refute_projection_tuples(term, path \\ [])
+
+  defp refute_projection_tuples(%{reason: _} = map, path) when is_map(map) do
+    Enum.each(map, fn
+      {:reason, _reason} -> :ok
+      {key, value} -> refute_projection_tuples(value, path ++ [key])
+    end)
+  end
+
+  defp refute_projection_tuples(map, path) when is_map(map) do
+    Enum.each(map, fn {key, value} -> refute_projection_tuples(value, path ++ [key]) end)
+  end
+
+  defp refute_projection_tuples(tuple, path) when is_tuple(tuple),
+    do: flunk("tuple 泄露于 #{inspect(path)}：#{inspect(tuple)}")
+
+  defp refute_projection_tuples(list, path) when is_list(list) do
+    list
+    |> Enum.with_index()
+    |> Enum.each(fn {v, i} -> refute_projection_tuples(v, path ++ [i]) end)
+  end
+
+  defp refute_projection_tuples(_term, _path), do: :ok
+
   test "probe_pin 返回 plain-data 令牌，不改状态不发事件", %{project_id: id} do
     :ok = Neumu.subscribe(id)
 
@@ -149,9 +175,20 @@ defmodule Neumu.PinFacadeTest do
     :ok = Neumu.subscribe(id)
     assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
 
+    # E0a：list 入参在 server 侧换算为 phoneme_duration_v2 envelope
+    # （成员内下标 0 → segment %{unit: "n1", member: 0, index: 0}）。
     assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], probe)
     assert_received {:project_changed, ^id, 3}
-    assert [%{channel: :duration, payload: [[0, 96]]}] = pins!(id)
+
+    assert [
+             %{
+               channel: :duration,
+               payload: %{
+                 schema: "phoneme_duration_v2",
+                 values: [%{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 96}]
+               }
+             }
+           ] = pins!(id)
 
     assert {:ok, 4} = Neumu.unmount_pin(id, "lead", "n1", :duration)
     assert_received {:project_changed, ^id, 4}
@@ -202,13 +239,21 @@ defmodule Neumu.PinFacadeTest do
     refute_received {:project_changed, _, _}
   end
 
-  test "replace_pin：legacy → v2 升级一条边一次事件，undo 还原", %{project_id: id} do
+  test "replace_pin：同 schema v2 替换一条边一次事件，undo 还原", %{project_id: id} do
     :ok = Neumu.subscribe(id)
     assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+
+    # E0a 起 facade 挂载零 legacy：list 换算为 v2 envelope；legacy → v2
+    # 升级手势只剩读档来源（Editor 层契约由 neume 侧测试钉住）。
     assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], probe)
     assert_received {:project_changed, ^id, 3}
 
-    [%{id: old_id}] = pins!(id)
+    [%{id: old_id, payload: old_payload}] = pins!(id)
+
+    assert old_payload == %{
+             schema: "phoneme_duration_v2",
+             values: [%{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 96}]
+           }
 
     v2 = %{
       schema: "phoneme_duration_v2",
@@ -228,10 +273,10 @@ defmodule Neumu.PinFacadeTest do
     assert [%{id: ^new_id, payload: %{schema: "phoneme_duration_v2"}}] = pins!(id)
     assert_plain_data(result)
 
-    # 一条历史边：undo 一次完整还原旧 legacy pin。
+    # 一条历史边：undo 一次完整还原旧 pin。
     assert {:ok, 3} = Neumu.undo(id)
     assert_received {:project_changed, ^id, 3}
-    assert [%{id: ^old_id, payload: [[0, 96]]}] = pins!(id)
+    assert [%{id: ^old_id, payload: ^old_payload}] = pins!(id)
 
     refute_received {:project_changed, _, _}
   end
@@ -325,7 +370,18 @@ defmodule Neumu.PinFacadeTest do
              Neumu.repatch(id, "lead", [patch_id])
 
     assert_received {:project_changed, ^id, 5}
-    assert [%{id: new_patch_id, channel: :duration, payload: [[0, 96]]}] = pins!(id)
+
+    assert [
+             %{
+               id: new_patch_id,
+               channel: :duration,
+               payload: %{
+                 schema: "phoneme_duration_v2",
+                 values: [%{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 96}]
+               }
+             }
+           ] = pins!(id)
+
     assert new_patch_id != patch_id
 
     # undo 一次整批还原（旧 pin 回来）。
@@ -363,6 +419,94 @@ defmodule Neumu.PinFacadeTest do
     assert {:error, {:unknown_track, "no-such"}} = Neumu.repatch(id, "no-such", [patch_id])
   end
 
+  test "note_phonemes 返回拍板形状，pin 一致且只读无副作用", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+
+    assert {:ok, result} = Neumu.note_phonemes(id)
+
+    # 拍板形状（E0b）：segment 即可直接撰写 phoneme_duration_v2 envelope
+    # 的 stable ref；span 已 JSON-safe 化为 list；extras 预留。
+    assert %{
+             pin: 2,
+             tracks: %{
+               "lead" => %{
+                 "n1" => %{
+                   span: [0, 480],
+                   segments: [
+                     %{segment: %{unit: "n1", member: 0, index: 0}, phoneme: "l"},
+                     %{segment: %{unit: "n1", member: 0, index: 1}, phoneme: "a"}
+                   ],
+                   extras: %{}
+                 }
+               }
+             }
+           } = result
+
+    assert_plain_data(result)
+    refute_projection_tuples(result)
+
+    # 只读查询：不产生历史边、不派发事件。
+    assert {:ok, 2} = Neumu.history_pin(id)
+    refute_received {:project_changed, _, _}
+  end
+
+  test "note_phonemes：melisma 组头给全组序列，续音符只给延续元音", %{project_id: id} do
+    assert {:ok, 3} = Neumu.split_note(id, "lead", "n1", 240, "n1b")
+
+    assert {:ok, %{pin: 3, tracks: %{"lead" => notes}}} = Neumu.note_phonemes(id)
+
+    assert %{
+             "n1" => %{
+               span: [0, 240],
+               segments: [
+                 %{segment: %{unit: "n1", member: 0, index: 0}, phoneme: "l"},
+                 %{segment: %{unit: "n1", member: 0, index: 1}, phoneme: "a"},
+                 %{segment: %{unit: "n1", member: 1, index: 0}, phoneme: "a"}
+               ]
+             },
+             "n1b" => %{
+               span: [240, 480],
+               segments: [%{segment: %{unit: "n1", member: 1, index: 0}, phoneme: "a"}]
+             }
+           } = notes
+  end
+
+  test "note_phonemes：probe/G2P 失败投影为 plain-data entries", %{tmp_dir: tmp_dir} do
+    {registry, stock} = ProjectStub.stock_registry(tmp_dir)
+    failing_id = "project-failing-#{System.unique_integer([:positive])}"
+
+    {:ok, _pid} =
+      Neumu.create_project(
+        failing_id,
+        ProjectStub.open_opts(registry, tmp_dir, Neumu.PinFacadeTest.FailingPhonemesClient)
+      )
+
+    on_exit(fn ->
+      if Neumu.ProjectServer.whereis(failing_id), do: Neumu.close_project(failing_id)
+    end)
+
+    assert {:ok, 1} = Neumu.add_track(failing_id, "lead", stock.id)
+
+    # 无显式音素 → probe 走 G2P，假 client loud 失败。
+    assert {:ok, 2} =
+             Neumu.insert_note(failing_id, "lead", "n1", :head, {0, 480}, %{
+               pitch: 60,
+               lyric: "la"
+             })
+
+    assert {:ok, %{pin: 2, status: :failed, entries: [entry]}} =
+             Neumu.note_phonemes(failing_id)
+
+    assert %{kind: :probe, track_id: "lead", reason: {:encoder_failed, {:g2p_failed, "la"}}} =
+             entry
+
+    assert_plain_data(entry)
+    refute_projection_tuples(entry)
+
+    # 失败查询同样只读：不落边、不发事件。
+    assert {:ok, 2} = Neumu.history_pin(failing_id)
+  end
+
   test "pin 随工程保存/重开恢复，undo 历史一并回来", %{
     project_id: id,
     registry: registry,
@@ -395,7 +539,13 @@ defmodule Neumu.PinFacadeTest do
                anchor: %{refs: ["n1"]},
                payload: %{schema: "score_pitch_v2", values: [[120, 72.0]]}
              },
-             %{channel: :duration, payload: [[0, 96]]}
+             %{
+               channel: :duration,
+               payload: %{
+                 schema: "phoneme_duration_v2",
+                 values: [%{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 96}]
+               }
+             }
            ] = pins!(id)
 
     # 存档 History 可继续 undo：duration pin 卸载边先还原。
@@ -404,4 +554,17 @@ defmodule Neumu.PinFacadeTest do
     assert {:ok, 2} = Neumu.undo(id)
     assert [] = pins!(id)
   end
+end
+
+defmodule Neumu.PinFacadeTest.FailingPhonemesClient do
+  @moduledoc false
+  # G2P loud 失败的假 client：probe 在 encode 动作即以 tagged error 拒绝，
+  # 供 note_phonemes 的失败投影测试使用。
+  @behaviour NeumeOpuDs.Worker
+
+  @impl true
+  def call(%{action: "encode", notes: notes}, _config),
+    do: {:error, {:g2p_failed, notes |> hd() |> Map.get(:lyric)}}
+
+  def call(_payload, _config), do: {:error, :not_used}
 end

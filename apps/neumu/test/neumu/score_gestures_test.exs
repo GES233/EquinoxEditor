@@ -86,8 +86,9 @@ defmodule Neumu.ScoreGesturesTest do
     assert {:ok, 3} = insert_note(id, "lead", "n1", :head, {0, 480}, "la")
     assert {:ok, 4} = Neumu.split_note(id, "lead", "n1", 240, "n1b")
 
-    # 贴接：n1b 是 n1 的续音，底料 = 头的输入事实（continuation 身份）。
-    # duration pin 签的是这份输入事实，组关系变化在 check 冲突界面可见。
+    # 贴接：n1b 是 n1 的续音。E0a 起 list 挂载换算为 phoneme_duration_v2
+    # （segment %{unit: "n1", member: 1, index: 0}，底料钉全组输入事实），
+    # 组关系变化在 check 冲突界面可见。
     assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1b")
     assert {:ok, 5} = Neumu.mount_phoneme_duration(id, "lead", "n1b", [[0, 96]], probe)
 

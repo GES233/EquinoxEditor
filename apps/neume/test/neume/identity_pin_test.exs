@@ -37,9 +37,22 @@ defmodule Neume.IdentityPinTest do
     end
   end
 
+  # 模拟旧档/兼容路径：显式签 pin_input_v1 底料的 legacy duration 点列
+  # （Editor.mount_phoneme_duration 自 E0a 起把 list 换算为
+  # phoneme_duration_v2 envelope）。
+  defp mount_legacy_duration(editor, note_id, durations) do
+    with {:ok, base} <- Editor.probe_base(editor, note_id),
+         {:ok, session, _patch} <-
+           Coconut.mount(editor.session, editor.track_id, note_id, :duration, durations,
+             base: base
+           ) do
+      {:ok, %{editor | session: session}}
+    end
+  end
+
   test "改音高与拖动不炸 pin（身份底料不含音高与时值）", %{editor: editor} do
     editor = insert_la(editor)
-    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+    assert {:ok, editor} = mount_legacy_duration(editor, "n1", [[0, 96]])
     assert {:ok, _editor, %{analysis: _}} = Editor.check(editor)
 
     # 改音高：content base 时代会炸，身份底料不炸。
@@ -57,7 +70,7 @@ defmodule Neume.IdentityPinTest do
     assert {:ok, editor} =
              Editor.insert_note(editor, "n2", "n1", {480, 960}, %{pitch: 64, lyric: "mi"})
 
-    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+    assert {:ok, editor} = mount_legacy_duration(editor, "n1", [[0, 96]])
     assert {:ok, editor} = Editor.edit_note(editor, "n2", %{lyric: "mu"})
 
     assert {:ok, _editor, _report} = Editor.check(editor)
@@ -65,7 +78,7 @@ defmodule Neume.IdentityPinTest do
 
   test "改词炸 pin，repatch 重签后通过，undo 一次回到冲突态", %{editor: editor} do
     editor = insert_la(editor)
-    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+    assert {:ok, editor} = mount_legacy_duration(editor, "n1", [[0, 96]])
 
     # "la" → [l, a]，"lu" → [l, u]：音素序列变了。
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lu"})
@@ -92,7 +105,7 @@ defmodule Neume.IdentityPinTest do
 
   test "repatch 下标越界时降级，旧 patch 保持冲突态", %{editor: editor} do
     editor = insert_la(editor)
-    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[1, 96]])
+    assert {:ok, editor} = mount_legacy_duration(editor, "n1", [[1, 96]])
 
     # "o" → [o]：单音素，pin 的下标 1 越界。
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "o"})
@@ -110,7 +123,7 @@ defmodule Neume.IdentityPinTest do
 
   test "repatch 拒绝不在册的 patch", %{editor: editor} do
     editor = insert_la(editor)
-    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+    assert {:ok, editor} = mount_legacy_duration(editor, "n1", [[0, 96]])
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
 
     assert {:error, {:check_failed, [%{patch: patch} = entry]}} = Editor.check(editor)
@@ -127,7 +140,7 @@ defmodule Neume.IdentityPinTest do
     assert {:ok, editor} = Editor.split_note(editor, "n1", 240, "n1b")
 
     # 续音 n1b 的身份 = 头的延续元音 [a]（mock 取头末音素）。
-    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1b", [[0, 96]])
+    assert {:ok, editor} = mount_legacy_duration(editor, "n1b", [[0, 96]])
     assert {:ok, editor, _report} = Editor.check(editor)
 
     # 给 n1b 自己的歌词，然后拖出缝隙 → 旗标失效，晋升为头。
@@ -162,8 +175,9 @@ defmodule Neume.IdentityPinTest do
               group: %{kind: "head"}
             }} = Editor.probe_base(editor, "n2")
 
-    # 挂载成功；缺歌词是模型期事实，在 check 的模型裁决才报错，
-    # 且输入底料不因此产生身份冲突（签的是输入，不是 probe 输出）。
+    # 挂载成功（E0a 起 list 换算为 v2 envelope，换算同样不跑 G2P）；
+    # 缺歌词是模型期事实，在 check 的模型裁决才报错，
+    # 且底料不因此产生身份冲突（签的是输入，不是 probe 输出）。
     assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n2", [[0, 96]])
     assert {:error, {:check_failed, entries}} = Editor.check(editor)
     assert [%{kind: :model, reason: {:missing_lyric, "n2"}}] = entries
@@ -173,7 +187,7 @@ defmodule Neume.IdentityPinTest do
     editor = insert_la(editor)
     # legacy pitch_points_v1（旧档/兼容路径）仍签 pin_input_v1：改词会炸。
     assert {:ok, editor} = mount_legacy_pitch(editor, "n1", [[120, 72]])
-    assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+    assert {:ok, editor} = mount_legacy_duration(editor, "n1", [[0, 96]])
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
 
     assert {:error, {:check_failed, entries}} = Editor.check(editor)

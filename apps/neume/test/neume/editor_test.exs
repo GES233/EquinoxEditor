@@ -120,8 +120,8 @@ defmodule Neume.EditorTest do
     assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
     assert {:ok, editor} = Editor.edit_note(editor, "n1", %{lyric: "lai"})
 
-    # mock G2P："la" → [l, a]，"lai" → [l, a, i]——输入事实变了，legacy
-    # pin_input_v1 底料的 duration pin 炸。
+    # mock G2P："la" → [l, a]，"lai" → [l, a, i]——输入事实变了，v2
+    # phoneme_correspondence_v1 底料（钉全组输入事实）的 duration pin 炸。
     assert {:error, {:check_failed, [%{kind: :conflict, stage: :probe}]}} =
              Editor.render(editor)
 
@@ -272,6 +272,18 @@ defmodule Neume.EditorTest do
   describe "replace_pin/4" do
     alias Neume.Pin.Schema
 
+    # 模拟旧档/兼容路径：显式签 pin_input_v1 底料的 legacy duration 点列
+    # （Editor.mount_phoneme_duration 自 E0a 起把 list 换算为 v2 envelope）。
+    defp mount_legacy_duration(editor, note_id, durations) do
+      with {:ok, base} <- Editor.probe_base(editor, note_id),
+           {:ok, session, _patch} <-
+             Coconut.mount(editor.session, editor.track_id, note_id, :duration, durations,
+               base: base
+             ) do
+        {:ok, %{editor | session: session}}
+      end
+    end
+
     defp duration_patch_id(editor) do
       editor.session
       |> Coconut.workspace()
@@ -295,22 +307,36 @@ defmodule Neume.EditorTest do
       assert {:ok, editor} =
                Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
 
+      # E0a：list 入参换算为 v2 envelope（member 内下标 0 → segment
+      # %{unit: "n1", member: 0, index: 0}）。
       assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+
+      old_payload =
+        Schema.phoneme_duration_v2_payload([
+          %{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 96}
+        ])
+
+      assert duration_payload(editor) == old_payload
       old_id = duration_patch_id(editor)
 
-      assert {:ok, editor, result} = Editor.replace_pin(editor, old_id, [[1, 120]])
+      new_payload =
+        Schema.phoneme_duration_v2_payload([
+          %{segment: %{unit: "n1", member: 0, index: 1}, duration_tick: 120}
+        ])
 
-      assert %{replaced_patch_id: ^old_id, payload_schema: "phoneme_duration_v1"} = result
+      assert {:ok, editor, result} = Editor.replace_pin(editor, old_id, new_payload)
+
+      assert %{replaced_patch_id: ^old_id, payload_schema: "phoneme_duration_v2"} = result
       assert result.patch_id != old_id
-      assert duration_payload(editor) == [[1, 120]]
+      assert duration_payload(editor) == new_payload
 
       # 一条历史边：undo 一次完整还原旧 payload。
       assert {:ok, editor} = Editor.undo(editor)
       assert duration_patch_id(editor) == old_id
-      assert duration_payload(editor) == [[0, 96]]
+      assert duration_payload(editor) == old_payload
 
       assert {:ok, editor} = Editor.redo(editor)
-      assert duration_payload(editor) == [[1, 120]]
+      assert duration_payload(editor) == new_payload
       assert {:ok, _editor, _report} = Editor.check(editor)
     end
 
@@ -318,7 +344,7 @@ defmodule Neume.EditorTest do
       assert {:ok, editor} =
                Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "la"})
 
-      assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+      assert {:ok, editor} = mount_legacy_duration(editor, "n1", [[0, 96]])
 
       v2 =
         Schema.phoneme_duration_v2_payload([
@@ -365,7 +391,11 @@ defmodule Neume.EditorTest do
                Editor.replace_pin(editor, patch_id, %{"bogus" => true})
 
       assert duration_patch_id(editor) == patch_id
-      assert duration_payload(editor) == [[0, 96]]
+
+      assert duration_payload(editor) ==
+               Schema.phoneme_duration_v2_payload([
+                 %{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 96}
+               ])
     end
   end
 

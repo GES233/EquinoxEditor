@@ -10,7 +10,9 @@ defmodule Neume.MultiTrack do
   alias Coconut.Edit.{Command, History, Track, Workspace}
   alias Coconut.Pickle.File
   alias Coconut.Pickle.Track, as: PickleTrack
+  alias Coconut.Render.Engine.Snapshot
   alias Neume.{Editor, MixPipeline, TrackConfig, TrackRuntime}
+  alias Neume.Phonology.Ref
   alias Neume.Voicebank.{Entry, Registry}
 
   @enforce_keys [
@@ -426,6 +428,146 @@ defmodule Neume.MultiTrack do
         do: :ok,
         else: {:error, {:unknown_note, note_id}}
     end
+  end
+
+  @doc """
+  只读音素 probe（E0b，facade 音素序列查询的内核）：逐轨跑 pipeline 的
+  `phonemes/3`（G2P + 组展开，不跑模型），把逐音符物化序列投影为
+  stable segment ref 列表——UI 拿着 ref 可直接撰写
+  `phoneme_duration_v2` envelope。
+
+  返回 `{:ok, tracks}`：`tracks` 为
+  `%{track_id => %{note_id => %{span, segments, extras}}}`；`segments`
+  逐项 `%{segment: %{unit, member, index}, phoneme: symbol}`——melisma
+  组头给**全组**序列（各成员音素带各自的 member/index），续音符只给
+  自己的延续元音；`span` 为 `{start_tick, end_tick}`；`extras` 预留为
+  空映射。ref 由 `Neume.Phonology.Ref` 从谱面事实确定性派生，并经
+  `resolve/3` 回读物化符号（任何一级失配 loud 报错，不静默选错）。
+
+  空轨不 probe（真实管线对空谱报 `:empty_score`，此处归一为没有音符
+  的空映射）。probe/G2P 失败聚合为 `{:error, {:probe_failed, entries}}`，
+  entry 带 `track_id`（可定位时附 `note_id`），风格同 `check/1`。
+  只读：不产生历史边、不改工程值。
+  """
+  @spec note_phonemes(t()) ::
+          {:ok, %{Track.track_id() => %{term() => map()}}}
+          | {:error, {:probe_failed, [map()]}}
+  def note_phonemes(%__MODULE__{} = runtime) do
+    workspace = Coconut.workspace(runtime.session)
+
+    case Snapshot.from_workspace(workspace) do
+      {:ok, snapshot} ->
+        runtime.tracks
+        |> Enum.reduce({%{}, []}, fn {track_id, track_runtime}, {tracks, errors} ->
+          case probe_track_phonemes(workspace, snapshot, track_id, track_runtime) do
+            {:ok, notes} -> {Map.put(tracks, track_id, notes), errors}
+            {:error, entry} -> {tracks, [entry | errors]}
+          end
+        end)
+        |> case do
+          {tracks, []} -> {:ok, tracks}
+          {_tracks, errors} -> {:error, {:probe_failed, Enum.reverse(errors)}}
+        end
+
+      {:error, reason} ->
+        {:error, {:probe_failed, [%{kind: :probe, reason: reason}]}}
+    end
+  end
+
+  # 空轨不 probe：真实管线对空谱报 :empty_score，此处归一为没有音符的空映射。
+  defp probe_track_phonemes(workspace, snapshot, track_id, track_runtime) do
+    case Workspace.fetch_track(workspace, track_id) do
+      {:ok, track} ->
+        case Track.view(track) do
+          [] ->
+            {:ok, %{}}
+
+          view ->
+            case track_runtime.pipeline.phonemes(
+                   track_runtime.pipeline_state,
+                   snapshot,
+                   track_id
+                 ) do
+              {:ok, note_phonemes} ->
+                project_note_phonemes(track, track_id, view, note_phonemes)
+
+              {:error, reason} ->
+                {:error, %{kind: :probe, track_id: track_id, reason: reason}}
+            end
+        end
+
+      {:error, _} ->
+        {:error, %{kind: :track, track_id: track_id, reason: {:unknown_track, track_id}}}
+    end
+  end
+
+  # 逐音符投影：组头（含独立音符）给全 unit 序列，续音符只给自己的延续
+  # 元音；segment ref 由 membership 派生并经 Ref.resolve/3 回读符号。
+  defp project_note_phonemes(track, track_id, view, note_phonemes) do
+    memberships = Ref.track_memberships(track)
+    units = Ref.units(memberships)
+
+    Enum.reduce_while(view, {:ok, %{}}, fn {note_id, _note, span}, {:ok, acc} ->
+      case note_segments(note_id, span, memberships, units, note_phonemes) do
+        {:ok, entry} ->
+          {:cont, {:ok, Map.put(acc, note_id, entry)}}
+
+        {:error, reason} ->
+          entry = %{kind: :probe, track_id: track_id, note_id: note_id, reason: reason}
+          {:halt, {:error, entry}}
+      end
+    end)
+  end
+
+  defp note_segments(note_id, span, memberships, units, note_phonemes) do
+    membership = Map.fetch!(memberships, note_id)
+
+    member_ids =
+      if membership.continuation?,
+        do: [note_id],
+        else: Map.fetch!(units, membership.head_id)
+
+    with {:ok, segments} <- member_segments(member_ids, memberships, units, note_phonemes) do
+      {:ok, %{span: span, segments: segments, extras: %{}}}
+    end
+  end
+
+  defp member_segments(member_ids, memberships, units, note_phonemes) do
+    member_ids
+    |> Enum.reduce_while({:ok, []}, fn member_id, {:ok, acc} ->
+      membership = Map.fetch!(memberships, member_id)
+
+      case Map.fetch(note_phonemes, member_id) do
+        {:ok, phonemes} ->
+          case resolve_segments(membership, length(phonemes), units, note_phonemes, acc) do
+            {:ok, acc} -> {:cont, {:ok, acc}}
+            {:error, _} = error -> {:halt, error}
+          end
+
+        :error ->
+          {:halt, {:error, {:missing_note_phonemes, member_id}}}
+      end
+    end)
+    |> case do
+      {:ok, segments} -> {:ok, Enum.reverse(segments)}
+      {:error, _} = error -> error
+    end
+  end
+
+  # 逐下标经 Ref.resolve/3 回读物化符号：ref 派生与 probe 序列的任何
+  # 失配（unit/member/index 越界）都 loud 报错，不静默选错。
+  defp resolve_segments(membership, count, units, note_phonemes, acc) do
+    Enum.reduce_while(0..(count - 1)//1, {:ok, acc}, fn index, {:ok, acc} ->
+      ref = Ref.segment(membership, index)
+
+      case Ref.resolve(ref, units, note_phonemes) do
+        {:ok, [_language, symbol]} ->
+          {:cont, {:ok, [%{segment: ref, phoneme: symbol} | acc]}}
+
+        {:error, reason} ->
+          {:halt, {:error, reason}}
+      end
+    end)
   end
 
   @doc """

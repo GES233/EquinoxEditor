@@ -19,6 +19,7 @@ defmodule Neume.Phonology.Ref do
   runtime probe（`Neume.Runtime.phonemes/3`）提供。
   """
 
+  alias Coconut.Edit.Track
   alias Neume.Syllable
 
   @typedoc "unit ref：组头 note_id。"
@@ -40,6 +41,20 @@ defmodule Neume.Phonology.Ref do
   @spec memberships([Syllable.item()]) :: %{term() => Syllable.membership()}
   def memberships(notes) when is_list(notes),
     do: notes |> Syllable.derive_groups() |> Map.new(&{&1.id, &1})
+
+  @doc """
+  从轨道谱面事实派生全轨组归属：`Track.view/1` 的音符、span 与
+  melisma 旗标构造 `memberships/1` 的 items（Track 入口的便捷封装）。
+  """
+  @spec track_memberships(Track.t()) :: %{term() => Syllable.membership()}
+  def track_memberships(%Track{} = track) do
+    track
+    |> Track.view()
+    |> Enum.map(fn {id, note, {start_tick, end_tick}} ->
+      {id, start_tick, end_tick, Syllable.flagged?(note.metadata)}
+    end)
+    |> memberships()
+  end
 
   @doc """
   由组归属派生 unit 组成表：`%{组头 note_id => [成员 note_id, ...]}`，

@@ -76,6 +76,74 @@ defmodule Neume.PhonemeDurationV2Test do
     end
   end
 
+  describe "E0a：list 入参换算为 v2 envelope" do
+    test "单音符：成员内下标补 %{unit, member} 两分量", %{editor: editor} do
+      assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[1, 96], [0, 48]])
+
+      assert %{
+               patch: %{
+                 payload: %{
+                   schema: "phoneme_duration_v2",
+                   values: [
+                     %{segment: %{unit: "n1", member: 0, index: 1}, duration_tick: 96},
+                     %{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 48}
+                   ]
+                 }
+               }
+             } = alive_patch(editor, :duration)
+
+      # v2 底料（phoneme_correspondence_v1）：改音高不炸。
+      assert {:ok, editor} = Editor.edit_note(editor, "n1", %{pitch: 62})
+      assert {:ok, _editor, _report} = Editor.check(editor)
+    end
+
+    test "melisma 组成员：member 序号为组内序号", %{editor: editor} do
+      assert {:ok, editor} = Editor.split_note(editor, "n1", 240, "n1b")
+
+      # 续音 n1b 是组 n1 的第 1 个成员：list 下标换算为
+      # %{unit: "n1", member: 1, index: _}。
+      assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1b", [[0, 96]])
+
+      assert %{
+               patch: %{
+                 payload: %{
+                   schema: "phoneme_duration_v2",
+                   values: [%{segment: %{unit: "n1", member: 1, index: 0}, duration_tick: 96}]
+                 }
+               }
+             } = alive_patch(editor, :duration)
+
+      assert {:ok, _editor, _report} = Editor.check(editor)
+    end
+
+    test "显式 v2 envelope 透传不动", %{editor: editor} do
+      payload = v2_payload("n1", 0, 1, 96)
+      assert {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", payload)
+      assert %{patch: %{payload: ^payload}} = alive_patch(editor, :duration)
+    end
+
+    test "list 元素形状非法：tagged error，不落历史边", %{editor: editor} do
+      assert {:error, {:invalid_duration_payload, ["x", 96]}} =
+               Editor.mount_phoneme_duration(editor, "n1", [["x", 96]])
+
+      assert {:error, {:invalid_duration_payload, [-1, 96]}} =
+               Editor.mount_phoneme_duration(editor, "n1", [[-1, 96]])
+
+      assert {:error, {:invalid_duration_payload, [0, 0]}} =
+               Editor.mount_phoneme_duration(editor, "n1", [[0, 0]])
+
+      assert {:error, {:invalid_duration_payload, [0, 96, 5]}} =
+               Editor.mount_phoneme_duration(editor, "n1", [[0, 96, 5]])
+
+      assert [] == current_track(editor).patches
+    end
+
+    test "未知音符：tagged error", %{editor: editor} do
+      assert {:error, {:unknown_note, "n9"}} =
+               Editor.mount_phoneme_duration(editor, "n9", [[0, 96]])
+    end
+  end
+
   describe "survival matrix" do
     test "改音高、拖动与邻居编辑存活", %{editor: editor} do
       assert {:ok, editor} =

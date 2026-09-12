@@ -166,9 +166,10 @@ defmodule Neume.Channels.DurationPin do
 
   - 旧 `[[ph_index, dur_tick], ...]` 点列（`phoneme_duration_v1`）：
     legacy，继续签 `pin_input_v1` 输入事实底料（见 `Neume.Identity`）；
-    `ph_index` 越界等可表达性校验在消费边界（ScorePlan/Analysis）与
-    re-patch 手势里（后者读 `Context.legacy_probe` 的 probe 物化词内
-    音素序列），行为不变；
+    自 E0a 起仅经读档/兼容路径出现（`Neume.Editor.mount_phoneme_duration/4`
+    的 list 入参换算为 v2 envelope 挂载），`ph_index` 越界等可表达性
+    校验在消费边界（ScorePlan/Analysis）与 re-patch 手势里（后者读
+    `Context.legacy_probe` 的 probe 物化词内音素序列），行为不变；
   - `phoneme_duration_v2` envelope（批次 D）：stable segment ref
     （`%{unit, member, index}`，`Neume.Phonology.Ref`）替代裸
     `ph_index`，签 `phoneme_correspondence_v1` 底料——钉 track/note、
@@ -185,7 +186,6 @@ defmodule Neume.Channels.DurationPin do
   alias Coconut.Edit.{Patch, Track}
   alias Neume.Phonology.Ref
   alias Neume.Pin.{Context, Descriptor, Schema}
-  alias Neume.Syllable
 
   @phoneme_duration_v2 Schema.phoneme_duration_v2()
   @correspondence_v1 Schema.base_phoneme_correspondence_v1()
@@ -348,14 +348,7 @@ defmodule Neume.Channels.DurationPin do
   defp probe_note_id(%Tamale.Anchor.Ordinal{refs: [note_id | _]}), do: {:ok, note_id}
   defp probe_note_id(other), do: {:error, {:unsupported_anchor, other}}
 
-  defp memberships(%Track{} = track) do
-    track
-    |> Track.view()
-    |> Enum.map(fn {id, note, {start_tick, end_tick}} ->
-      {id, start_tick, end_tick, Syllable.flagged?(note.metadata)}
-    end)
-    |> Ref.memberships()
-  end
+  defp memberships(%Track{} = track), do: Ref.track_memberships(track)
 
   defp fetch_membership(track, note_id) do
     case Map.fetch(memberships(track), note_id) do

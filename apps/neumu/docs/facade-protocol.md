@@ -77,6 +77,16 @@
 - `check/1` → `{:ok, %{pin, status: :ok|:failed, entries: [...]}}`；
   冲突条目 plain data（patch 只留 `patch_id`/`channel`/`note_id`），
   在调用方进程执行（真声库较慢），不阻塞 ProjectServer
+- `note_phonemes/1`（E0b，2026-09-12）→
+  `{:ok, %{pin, tracks}}`：`tracks` 为
+  `%{track_id => %{note_id => %{span: [s, e], segments: [...],
+  extras: %{}}}}`；`segments` 逐项 `%{segment: %{unit, member, index},
+  phoneme: symbol}`——`segment` 即 `phoneme_duration_v2` 的 stable
+  ref，UI 拿着可直接撰写 v2 envelope；melisma 组头给全组序列，续音符
+  只给自己的延续元音。在调用方进程执行（真声库要调 worker），不产生
+  历史边、不派发事件；probe/G2P 失败返回
+  `{:ok, %{pin, status: :failed, entries}}`（同 `check/1` 的 entries
+  风格，`kind: :probe`，带 `track_id`/`note_id` 定位）
 - `list_render_jobs/1` → `{:ok, [%{job_id, source_pin, status,
   artifact_id, error}]}`
 - `artifact/1` → `{:ok, artifact}`（含 WAV `path`、采样率、时长等）

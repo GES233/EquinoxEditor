@@ -5,8 +5,8 @@ defmodule Neumu.CheckReport do
   `Neume` 的 check 冲突 entry 携带 `%Coconut.Edit.Patch{}` struct 等运行时
   领域值，不能直接跨 facade 边界；本模块把它们投影为可序列化 plain
   data（patch 只留 `patch_id`/`channel`/`note_id`，`span` 等结构化字段
-  降为 JSON-safe 的 list），供 `Neumu.check/1` 与
-  `Neumu.list_render_jobs/1` 使用。
+  降为 JSON-safe 的 list），供 `Neumu.check/1`、`Neumu.note_phonemes/1`
+  与 `Neumu.list_render_jobs/1` 使用。
 
   `reason` 字段保持结构化 tagged term：Elixir 调用方需要机器可判，
   UI 只展示；壳层推到浏览器前的末端转换（tuple→list 等）归壳层，
@@ -44,23 +44,28 @@ defmodule Neumu.CheckReport do
   defp anchor_note_id(%Patch{anchor: %Tamale.Anchor.Ordinal{refs: [note_id | _]}}), do: note_id
   defp anchor_note_id(_patch), do: nil
 
-  # 结构化字段的 JSON-safe 化：tuple 递归降为 list；`:reason` 键下的值例外，
-  # 保持结构化 tagged term（Elixir 机器可判），末端转换归壳层。
-  defp deep_lists(%{reason: _reason} = entry) when is_map(entry) do
+  @doc """
+  结构化字段的 JSON-safe 化：tuple 递归降为"位置即标签"的 list
+  （`:reason` 键下的值例外，保持结构化 tagged term——Elixir 机器可判，
+  末端转换归壳层，见 `docs/facade-protocol.md`）。`note_phonemes/1`
+  等查询投影复用本函数（如 `span: {s, e}` → `[s, e]`）。
+  """
+  @spec deep_lists(term()) :: term()
+  def deep_lists(%{reason: _reason} = entry) when is_map(entry) do
     Map.new(entry, fn
       {:reason, reason} -> {:reason, reason}
       {key, value} -> {key, deep_lists(value)}
     end)
   end
 
-  defp deep_lists(map) when is_map(map),
+  def deep_lists(map) when is_map(map),
     do: Map.new(map, fn {key, value} -> {key, deep_lists(value)} end)
 
-  defp deep_lists(tuple) when is_tuple(tuple),
+  def deep_lists(tuple) when is_tuple(tuple),
     do: tuple |> Tuple.to_list() |> Enum.map(&deep_lists/1)
 
-  defp deep_lists(list) when is_list(list), do: Enum.map(list, &deep_lists/1)
-  defp deep_lists(term), do: term
+  def deep_lists(list) when is_list(list), do: Enum.map(list, &deep_lists/1)
+  def deep_lists(term), do: term
 
   # 深度净化：运行时对象（struct/pid/function/reference/port）一律降为
   # inspect 字符串；key 保持原样（facade 投影只产 atom/binary key）。

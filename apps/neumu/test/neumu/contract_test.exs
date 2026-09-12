@@ -78,9 +78,42 @@ defmodule Neumu.ContractTest do
 
     assert client.pin == 5
 
+    # —— E0b：音素序列查询 → 用返回的 segment ref 直接撰写 v2 envelope ——
+    # 拆分后 n1 是 melisma 组头：查询给全组序列（含续音 n1b 的延续元音
+    # segment），n1b 只给自己的延续元音。
+    assert {:ok, %{pin: 5, tracks: %{"lead" => phoneme_notes}}} =
+             RefClient.note_phonemes(client)
+
+    assert %{
+             "n1" => %{
+               span: [0, 240],
+               segments: [
+                 %{segment: head_ref, phoneme: "l"},
+                 %{segment: %{unit: "n1", member: 0, index: 1}, phoneme: "a"},
+                 %{segment: continuation_ref, phoneme: "a"}
+               ]
+             },
+             "n1b" => %{span: [240, 480], segments: [%{segment: n1b_ref, phoneme: "a"}]}
+           } = phoneme_notes
+
+    assert %{unit: "n1", member: 0, index: 0} = head_ref
+    assert %{unit: "n1", member: 1, index: 0} = continuation_ref
+    # 续音符拿到的 segment 与组头全组序列中的同一 ref。
+    assert n1b_ref == continuation_ref
+
+    # 闭环：查询返回的 ref 原样写进 phoneme_duration_v2 envelope 挂载成功。
     assert {:ok, client} =
              RefClient.mount(client, "lead", "n1", fn probe ->
-               Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], probe)
+               Neumu.mount_phoneme_duration(
+                 id,
+                 "lead",
+                 "n1",
+                 %{
+                   schema: "phoneme_duration_v2",
+                   values: [%{segment: head_ref, duration_tick: 96}]
+                 },
+                 probe
+               )
              end)
 
     assert client.pin == 6
@@ -97,7 +130,8 @@ defmodule Neumu.ContractTest do
 
     # —— 改词 → 冲突占一等位置 → 一键 repatch ——
     # 批次 B 起 pitch 点列落 score_pitch_v2（底料只钉 track/note/坐标系），
-    # 改词不再炸 pitch pin；duration pin 仍签 pin_input_v1 输入事实，照常冲突。
+    # 改词不再炸 pitch pin；duration pin 自 E0a 起落 phoneme_duration_v2
+    # （底料钉全组输入事实 + phonology digest），改词照常冲突。
     assert {:ok, client} =
              RefClient.dispatch(client, fn ->
                Neumu.edit_note(id, "lead", "n1", %{lyric: "lo"})

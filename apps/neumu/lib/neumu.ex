@@ -214,6 +214,35 @@ defmodule Neumu do
   end
 
   @doc """
+  查询当前状态的逐音符物化音素序列（E0b），供 UI 撰写
+  `phoneme_duration_v2` envelope。
+
+  返回 `{:ok, %{pin, tracks}}`：`tracks` 为
+  `%{track_id => %{note_id => %{span, segments, extras}}}`（plain
+  data，`span` 为 `[start_tick, end_tick]`）；`segments` 逐项
+  `%{segment: %{unit, member, index}, phoneme: symbol}`——`segment` 即
+  v2 duration 的 stable ref，melisma 组头给全组序列、续音符只给自己的
+  延续元音；`extras` 预留为空映射。
+
+  执行在调用方进程（真声库要调 worker），不占用 ProjectServer；只读，
+  不产生历史边、不派发事件。probe/G2P 失败返回
+  `{:ok, %{pin, status: :failed, entries}}`，entries 为 plain-data
+  投影（同 `check/1` 的 entries 风格）。
+  """
+  @spec note_phonemes(RenderJob.project_id()) :: {:ok, map()} | {:error, term()}
+  def note_phonemes(project_id) do
+    with {:ok, multi_track, pin} <- call_project(project_id, :probe_context) do
+      case Neume.MultiTrack.note_phonemes(multi_track) do
+        {:ok, tracks} ->
+          {:ok, %{pin: pin, tracks: Neumu.CheckReport.deep_lists(tracks)}}
+
+        {:error, {:probe_failed, entries}} ->
+          {:ok, %{pin: pin, status: :failed, entries: Neumu.CheckReport.project_entries(entries)}}
+      end
+    end
+  end
+
+  @doc """
   列出该工程的渲染任务（按 job_id 升序；plain data：`%{job_id,
   source_pin, status, artifact_id, error}`），供"按 pin 试听对比"枚举
   制品。只读查询。
@@ -496,11 +525,13 @@ defmodule Neumu do
   @doc """
   在音符上挂载逐音素的稀疏时长 pin。
 
-  `durations` 两形：旧 `[[音素下标, tick 时长], ...]` 点列（legacy），或
-  批次 D 的 `phoneme_duration_v2` envelope plain map——
+  `durations` 两形：`[[音素下标, tick 时长], ...]` 点列（下标是成员内
+  音素下标，E0a 起 server 侧换算为 `phoneme_duration_v2` envelope
+  挂载），或显式 `phoneme_duration_v2` envelope plain map——
   `%{schema: "phoneme_duration_v2", values: [%{segment: %{unit, member,
   index}, duration_tick: ticks}]}`，segment ref 指向锚定音符自身
-  （unit = 组头 note_id、member = 组内序号、index = 成员内音素下标）。
+  （unit = 组头 note_id、member = 组内序号、index = 成员内音素下标），
+  透传不动。legacy `phoneme_duration_v1` 仅经读档出现。
   """
   @spec mount_phoneme_duration(
           RenderJob.project_id(),

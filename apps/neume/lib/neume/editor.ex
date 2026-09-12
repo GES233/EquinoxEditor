@@ -16,6 +16,7 @@ defmodule Neume.Editor do
   alias Coconut.Util.ID
   alias Neume.Channels.{DurationPin, PitchPin}
   alias Neume.{Identity, PitchCurve, TrackConfig, TrackRuntime}
+  alias Neume.Phonology.Ref
   alias Neume.Pin.{Context, Resolved, Schema, Semantics}
   alias Neume.Engine.{MockPipeline, OrchidError}
   alias Neume.Voicebank.Entry
@@ -387,25 +388,73 @@ defmodule Neume.Editor do
   end
 
   @doc """
-  在音符上挂载逐音素的稀疏时长 pin。
+  在音符上挂载逐音素的稀疏时长 pin（E0a 起 list 入参默认换算为
+  `phoneme_duration_v2` envelope 挂载）。
 
-  payload 两形：旧 `[[音素下标, tick 时长], ...]` 点列
-  （`phoneme_duration_v1`，legacy 签 `pin_input_v1`），或批次 D 的
-  `phoneme_duration_v2` envelope——`%{schema: "phoneme_duration_v2",
-  values: [%{segment: %{unit, member, index}, duration_tick: ticks}]}`，
-  segment ref 须指向锚定音符自身（unit = 组头 note_id、member = 组内
-  序号），签 `phoneme_correspondence_v1` 底料（track/note + unit 全组
-  输入事实 + phonology digest）。
+  入参两形：
 
-  底料与裁决同 `mount_pitch/4`；下标/ref 的界内与归属校验在
-  check/repatch/消费边界进行。选项同 `mount_pitch/4`。
+  - `[[音素下标, tick 时长], ...]` 点列：下标是**成员内**音素下标，
+    挂载时由 `Neume.Phonology.Ref` 从谱面事实（note_id + melisma
+    旗标）纯派生 `%{unit, member}` 两分量（unit = 组头 note_id、
+    member = 组内序号），换算为 `phoneme_duration_v2` envelope
+    （`%{schema: "phoneme_duration_v2", values: [%{segment: %{unit,
+    member, index}, duration_tick: ticks}]}`），签
+    `phoneme_correspondence_v1` 底料（track/note + unit 全组输入事实
+    + phonology digest）。换算不需要 probe；下标界内校验仍在
+    check/repatch/消费边界。元素形状非法（非 `[非负整数下标,
+    正整数 tick]` 二元组）返回 `{:error, {:invalid_duration_payload,
+    entry}}`；note 不存在返回 `{:error, {:unknown_note, note_id}}`；
+  - 显式 `phoneme_duration_v2` envelope map：透传不动（schema 校验
+    归 channel 的 `describe/1`，与 `mount_pitch_curve/4` 的 envelope
+    透传同风格）。
+
+  legacy `phoneme_duration_v1` 点列 payload 仅经读档/兼容路径出现，
+  继续签 `pin_input_v1` 输入事实底料（见 `Neume.Identity`）。底料与
+  裁决同 `mount_pitch/4`；选项同 `mount_pitch/4`。
   """
   @spec mount_phoneme_duration(t(), term(), [[non_neg_integer()]] | map(), keyword()) ::
           {:ok, t()} | {:error, term()}
   def mount_phoneme_duration(%__MODULE__{} = editor, note_id, durations, opts \\ []) do
-    case mount_pin(editor, note_id, :duration, durations, opts) do
-      {:ok, editor, _patch} -> {:ok, editor}
+    with {:ok, payload} <- duration_mount_payload(editor, note_id, durations),
+         {:ok, editor, _patch} <- mount_pin(editor, note_id, :duration, payload, opts) do
+      {:ok, editor}
+    end
+  end
+
+  # E0a：list 入参换算为 `phoneme_duration_v2` envelope——下标是成员内
+  # 音素下标，unit/member 由 Ref 从谱面事实纯派生，不需要 probe。显式
+  # v2 envelope（与其他 map/非法项）原样透传，schema 校验归 channel 的
+  # `describe/1`。
+  defp duration_mount_payload(%__MODULE__{} = editor, note_id, durations)
+       when is_list(durations) do
+    with {:ok, track} <- current_track(editor),
+         {:ok, membership} <- fetch_membership(track, note_id),
+         {:ok, values} <- duration_v2_values(durations, membership) do
+      {:ok, Schema.phoneme_duration_v2_payload(values)}
+    end
+  end
+
+  defp duration_mount_payload(_editor, _note_id, payload), do: {:ok, payload}
+
+  defp duration_v2_values(durations, membership) do
+    Enum.reduce_while(durations, {:ok, []}, fn
+      [index, ticks], {:ok, acc}
+      when is_integer(index) and index >= 0 and is_integer(ticks) and ticks > 0 ->
+        {:cont, {:ok, [%{segment: Ref.segment(membership, index), duration_tick: ticks} | acc]}}
+
+      other, {:ok, _acc} ->
+        {:halt, {:error, {:invalid_duration_payload, other}}}
+    end)
+    |> case do
+      {:ok, values} -> {:ok, Enum.reverse(values)}
       {:error, _} = error -> error
+    end
+  end
+
+  defp fetch_membership(%Track{} = track, note_id) do
+    case Map.fetch(Ref.track_memberships(track), note_id) do
+      {:ok, membership} -> {:ok, membership}
+      :error -> {:error, {:unknown_note, note_id}}
     end
   end
 

@@ -228,6 +228,7 @@ defmodule Neumu.AuditionTest do
   test "新查询入口对未知工程返回 tagged error" do
     assert {:error, {:unknown_project, :nope}} = Neumu.list_voicebanks(:nope)
     assert {:error, {:unknown_project, :nope}} = Neumu.check(:nope)
+    assert {:error, {:unknown_project, :nope}} = Neumu.note_phonemes(:nope)
     assert {:error, {:unknown_project, :nope}} = Neumu.list_render_jobs(:nope)
 
     assert {:error, {:unknown_project, :nope}} = Neumu.submit_render(:nope, pin: 2)

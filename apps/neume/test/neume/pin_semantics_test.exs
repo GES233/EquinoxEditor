@@ -120,8 +120,20 @@ defmodule Neume.PinSemanticsTest do
   end
 
   describe "base/4（legacy 委托）" do
+    # 模拟旧档/兼容路径：显式签 pin_input_v1 底料的 legacy duration 点列
+    # （Editor.mount_phoneme_duration 自 E0a 起把 list 换算为 v2 envelope）。
+    defp mount_legacy_duration(editor, note_id, durations) do
+      with {:ok, base} <- Editor.probe_base(editor, note_id),
+           {:ok, session, _patch} <-
+             Coconut.mount(editor.session, editor.track_id, note_id, :duration, durations,
+               base: base
+             ) do
+        {:ok, %{editor | session: session}}
+      end
+    end
+
     test "两个 channel 的底料与 Identity.base_for/3 完全一致", %{editor: editor} do
-      {:ok, editor} = Editor.mount_phoneme_duration(editor, "n1", [[0, 96]])
+      {:ok, editor} = mount_legacy_duration(editor, "n1", [[0, 96]])
       patch = hd(current_track(editor).patches)
       {:ok, descriptor} = DurationPin.describe(patch.patch.payload)
 

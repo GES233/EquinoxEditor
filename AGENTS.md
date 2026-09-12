@@ -39,7 +39,7 @@ DiffSinger worker / ONNX / artifacts
 - Multi-track scheduling, mixing, buses, and export aggregation are implemented as Neume-owned Oi graphs/steps.
 - Phoneme types, frame grids, G2P, vowel anchoring, and model probes belong to the Neume DiffSinger adapter/worker.
 - Coconut History remains the only entry for persistent score, patch, track-extras, and undoable edits.
-- 现有 legacy pitch/duration pin 底料是 `pin_input_v1` 输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态 check 不过问。`Pin<S>` / `Pin<Ph>` / `Pin<Co<S,Ph>>` 解耦设计见 `apps/neume/docs/design-2026-09-pin-carriers.md`：批次 A 协议骨架（`Neume.Pin.Descriptor/Context/Semantics/Schema`）、批次 B（`score_pitch_v2` note_tick envelope + `score_region_v1` 底料、`Neume.Pin.Resolved`/`Neume.Pin.Lower` 与 `Neume.Runtime.lower_pins/4` lowering 边界、facade probe 令牌不再携带底料）、批次 C（stable phonology ref 确定性派生、字典级 phonology digest 回调）与批次 D（`phoneme_duration_v2` segment ref envelope + `phoneme_correspondence_v1` 底料、repatch ref 重定向、`replace_pin` 手势）与批次 E（`pitch_curve_v2` note_tick Bezier envelope，`mount_pitch_curve` 默认产 v2）已实施。legacy 双轨是迁移期兼容层，不长期保留；旧工程读档兼容不变。
+- 现有 legacy pitch/duration pin 底料是 `pin_input_v1` 输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态 check 不过问。`Pin<S>` / `Pin<Ph>` / `Pin<Co<S,Ph>>` 解耦设计见 `apps/neume/docs/design-2026-09-pin-carriers.md`：批次 A 协议骨架（`Neume.Pin.Descriptor/Context/Semantics/Schema`）、批次 B（`score_pitch_v2` note_tick envelope + `score_region_v1` 底料、`Neume.Pin.Resolved`/`Neume.Pin.Lower` 与 `Neume.Runtime.lower_pins/4` lowering 边界、facade probe 令牌不再携带底料）、批次 C（stable phonology ref 确定性派生、字典级 phonology digest 回调）与批次 D（`phoneme_duration_v2` segment ref envelope + `phoneme_correspondence_v1` 底料、repatch ref 重定向、`replace_pin` 手势）与批次 E（`pitch_curve_v2` note_tick Bezier envelope，`mount_pitch_curve` 默认产 v2）已实施；E0（`plan-2026-09-pin-legacy-retirement.md`）已闭合"新 mount 零 legacy"——`mount_phoneme_duration` list 入参默认换算为 `phoneme_duration_v2`，facade 音素序列查询 `Neumu.note_phonemes/1` 落地。legacy 双轨是迁移期兼容层，不长期保留（E1 转只读待开工）；旧工程读档兼容不变。
 - melisma 必须由显式 syllable group 表达，不在 worker 中启发式猜测。
 - Model paths, generated models, caches, and WAV files are not committed.
 
@@ -88,7 +88,7 @@ Python worker tests must run from `apps/neume_opu_ds` with the inference depende
 
 ## Neume Implementation Status
 
-更新日期：2026-09-11（迁移自 `apps/neume/STATUS.md`；不变量已并入上文 Architecture Boundaries，验证命令见 Validation 一节）。
+更新日期：2026-09-12（迁移自 `apps/neume/STATUS.md`；不变量已并入上文 Architecture Boundaries，验证命令见 Validation 一节）。
 
 ### 当前定位
 
@@ -299,6 +299,19 @@ Neume.Editor
   路径透产；`Neume.Pin.Lower` 平移回绝对 tick 的 `pitch_curve_v1`
   plain map（栅格化、mock steps 与 worker 协议零改动）；`replace_pin`
   支持 `pitch_curve_v1` → `pitch_curve_v2` 显式升级、拒绝反向。
+- pin legacy 退役 E0（2026-09-12，`plan-2026-09-pin-legacy-retirement.md`）：
+  E0a——`mount_phoneme_duration` 的 list 入参默认换算为
+  `phoneme_duration_v2` envelope（unit/member 由
+  `Neume.Phonology.Ref.track_memberships/1` 从谱面事实纯派生，不跑
+  probe；非法元素 tagged error 不落边），显式 v2 envelope 透传；legacy
+  duration list 自此仅经读档出现，"新 mount 零 legacy"闭合。E0b——
+  facade 音素序列查询：`Neume.MultiTrack.note_phonemes/1` 逐轨
+  `pipeline.phonemes/3` probe 后经 `Neume.Phonology.Ref` 投影（组头给
+  全组 segments、续音符只给延续元音；空轨归一空映射；失败聚合
+  `{:probe_failed, entries}`），`Neumu.note_phonemes/1` 以
+  `:probe_context` 模式透出 `%{pin, tracks}`（plain data、不产生历史
+  边），`Neumu.RefClient` 同步支持；UI 拿返回的 stable segment ref 可
+  直接撰写 `phoneme_duration_v2` envelope（contract_test 已闭环验证）。
 - 调试导出（`Editor.export_debug/2` → `Neume.DebugExport`）：Track 维度 +
   可选 `span` tick 裁剪（多轨适配预留），打包 `neume-debug/1` schema 的
   debug.json——notes（秒轴）、帧级 pitch（有效/可选 `raw?: true` 无干预
@@ -330,14 +343,15 @@ Neume.Editor
   `Neumu.repatch/3` 按 patch id 批量重挂，回复 `{:ok, pin, results}`；
   `Neumu.unmount_pin/4` 按 `(track_id, note_id, channel)` 卸载；
   `Neumu.replace_pin/4`（批次 D）替换在册 pin 的 payload（同 schema
-  或 legacy → v2 升级，一条历史边）。
+  或 legacy → v2 升级，一条历史边）；`Neumu.note_phonemes/1`（E0b）
+  只读查询物化音素序列与 stable segment ref。
   快照新增 `time_sigs`、`can_undo`/`can_redo` 与逐轨 `pins`（存活
   patch 的 id/channel/anchor/payload）投影，全部 plain data。
 
 ### 验证基线
 
 - `mix compile --force --warnings-as-errors`：通过。
-- `apps/neume` 核心测试：`155 passed`（含 `score_pitch_v2` survival
+- `apps/neume` 核心测试：`166 passed`（含 `score_pitch_v2` survival
   matrix、lowering fallback 规则、批次 B 评审修订：later-write-wins
   顺序、显式 base schema 校验、双入口缺失 tagged error，批次 C 的
   `Neume.Phonology.Ref` 派生/解析与漂移矩阵，批次 D 的
@@ -346,12 +360,15 @@ Neume.Editor
   schema 替换一条边可 undo、legacy → v2 升级、v2 → legacy 拒绝，批次 E
   的 `pitch_curve_v2` survival matrix——拖动跟随栅格化不变/trim 越界
   repatch 降级/merge 冲突重签、mount 换算与显式 envelope 透传、lowering
-  与 legacy 栅格化逐帧一致、`pitch_curve_v1` → v2 升级与降级拒绝）；
+  与 legacy 栅格化逐帧一致、`pitch_curve_v1` → v2 升级与降级拒绝，E0a
+  的 list→v2 挂载换算/melisma member 序号/非法元素 tagged error，E0b
+  的 `MultiTrack.note_phonemes/1` 投影：melisma 组头全组 segments、
+  续音符延续元音、空轨归一、probe 失败聚合）；
   `apps/neume_opu_ds` 适配器测试：`46 passed, 8 excluded`（excluded 为
   真声库集成测试，含双 runtime lowering 契约——含 v2 duration ref
   降下标与失配 loud 报错、批次 C ref 契约向量与字典级 phonology
   digest 门禁）。
-- `apps/neumu` 的 `mix test`：`72 passed, 1 excluded`（工程开闭、渲染成功/失败/崩溃、
+- `apps/neumu` 的 `mix test`：`75 passed, 1 excluded`（工程开闭、渲染成功/失败/崩溃、
   渲染期间查询、source_pin 保留、制品存取、事件订阅幂等与退订、重复
   job_id 拒绝、未知 job tagged error、nil project_id 拒绝、关闭工程终止
   在途渲染；facade：快照与 pin 一致且无运行时对象泄露、查询不产生历史边、
@@ -367,10 +384,13 @@ Neume.Editor
   兜回 :ok、按 pin 渲染历史状态且 source_pin 钉住、非法/未知 pin 拒绝、
   list_render_jobs 枚举 source_pin/artifact_id 并净化失败原因、check 条目
   深扫无 tuple（`phrase_id` 等结构化字段降为 list，`:reason` 例外保持
-  tagged term）；tempo 族：台阶插/改/删与快照 `tempo_steps` 投影、同
+  tagged term）；E0b：`note_phonemes/1` 返回 `%{pin, tracks}` 形状与
+  plain-data 深扫、probe 失败 `status: :failed` entries 投影、不产生
+  历史边不派发事件；tempo 族：台阶插/改/删与快照 `tempo_steps` 投影、同
   tick 拒绝、首事件保护、非法输入 tagged error、undo/redo、保存重开、
   时长查询空轨回退 flat 120 BPM 且只读无副作用；契约回路：
-  参考客户端跑通 建工程→编辑→stale 重放→冲突 check→repatch→按 pin
+  参考客户端跑通 建工程→编辑→stale 重放→音素序列查询→用返回 ref
+  撰写 v2 envelope 挂载→冲突 check→repatch→按 pin
   渲染对比→导出落盘；黄金向量钉住替身与真身的 expand 一致性）。
 - `apps/neume_lab` 的 `mix test`：`9 passed`（Kino.Test 驱动实验台面板：
   连接全量状态、编辑事件桥、失败命令 command_error 不改状态、冲突四步流

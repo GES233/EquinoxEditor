@@ -69,6 +69,15 @@ defmodule Neumu.RefClient do
   end
 
   @doc """
+  查询逐音符物化音素序列（E0b 只读查询，转发 `Neumu.note_phonemes/1`）。
+
+  返回的 `segment` ref 可直接用于撰写 `phoneme_duration_v2` envelope；
+  probe 产物不进镜像缓存（镜像只钉快照 + pin），需要时重新查询。
+  """
+  @spec note_phonemes(t()) :: {:ok, map()} | {:error, term()}
+  def note_phonemes(%{project_id: project_id}), do: Neumu.note_phonemes(project_id)
+
+  @doc """
   两阶段 pin 挂载：`mount_fun` 收到 probe 结果并发起 mount；遇
   `stale_pin` 自动重新 probe 并重放一次（演示协议的重试约定；仍失败则
   原样返回错误）。

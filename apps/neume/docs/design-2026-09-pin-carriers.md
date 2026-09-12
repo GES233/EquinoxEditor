@@ -30,6 +30,11 @@
 > legacy 形状（栅格化与 worker 协议不变）；`replace_pin` 支持
 > `pitch_curve_v1` → `pitch_curve_v2` 显式升级。legacy curve 经
 > `mount_pitch` 兼容路径行为不变。
+> E0 已实施（2026-09-12，`plan-2026-09-pin-legacy-retirement.md`）：
+> `mount_phoneme_duration` list 入参默认换算为 `phoneme_duration_v2`
+> （新 mount 零 legacy 闭合，legacy duration 仅经读档出现）；facade
+> 音素序列查询 `Neumu.note_phonemes/1` 落地（UI 可直接拿 stable
+> segment ref 撰写 v2 envelope）。
 
 ## 1. 问题
 
@@ -224,8 +229,9 @@ Tamale digest 或 History 状态。字段集在第二个真实 runtime 出现前
 
 - 旧 pitch list / `pitch_curve_v1` 与旧 duration list 继续签
   `pin_input_v1`，读档和渲染行为不变。
-- 新 mount 默认产生 v2（批次 B 起 pitch 点列如此）；旧 payload 只在显式
-  兼容路径或读档时出现。
+- 新 mount 默认产生 v2：pitch 点列自批次 B 起、duration 点列自 E0a
+  （2026-09-12，见批次 D 小节）起如此；旧 payload 只在显式兼容路径或
+  读档时出现。
 - repatch 不跨 schema 偷偷升级。升级如将来提供，必须是独立、可报告、
   可撤销的 History 手势（批次 B 不实现升级手势）。
 - 长期方向（2026-09-11 拍板）：legacy 双轨是迁移期兼容层，不长期保留；
@@ -418,6 +424,11 @@ Neume 负责：
 - lowering 失败的 v2 pin（如漂移 ref）与身份裁决在同一 check 界面聚合：
   `kind :pin` entry + 携 patch 的 `kind :conflict` entry 同时出现，
   repatch 以冲突 entry 为入口。
+- E0a 补记（2026-09-12，`plan-2026-09-pin-legacy-retirement.md`）：
+  `mount_phoneme_duration` 的 list 入参默认换算为 `phoneme_duration_v2`
+  envelope 挂载（unit/member 由 `Neume.Phonology.Ref.track_memberships/1`
+  纯派生，不跑 probe；index 原样）；显式 v2 envelope 透传。legacy
+  duration list 自此仅经读档出现，"新 mount 零 legacy"闭合。
 
 ### 批次 E：pitch curve v2（已实施，2026-09-11）
 
@@ -472,4 +483,5 @@ Neume 负责：
 
 批次 A/B/C/D/E 已完成。后续方向：legacy 双轨是迁移期兼容层，不长期保留
 （§5）；legacy 通道退役施工见 `plan-2026-09-pin-legacy-retirement.md`
-（读档兼容保留）。
+——E0（duration 默认 v2 挂载 + facade 音素序列查询）已实施
+（2026-09-12），E1（legacy 转只读）待开工；读档兼容保留。
