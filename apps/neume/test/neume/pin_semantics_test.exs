@@ -123,7 +123,7 @@ defmodule Neume.PinSemanticsTest do
     # 模拟旧档/兼容路径：显式签 pin_input_v1 底料的 legacy duration 点列
     # （Editor.mount_phoneme_duration 自 E0a 起把 list 换算为 v2 envelope）。
     defp mount_legacy_duration(editor, note_id, durations) do
-      with {:ok, base} <- Editor.probe_base(editor, note_id),
+      with {:ok, base} <- Editor.derive_base(editor, note_id),
            {:ok, session, _patch} <-
              Coconut.mount(editor.session, editor.track_id, note_id, :duration, durations,
                base: base
@@ -260,7 +260,7 @@ defmodule Neume.PinSemanticsTest do
       # legacy pitch 点列（签 pin_input_v1）：改词才会炸；v2 改词不炸，
       # 无从产生冲突 entry。NoPhonemesPipeline 不实现 lower_pins/4，同时
       # 覆盖纯 legacy 批次的 checked_pins/1 回退路径。
-      {:ok, base} = Editor.probe_base(editor, "n1")
+      {:ok, base} = Editor.derive_base(editor, "n1")
 
       {:ok, session, _patch} =
         Coconut.mount(editor.session, editor.track_id, "n1", :pitch, [[0, 60.0]], base: base)

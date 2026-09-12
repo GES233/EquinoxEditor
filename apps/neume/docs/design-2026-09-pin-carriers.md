@@ -197,9 +197,9 @@ Tamale digest 或 History 状态。字段集在第二个真实 runtime 出现前
   `{:pin_base_schema_mismatch, _, _}`（挂载期拒绝，不留永久冲突）；
   `checked_pins/1` 降为 optional callback，两个 lowering 入口都缺失的
   runtime 得 `{:missing_pin_lowering, module}` tagged error；facade
-  probe 令牌精确三键（`%{track_id, note_id, pin}`，携带 base 的旧令牌
-  一律 `{:invalid_pin_probe, _, _, _}`），`probe_pin` 只做存活校验、
-  不再物化底料。
+  预检令牌精确三键（`%{track_id, note_id, history_pin}`，携带 base 的
+  旧令牌一律 `{:invalid_pin_token, _, _, _}`），`preflight_pin` 只做
+  存活校验、不再物化底料。
 - mock 与 `neume_opu_ds` 都委托默认 lowering `Neume.Pin.Lower`：legacy
   payload 透传、`note_tick` 按 snapshot 平移为绝对 tick；双 runtime 契约
   测试（`neume_opu_ds` 的 `PinLoweringTest`）钉住同一 Resolved 批次两边

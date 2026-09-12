@@ -16,7 +16,7 @@ E0 收掉这个口子，闭合"新 mount 零 legacy"指标；之后 E1（legacy 
 （`DurationPin.memberships/1` 委托它，消除重复）；`Editor.
 mount_phoneme_duration/4` 先经 `duration_mount_payload/3` 换算再挂载
 （非法 list 元素返回 `{:invalid_duration_payload, entry}`，不抛异常；
-显式 v2 envelope 透传）。legacy 挂载测试改经 `probe_base` + 显式 `:base`
+显式 v2 envelope 透传）。legacy 挂载测试改经 `derive_base` + 显式 `:base`
 的 `Coconut.mount` helper 构造。
 
 list → v2 envelope 的换算**不需要 probe**：`[[ph_index, dur_tick]]` 的
@@ -41,9 +41,9 @@ repatch/消费边界，不在 mount。
 （逐轨 `pipeline.phonemes/3` probe + `Neume.Phonology.Ref` 投影，
 `resolve/3` 回读符号作首个生产消费方；空轨归一空映射不 probe；失败
 聚合 `{:error, {:probe_failed, entries}}`）；`Neumu.note_phonemes/1`
-（无 opts，由计划的 /2 更正为 /1；`:probe_context` 模式，成功返回
-`{:ok, %{pin, tracks}}`、失败 `{:ok, %{pin, status: :failed,
-entries}}`，span 经 `Neumu.CheckReport.deep_lists/1` JSON-safe 化）；
+（无 opts，由计划的 /2 更正为 /1；`:preflight_context` 模式，成功返回
+`{:ok, %{history_pin, tracks}}`、失败 `{:ok, %{history_pin, status:
+:failed, entries}}`，span 经 `Neumu.CheckReport.deep_lists/1` JSON-safe 化）；
 `Neumu.RefClient.note_phonemes/1` 转发；contract_test 闭环（查询 →
 用返回 ref 撰写 v2 envelope 挂载）；`facade-protocol.md` 查询条目。
 
@@ -71,7 +71,7 @@ entries}}`，span 经 `Neumu.CheckReport.deep_lists/1` JSON-safe 化）；
   `phoneme_duration_v2` envelope；`phoneme` 是物化符号；`extras: %{}`
   预留（将来音节边界/预算时长等进 extras，不破坏旧契约）。
 - melisma 组：组头给全组序列，续音符只给自己的延续元音 segment。
-- 执行面复用 `Neumu.check/1` 模式：ProjectServer 外取 `:probe_context`
+- 执行面复用 `Neumu.check/1` 模式：ProjectServer 外取 `:preflight_context`
   跑只读查询，不产生历史边、不派发事件；底层走 `pipeline.phonemes/3`
   （mock 与 opu_ds 均已实现）。
 - 错误语义：probe/G2P 失败投影为 plain-data entry（同 `check/1` 的

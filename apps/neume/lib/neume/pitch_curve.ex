@@ -1,6 +1,6 @@
 defmodule Neume.PitchCurve do
   @moduledoc """
-  Pitch intervention 的版本化曲线 payload 与宿主侧栅格化。
+  Pitch pin 的版本化曲线 payload 与宿主侧栅格化。
 
   曲线仍是 identity-base Patch。legacy `pitch_curve_v1` 的绝对 tick 既是
   曲线坐标，也是失效展示与 re-patch 定位信息；批次 E 的 `pitch_curve_v2`

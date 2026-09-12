@@ -275,7 +275,7 @@ defmodule Neume.EditorTest do
     # 模拟旧档/兼容路径：显式签 pin_input_v1 底料的 legacy duration 点列
     # （Editor.mount_phoneme_duration 自 E0a 起把 list 换算为 v2 envelope）。
     defp mount_legacy_duration(editor, note_id, durations) do
-      with {:ok, base} <- Editor.probe_base(editor, note_id),
+      with {:ok, base} <- Editor.derive_base(editor, note_id),
            {:ok, session, _patch} <-
              Coconut.mount(editor.session, editor.track_id, note_id, :duration, durations,
                base: base

@@ -415,13 +415,13 @@ defmodule Neume.MultiTrack do
       )
 
   @doc """
-  校验 `(track_id, note_id)` 存活（pin 两阶段挂载的第一阶段）。只读、
-  不改工程值；不再物化底料——挂载底料由 `Neume.Editor` 在 mount 时经
-  channel 语义按 payload schema 现场推导。需要 legacy 输入事实底料作
-  只读探查时可用 `Neume.Editor.probe_base/2`。
+  校验 `(track_id, note_id)` 存活（pin 两阶段挂载的第一阶段：预检
+  preflight）。只读、不改工程值；不再物化底料——挂载底料由 `Neume.Editor`
+  在 mount 时经 channel 语义按 payload schema 现场推导。需要 legacy 输入
+  事实底料作只读推导时可用 `Neume.Editor.derive_base/2`。
   """
-  @spec probe_pin(t(), Track.track_id(), term()) :: :ok | {:error, term()}
-  def probe_pin(%__MODULE__{} = runtime, track_id, note_id) do
+  @spec preflight_pin(t(), Track.track_id(), term()) :: :ok | {:error, term()}
+  def preflight_pin(%__MODULE__{} = runtime, track_id, note_id) do
     with {:ok, editor} <- attach_editor(runtime, track_id),
          {:ok, view} <- Editor.notes(editor) do
       if Enum.any?(view, fn {id, _note, _span} -> id == note_id end),
@@ -571,7 +571,7 @@ defmodule Neume.MultiTrack do
   end
 
   @doc """
-  物化历史 pin 处的工程值（供"按 pin 渲染试听"）；各轨运行态按该
+  物化历史 pin 处的工程值（供"按 history_pin 渲染试听"）；各轨运行态按该
   历史快照的声库签名重建/复用。被 squash 或不存在的 pin 返回
   `{:error, {:unknown_node, pin}}`。
   """

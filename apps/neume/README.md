@@ -67,7 +67,7 @@ melisma（一词跨多音符）用显式旗标表达：续音音符携带
 
 音素时长编辑通过 `Editor.mount_phoneme_duration/3` 挂载 Coconut
 `:duration` patch；指定音素固定为给定 tick 时长，其余音素按模型预测比例
-吸收剩余帧。pitch intervention 可经 `Editor.mount_pitch/3` 挂载兼容折线，
+吸收剩余帧。pitch pin 可经 `Editor.mount_pitch/3` 挂载兼容折线，
 或经 `Editor.mount_pitch_curve/3` 挂载 Coconut Bezier 控制点容器；Bezier
 在宿主侧按真实声学帧 tick 栅格化，worker 不重复曲线数学。两种 pin 的
  digest 都钉在**输入事实签名**上（歌词/显式音素/melisma 归属/声库摘要，
@@ -110,7 +110,7 @@ Stock + seed + 修改工艺版本」失效，编辑后只重推内容变化的�
 
 - [ ] ~~energy/breathiness/voicing 的逐帧曲线 channel（手绘编辑）~~——本版本
   不做，三旋钮保持轨道级全局系数；未来重启时普通表现曲线可作为仅结构
-  裁决的 Patch，增量型干预（preserve、相对旧值）走 output base
-  （coconut intervention 设计 §6.6），并与全局旋钮复合。
+  裁决的 patch，增量型 patch（preserve、相对旧值）走 output base
+  （coconut `design-2026-08-orchid-intervention.md` §6.6），并与全局旋钮复合。
 - [ ] Oi 多轨并发调度、播放与导出管理。
 - [ ] 最小钢琴卷帘、音素边界编辑和播放 UI。

@@ -5,12 +5,12 @@ defmodule Neumu.RefClient do
 
   纪律只有三条：
 
-  1. 客户端持有的是**镜像**：`snapshot` + `pin` 来自服务器投影，本地编辑
-     （如卷帘上的拖拽预览）只是缓存，不许发明语义；
-  2. 手势落笔才提交；编辑类回复 `{:ok, pin}` 后镜像失效，按事件
+  1. 客户端持有的是**镜像**：`snapshot` + `history_pin` 来自服务器投影，本地
+     编辑（如卷帘上的拖拽预览）只是缓存，不许发明语义；
+  2. 手势落笔才提交；编辑类回复 `{:ok, history_pin}` 后镜像失效，按事件
      （`project_changed`）或显式 `sync!/1` 重新拉取快照；
   3. pin 族手势（两阶段 mount）遇到 `{:error, {:stale_pin, _}}` 时
-     重新 probe 后按最新镜像重放（`mount/3` 的 `with_retry`）。
+     重新预检后按最新镜像重放（`mount/3` 的 `with_retry`）。
   """
 
   alias Neumu.ProjectServer
@@ -18,7 +18,7 @@ defmodule Neumu.RefClient do
   @type t :: %{
           project_id: Neume.RenderJob.project_id(),
           snapshot: map(),
-          pin: Neumu.history_pin()
+          history_pin: Neumu.history_pin()
         }
 
   @doc "订阅并拉取初始快照。"
@@ -29,7 +29,7 @@ defmodule Neumu.RefClient do
     else
       :ok = Neumu.subscribe(project_id)
       {:ok, snapshot} = Neumu.snapshot(project_id)
-      {:ok, %{project_id: project_id, snapshot: snapshot, pin: snapshot.history_pin}}
+      {:ok, %{project_id: project_id, snapshot: snapshot, history_pin: snapshot.history_pin}}
     end
   end
 
@@ -37,14 +37,14 @@ defmodule Neumu.RefClient do
   @spec sync(t()) :: {:ok, t()}
   def sync(%{project_id: project_id} = client) do
     {:ok, snapshot} = Neumu.snapshot(project_id)
-    {:ok, %{client | snapshot: snapshot, pin: snapshot.history_pin}}
+    {:ok, %{client | snapshot: snapshot, history_pin: snapshot.history_pin}}
   end
 
   @doc """
   提交一个编辑手势（`fun` 为零元函数，返回 facade 回复）。
 
-  - `{:ok, pin}` 且 pin 前进 → 同步镜像，返回 `{:ok, client}`；
-  - 无变化编辑（pin 不动）→ 镜像不变；
+  - `{:ok, history_pin}` 且 history_pin 前进 → 同步镜像，返回 `{:ok, client}`；
+  - 无变化编辑（history_pin 不动）→ 镜像不变；
   - `{:error, {:stale_pin, _}}` → 先同步，返回 `{:stale, client}`，
     由调用方决定是否重放；
   - 其他 tagged error → 原样返回，镜像不变。
@@ -52,11 +52,11 @@ defmodule Neumu.RefClient do
   @spec dispatch(t(), (-> term())) :: {:ok, t()} | {:stale, t()} | {{:error, term()}, t()}
   def dispatch(client, fun) do
     case fun.() do
-      {:ok, pin} when pin != client.pin ->
+      {:ok, history_pin} when history_pin != client.history_pin ->
         {:ok, client} = sync(client)
         {:ok, client}
 
-      {:ok, _pin} ->
+      {:ok, _history_pin} ->
         {:ok, client}
 
       {:error, {:stale_pin, _}} ->
@@ -72,24 +72,24 @@ defmodule Neumu.RefClient do
   查询逐音符物化音素序列（E0b 只读查询，转发 `Neumu.note_phonemes/1`）。
 
   返回的 `segment` ref 可直接用于撰写 `phoneme_duration_v2` envelope；
-  probe 产物不进镜像缓存（镜像只钉快照 + pin），需要时重新查询。
+  probe 产物不进镜像缓存（镜像只钉快照 + history_pin），需要时重新查询。
   """
   @spec note_phonemes(t()) :: {:ok, map()} | {:error, term()}
   def note_phonemes(%{project_id: project_id}), do: Neumu.note_phonemes(project_id)
 
   @doc """
-  两阶段 pin 挂载：`mount_fun` 收到 probe 结果并发起 mount；遇
-  `stale_pin` 自动重新 probe 并重放一次（演示协议的重试约定；仍失败则
+  两阶段 pin 挂载：`mount_fun` 收到预检令牌并发起 mount；遇
+  `stale_pin` 自动重新预检并重放一次（演示协议的重试约定；仍失败则
   原样返回错误）。
   """
   @spec mount(t(), term(), term(), (map() -> {:ok, term()} | {:error, term()})) ::
           {:ok, t()} | {{:error, term()}, t()}
   def mount(client, track_id, note_id, mount_fun) do
-    {:ok, probe} = Neumu.probe_pin(client.project_id, track_id, note_id)
+    {:ok, token} = Neumu.preflight_pin(client.project_id, track_id, note_id)
 
-    case dispatch(client, fn -> mount_fun.(probe) end) do
+    case dispatch(client, fn -> mount_fun.(token) end) do
       {:stale, client} ->
-        {:ok, fresh} = Neumu.probe_pin(client.project_id, track_id, note_id)
+        {:ok, fresh} = Neumu.preflight_pin(client.project_id, track_id, note_id)
         dispatch(client, fn -> mount_fun.(fresh) end)
 
       other ->

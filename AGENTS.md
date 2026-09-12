@@ -6,6 +6,8 @@ Equinox is the singing-synthesis editor (this Mix umbrella). **Neume** names the
 
 The source of truth for implementation status is the **Neume Implementation Status** section at the end of this file (migrated from the retired `apps/neume/STATUS.md`).
 
+领域术语的正名表（一个概念在各层叫什么）在根 `CONTEXT.md`；跨层命名的三条硬规则（载体 patch vs 身份 pin、层内唯一律、限定词制）见 `docs/decisions/0001-intervention-carriers-patch-and-pin.md`。写文档或命名新 API 前先读这两份。
+
 ## Repository Layout
 
 - `apps/coconut/` — engine-agnostic editor core. It owns score/edit state, History, Patch/Resolve, and persistence. It was imported from the archived standalone Coconut repository and is now maintained as part of this umbrella.
@@ -13,7 +15,7 @@ The source of truth for implementation status is the **Neume Implementation Stat
 - `apps/neume/` — stable editor and pin semantics: editor facade, runtime/provider contracts, History-facing identity/check/repatch, windowing, cache, mix, debug export, and render artifacts. It has no concrete DiffSinger or OpenUTAU dependency.
 - `apps/neume_opu_ds/` — OpenUTAU DiffSinger adapter: voicebank scanning and Stock/Modified variants, Pure-FP preparation, Oi analysis/synthesis graph, Python worker, ONNX inference, and adapter-specific tests.
 - `apps/neumu/` — OTP application service over Neume: per-project `ProjectServer` processes (one `Neume.MultiTrack` value each), async render via `Task.Supervisor`, runtime `ArtifactStore`, and the three small event shapes. No playback device, cancellation, persistence, or UI.
-- `apps/neume_lab/` — Livebook/Kino 实验台（开发工具，非产品 UI）。`Kino.JS.Live` 面板验证 Neumu facade 契约闭环（编辑/冲突/repatch/按 pin 渲染/试听），自带 fixture 声库、假 DiffSinger client 与正弦演示渲染器。notebook 在 `apps/neume_lab/notebooks/lab.livemd`，以 Attached Node 方式附着到 umbrella 节点运行。
+- `apps/neume_lab/` — Livebook/Kino 实验台（开发工具，非产品 UI）。`Kino.JS.Live` 面板验证 Neumu facade 契约闭环（编辑/冲突/repatch/按 history_pin 渲染/试听），自带 fixture 声库、假 DiffSinger client 与正弦演示渲染器。notebook 在 `apps/neume_lab/notebooks/lab.livemd`，以 Attached Node 方式附着到 umbrella 节点运行。
 - `config/` — shared umbrella configuration.
 
 The repository must build without sibling Coconut or CoconutOi checkouts. Tamale, Oi, and Orchid packages remain external dependencies resolved by Mix.
@@ -139,7 +141,7 @@ Neume.Editor
   图内随机算子改成 host-noise 输入，worker 按固定 seed 生成 NumPy float32
   噪声；Stock 需作为另一个声库 entry 显式选择。派生模型只写 gitignored `tmp/`，
   原声库只读，分发与商用权限仍取决于具体声库许可证。
-- identity-base pitch intervention：兼容稀疏绝对 tick/MIDI 折线，并支持
+- identity-base pitch pin：兼容稀疏绝对 tick/MIDI 折线，并支持
   Coconut Bezier 控制点容器；Bezier 在宿主侧按真实声学帧对应 tick 栅格化，
   Python worker 只消费逐帧绝对 MIDI，曲线数学不重复实现。
 - 逐音素 duration pin：指定音素固定为给定 tick 时长，其余音素按预测比例
@@ -188,9 +190,9 @@ Neume.Editor
   History 边。试听支撑：`list_voicebanks/1` 列出可选声库（plain data）；
   `check/1` 在 ProjectServer 外执行权威 check 并返回 plain-data 冲突投
   影（patch 只留 patch_id/channel/note_id）；`submit_render/2` 支持
-  `:pin` 渲染指定历史状态（`Neume.MultiTrack.at_pin/2` 物化，被 squash
+  `history_pin:` 渲染指定历史状态（`Neume.MultiTrack.at_pin/2` 物化，被 squash
   的 pin 返回 tagged error），`list_render_jobs/1` 枚举 `source_pin` 与
-  `artifact_id` 支撑按 pin 试听对比；`export_artifact/2` 把制品 WAV 完
+  `artifact_id` 支撑按 history_pin 试听对比；`export_artifact/2` 把制品 WAV 完
   整复制到指定路径。facade 契约冻结于 `apps/neumu/docs/facade-protocol.md`；
   `Neumu.RefClient`（test/support）是瘦客户端参考实现（镜像快照 + 事件
   同步 + stale 重放），`contract_test.exs` 跑通完整契约回路。
@@ -252,13 +254,13 @@ Neume.Editor
   `{:unsupported_pin_schema, schema}`。repatch 对 segment ref 按当前
   membership 机械重定向（报告 `redirected: true`），不成立则降级。
   字典级 `phonology_digest` 随 provider 回调混入 G2P 算法版本戳
-  `opu-g2p/1`（改 `g2p.py` 规则时必须递增）。facade probe 令牌只携
-  `track_id`/`note_id`/`pin`，底料由 server 经 channel 语义现场推导，
-  客户端传回的 base 一律拒绝。E0b：`Neume.MultiTrack.note_phonemes/1`
+  `opu-g2p/1`（改 `g2p.py` 规则时必须递增）。facade 预检令牌只携
+  `track_id`/`note_id`/`history_pin`，底料由 server 经 channel 语义现场
+  推导，客户端传回的 base 一律拒绝。E0b：`Neume.MultiTrack.note_phonemes/1`
   投影物化音素序列与 stable segment ref（组头给全组 segments、续音符
-  只给延续元音），`Neumu.note_phonemes/1` 以 `:probe_context` 透出
-  `%{pin, tracks}`（只读、不产生历史边），UI 可直接据返回的 ref 撰写
-  `phoneme_duration_v2` envelope。
+  只给延续元音），`Neumu.note_phonemes/1` 以 `:preflight_context` 透出
+  `%{history_pin, tracks}`（只读、不产生历史边），UI 可直接据返回的 ref
+  撰写 `phoneme_duration_v2` envelope。
 - 调试导出（`Editor.export_debug/2` → `Neume.DebugExport`）：Track 维度 +
   可选 `span` tick 裁剪（多轨适配预留），打包 `neume-debug/1` schema 的
   debug.json——notes（秒轴）、帧级 pitch（有效/可选 `raw?: true` 无干预
@@ -283,10 +285,10 @@ Neume.Editor
   裁决）、`merge_notes`（into 留内容原样；`moved_pins` 显式报告被吸收
   音符上重定签到 into 的 pin）、`drag_note_across_tracks`（内容全量
   复制、清 melisma 旗标、pin 不迁移）。pin 族走两阶段挂载：
-  `Neumu.probe_pin/3` 在 ProjectServer 外纯派生身份底料（输入事实
+  `Neumu.preflight_pin/3` 在 ProjectServer 外纯派生身份底料（输入事实
   签名，不跑 G2P），返回 plain-data 令牌；三个 mount（pitch 点列、
-  Bezier plain map、音素时长）携令牌进 server 做 History pin 校验，
-  probe 期间被编辑则 `{:error, {:stale_pin, _}}` 拒绝；
+  Bezier plain map、音素时长）携令牌进 server 做 History stale-write
+  校验，预检期间被编辑则 `{:error, {:stale_pin, _}}` 拒绝；
   `Neumu.repatch/3` 按 patch id 批量重挂，回复 `{:ok, pin, results}`；
   `Neumu.unmount_pin/4` 按 `(track_id, note_id, channel)` 卸载；
   `Neumu.replace_pin/4` 替换在册 pin 的 payload（见批次 D）；
@@ -311,7 +313,7 @@ Neume.Editor
   tempo 族、E0b 音素查询，contract_test 完整契约回路；逐项清单见各
   测试文件）。
 - `apps/neume_lab` 的 `mix test`：`9 passed`（Kino.Test 驱动面板全链
-  路：状态同步、编辑事件桥、冲突四步流、按 pin 渲染试听、undo/redo、
+  路：状态同步、编辑事件桥、冲突四步流、按 history_pin 渲染试听、undo/redo、
   正弦渲染器 WAV 制品与空工程 `:no_notes` tagged error）。
 - Asaritsu Pure-FP 真机门禁：关闭缓存后 seed 0 重复 WAV SHA-256 均为
   `a4876ac3…`；seed 1 为 `8cd1a7ae…`；stock/FP 短样本 RMS 相对差

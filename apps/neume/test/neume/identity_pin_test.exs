@@ -30,7 +30,7 @@ defmodule Neume.IdentityPinTest do
   # 模拟旧档/兼容路径：显式签 pin_input_v1 底料的 legacy pitch 点列
   # （Editor.mount_pitch 自批次 B 起产出 score_pitch_v2）。
   defp mount_legacy_pitch(editor, note_id, points) do
-    with {:ok, base} <- Editor.probe_base(editor, note_id),
+    with {:ok, base} <- Editor.derive_base(editor, note_id),
          {:ok, session, _patch} <-
            Coconut.mount(editor.session, editor.track_id, note_id, :pitch, points, base: base) do
       {:ok, %{editor | session: session}}
@@ -41,7 +41,7 @@ defmodule Neume.IdentityPinTest do
   # （Editor.mount_phoneme_duration 自 E0a 起把 list 换算为
   # phoneme_duration_v2 envelope）。
   defp mount_legacy_duration(editor, note_id, durations) do
-    with {:ok, base} <- Editor.probe_base(editor, note_id),
+    with {:ok, base} <- Editor.derive_base(editor, note_id),
          {:ok, session, _patch} <-
            Coconut.mount(editor.session, editor.track_id, note_id, :duration, durations,
              base: base
@@ -173,7 +173,7 @@ defmodule Neume.IdentityPinTest do
               lyric: nil,
               phonemes: nil,
               group: %{kind: "head"}
-            }} = Editor.probe_base(editor, "n2")
+            }} = Editor.derive_base(editor, "n2")
 
     # 挂载成功（E0a 起 list 换算为 v2 envelope，换算同样不跑 G2P）；
     # 缺歌词是模型期事实，在 check 的模型裁决才报错，

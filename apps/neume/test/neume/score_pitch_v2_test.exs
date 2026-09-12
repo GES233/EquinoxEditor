@@ -69,7 +69,7 @@ defmodule Neume.ScorePitchV2Test do
 
   # 模拟旧档/兼容路径：显式签 pin_input_v1 底料的 legacy pitch 点列。
   defp mount_legacy_pitch(editor, note_id, points) do
-    with {:ok, base} <- Editor.probe_base(editor, note_id),
+    with {:ok, base} <- Editor.derive_base(editor, note_id),
          {:ok, session, _patch} <-
            Coconut.mount(editor.session, editor.track_id, note_id, :pitch, points, base: base) do
       {:ok, %{editor | session: session}}
@@ -432,9 +432,9 @@ defmodule Neume.ScorePitchV2Test do
     end
 
     test "显式 :base 的 schema 与 payload 分派不一致时拒绝挂载", %{editor: editor} do
-      # probe_base/2 返回 legacy pin_input_v1 底料；v2 点列 payload 必须签
+      # derive_base/2 返回 legacy pin_input_v1 底料；v2 点列 payload 必须签
       # score_region_v1——错配挂载会永久 :base_changed，挂载期即拒绝。
-      assert {:ok, legacy_base} = Editor.probe_base(editor, "n1")
+      assert {:ok, legacy_base} = Editor.derive_base(editor, "n1")
 
       assert {:error, {:pin_base_schema_mismatch, "score_region_v1", ^legacy_base}} =
                Editor.mount_pitch(editor, "n1", [[120, 72]], base: legacy_base)

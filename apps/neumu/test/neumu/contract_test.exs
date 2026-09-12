@@ -2,7 +2,7 @@ defmodule Neumu.ContractTest do
   @moduledoc """
   契约级端到端场景：参考客户端（`Neumu.RefClient`）按 facade 协议跑完
   建工程 → 编辑 → pin 挂载（含 stale 重放）→ 冲突 check → repatch →
-  按 pin 渲染对比 → 导出 的完整回路。前端实现的协议步骤以这里为准。
+  按 history_pin 渲染对比 → 导出 的完整回路。前端实现的协议步骤以这里为准。
   """
 
   use ExUnit.Case, async: false
@@ -48,27 +48,27 @@ defmodule Neumu.ContractTest do
              })
 
     assert {:ok, client} = RefClient.open(id)
-    assert client.pin == 2
+    assert client.history_pin == 2
     assert [%{id: "n1", lyric: "la"}] = notes(client)
 
     # —— 编辑手势：拆分（镜像随 pin 前进同步） ——
     assert {:ok, client} =
              RefClient.dispatch(client, fn -> Neumu.split_note(id, "lead", "n1", 240, "n1b") end)
 
-    assert client.pin == 3
+    assert client.history_pin == 3
     assert [%{id: "n1"}, %{id: "n1b"}] = notes(client)
 
     # —— pin 挂载：并发编辑导致 stale，参考客户端重放 ——
-    {:ok, stale_probe} = Neumu.probe_pin(id, "lead", "n1")
+    {:ok, stale_token} = Neumu.preflight_pin(id, "lead", "n1")
 
     assert {:ok, client} =
              RefClient.dispatch(client, fn -> Neumu.edit_note(id, "lead", "n1", %{pitch: 62}) end)
 
-    assert client.pin == 4
+    assert client.history_pin == 4
 
     assert {:stale, client} =
              RefClient.dispatch(client, fn ->
-               Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], stale_probe)
+               Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], stale_token)
              end)
 
     assert {:ok, client} =
@@ -76,12 +76,12 @@ defmodule Neumu.ContractTest do
                Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], fresh)
              end)
 
-    assert client.pin == 5
+    assert client.history_pin == 5
 
     # —— E0b：音素序列查询 → 用返回的 segment ref 直接撰写 v2 envelope ——
     # 拆分后 n1 是 melisma 组头：查询给全组序列（含续音 n1b 的延续元音
     # segment），n1b 只给自己的延续元音。
-    assert {:ok, %{pin: 5, tracks: %{"lead" => phoneme_notes}}} =
+    assert {:ok, %{history_pin: 5, tracks: %{"lead" => phoneme_notes}}} =
              RefClient.note_phonemes(client)
 
     assert %{
@@ -103,7 +103,7 @@ defmodule Neumu.ContractTest do
 
     # 闭环：查询返回的 ref 原样写进 phoneme_duration_v2 envelope 挂载成功。
     assert {:ok, client} =
-             RefClient.mount(client, "lead", "n1", fn probe ->
+             RefClient.mount(client, "lead", "n1", fn token ->
                Neumu.mount_phoneme_duration(
                  id,
                  "lead",
@@ -112,18 +112,18 @@ defmodule Neumu.ContractTest do
                    schema: "phoneme_duration_v2",
                    values: [%{segment: head_ref, duration_tick: 96}]
                  },
-                 probe
+                 token
                )
              end)
 
-    assert client.pin == 6
+    assert client.history_pin == 6
 
     assert [%{channel: :pitch}, %{channel: :duration}] =
              client.snapshot.tracks |> hd() |> Map.fetch!(:pins)
 
-    # —— 试听 A/B：渲染挂载前（pin 4）与挂载后（pin 6） ——
-    assert {:ok, job_a} = Neumu.submit_render(id, pin: 4, renderer: renderer)
-    assert {:ok, job_b} = Neumu.submit_render(id, pin: 6, renderer: renderer)
+    # —— 试听 A/B：渲染挂载前（history_pin 4）与挂载后（history_pin 6） ——
+    assert {:ok, job_a} = Neumu.submit_render(id, history_pin: 4, renderer: renderer)
+    assert {:ok, job_b} = Neumu.submit_render(id, history_pin: 6, renderer: renderer)
     assert_receive {:artifact_ready, _, artifact_a, 4}
     assert_receive {:artifact_ready, _, artifact_b, 6}
     assert job_a.source_pin == 4 and job_b.source_pin == 6
@@ -137,9 +137,9 @@ defmodule Neumu.ContractTest do
                Neumu.edit_note(id, "lead", "n1", %{lyric: "lo"})
              end)
 
-    assert client.pin == 7
+    assert client.history_pin == 7
 
-    assert {:ok, %{pin: 7, status: :failed, entries: entries}} = Neumu.check(id)
+    assert {:ok, %{history_pin: 7, status: :failed, entries: entries}} = Neumu.check(id)
 
     assert [%{kind: :conflict, channel: :duration, patch_id: duration_patch}] = entries
 
@@ -147,8 +147,8 @@ defmodule Neumu.ContractTest do
              Neumu.repatch(id, "lead", [duration_patch])
 
     {:ok, client} = RefClient.sync(client)
-    assert client.pin == 8
-    assert {:ok, %{pin: 8, status: :ok, entries: []}} = Neumu.check(id)
+    assert client.history_pin == 8
+    assert {:ok, %{history_pin: 8, status: :ok, entries: []}} = Neumu.check(id)
 
     # —— 导出制品（完整落盘） ——
     dest = Path.join(tmp_dir, "exports/mix-a.wav")

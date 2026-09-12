@@ -108,7 +108,7 @@ defmodule Neumu.ProjectServer do
       {:reply, {:error, {:job_already_exists, job_id}}, state}
     else
       with {:ok, source_pin, render_target} <-
-             render_target(state.multi_track, Keyword.get(opts, :pin)),
+             render_target(state.multi_track, Keyword.get(opts, :history_pin)),
            {:ok, job} <- RenderJob.new(job_id, state.project_id, source_pin),
            {:ok, job} <- RenderJob.start(job) do
         renderer = Keyword.get(opts, :renderer, &default_renderer/1)
@@ -153,7 +153,7 @@ defmodule Neumu.ProjectServer do
     {:reply, {:ok, entries}, state}
   end
 
-  # 渲染任务枚举（含 artifact_id 与 source_pin），供"按 pin 试听对比"。
+  # 渲染任务枚举（含 artifact_id 与 source_pin），供"按 history_pin 试听对比"。
   def handle_call(:list_render_jobs, _from, state) do
     jobs =
       state.jobs
@@ -221,10 +221,10 @@ defmodule Neumu.ProjectServer do
     end
   end
 
-  # 两阶段 pin 挂载的 probe 上下文：把当前权威值与 pin 交给调用方，probe
+  # 预检上下文：把当前权威值与 history_pin 交给调用方，预检与 probe
   # （G2P + 组展开，真声库要调 worker）在本进程之外的调用方进程执行，
-  # 期间本进程仍可响应编辑与查询。mount 携 probe 的 pin 回来校验。
-  def handle_call(:probe_context, _from, state) do
+  # 期间本进程仍可响应编辑与查询。mount 携预检令牌回来校验。
+  def handle_call(:preflight_context, _from, state) do
     {:reply, {:ok, state.multi_track, current_pin(state.multi_track)}, state}
   end
 
@@ -343,7 +343,8 @@ defmodule Neumu.ProjectServer do
   defp current_pin(multi_track), do: History.current(multi_track.session.history).node_id
 
   # 渲染目标：默认当前 cursor；`pin:` 物化对应历史状态（被 squash 或
-  # 不存在的 pin 返回 tagged error）。`job.source_pin` 恒等于实际渲染的 pin。
+  # 不存在的 history_pin 返回 tagged error）。`job.source_pin` 恒等于实际
+  # 渲染的历史 pin。
   defp render_target(multi_track, nil) do
     {:ok, current_pin(multi_track), multi_track}
   end
@@ -446,11 +447,11 @@ defmodule Neumu.ProjectServer do
     Neume.MultiTrack.update_globals(multi_track, track_id, knobs)
   end
 
-  # 两阶段 pin 挂载：probe 令牌绑定 track/note 与 pin（精确三键，不携底料，
-  # 见 mount_probe_opts/3）；pin 校验由 History 的 stale-write 机制完成
-  # （probe 期间被编辑 → stale_pin）。
-  defp apply_edit(multi_track, {:mount_pin, track_id, note_id, channel, payload, probe}) do
-    with {:ok, opts} <- mount_probe_opts(probe, track_id, note_id) do
+  # 两阶段 pin 挂载：预检令牌绑定 track/note 与 history_pin（精确三键，不携
+  # 底料，见 mount_token_opts/3）；pin 校验由 History 的 stale-write 机制
+  # 完成（预检期间被编辑 → stale_pin）。
+  defp apply_edit(multi_track, {:mount_pin, track_id, note_id, channel, payload, token}) do
+    with {:ok, opts} <- mount_token_opts(token, track_id, note_id) do
       case {channel, payload} do
         {:pitch, {:points, points}} ->
           Neume.MultiTrack.mount_pitch(multi_track, track_id, note_id, points, opts)
@@ -481,20 +482,21 @@ defmodule Neumu.ProjectServer do
 
   defp apply_edit(_multi_track, other), do: {:error, {:unknown_edit_command, other}}
 
-  # probe 令牌必须是 `Neumu.probe_pin/3` 的原样返回：绑定同一 track/note，
-  # pin 是物化时刻的 History cursor。令牌精确为 %{track_id, note_id, pin}
-  # 三键——底料不随令牌下发（携带 base 的旧令牌一律拒绝），mount 由
-  # Editor 在 stale 校验覆盖的当前状态上经 channel 语义现场推导。
-  defp mount_probe_opts(
-         %{track_id: track_id, note_id: note_id, pin: pin} = probe,
+  # 预检令牌必须是 `Neumu.preflight_pin/3` 的原样返回：绑定同一
+  # track/note，history_pin 是预检时刻的 History cursor。令牌精确为
+  # %{track_id, note_id, history_pin} 三键——底料不随令牌下发（携带
+  # base 的旧令牌一律拒绝），mount 由 Editor 在 stale 校验覆盖的当前
+  # 状态上经 channel 语义现场推导。
+  defp mount_token_opts(
+         %{track_id: track_id, note_id: note_id, history_pin: history_pin} = token,
          track_id,
          note_id
        )
-       when is_integer(pin) and map_size(probe) == 3,
-       do: {:ok, [pin: pin]}
+       when is_integer(history_pin) and map_size(token) == 3,
+       do: {:ok, [history_pin: history_pin]}
 
-  defp mount_probe_opts(probe, track_id, note_id),
-    do: {:error, {:invalid_pin_probe, track_id, note_id, probe}}
+  defp mount_token_opts(token, track_id, note_id),
+    do: {:error, {:invalid_pin_token, track_id, note_id, token}}
 
   defp fetch_voicebank(multi_track, voicebank_id) do
     Neume.Voicebank.Registry.fetch(multi_track.voicebank_registry, voicebank_id)

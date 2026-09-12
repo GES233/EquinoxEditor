@@ -1,14 +1,14 @@
 defmodule NeumeLab.Board do
   @moduledoc """
   实验台主面板（`Kino.JS.Live`）：钢琴卷帘、冲突横幅、渲染任务与试听，
-  一块面板跑通 facade 契约四步流：改词 → 冲突 → 一键 repatch → 按 pin
+  一块面板跑通 facade 契约四步流：改词 → 冲突 → 一键 repatch → 按 history_pin
   渲染并排试听。
 
   面板订阅 `Neumu` 工程事件：`project_changed` 触发重拉快照广播，
   `render_changed`/`artifact_ready` 触发重拉任务列表广播；连接时下发
   `%{project_id, snapshot, jobs, voicebanks}` 全量状态。编辑命令直接调
-  `Neumu` facade；pin 挂载在服务端一次走完 probe → mount（前端不感知
-  两阶段，`stale_pin` 由服务端重新 probe 重试一次兜底）。
+  `Neumu` facade；pin 挂载在服务端一次走完预检 → mount（前端不感知
+  两阶段，`stale_pin` 由服务端重新预检重试一次兜底）。
 
   发往客户端的 payload 保持 JSON-safe：快照/声库本身已满足契约
   （`docs/facade-protocol.md`），check 条目的 `reason` 与任务的 `error`
@@ -131,7 +131,7 @@ defmodule NeumeLab.Board do
 
   def handle_event("render", payload, ctx) do
     pin = payload["pin"]
-    opts = if is_integer(pin), do: [pin: pin], else: []
+    opts = if is_integer(pin), do: [history_pin: pin], else: []
 
     command(ctx, "render", fn ->
       case Neumu.submit_render(project_id(ctx), [
@@ -181,16 +181,16 @@ defmodule NeumeLab.Board do
 
   defp valid_duration?(_other), do: false
 
-  # 两阶段挂载收进服务端一次走完；stale 时重新 probe 重试一次。
+  # 两阶段挂载收进服务端一次走完；stale 时重新预检重试一次。
   defp mount_duration(ctx, track_id, note_id, durations) do
-    with {:ok, probe} <- Neumu.probe_pin(project_id(ctx), track_id, note_id),
+    with {:ok, token} <- Neumu.preflight_pin(project_id(ctx), track_id, note_id),
          {:ok, pin} <-
-           Neumu.mount_phoneme_duration(project_id(ctx), track_id, note_id, durations, probe) do
+           Neumu.mount_phoneme_duration(project_id(ctx), track_id, note_id, durations, token) do
       {:ok, pin}
     else
       {:error, {:stale_pin, _}} ->
-        with {:ok, probe} <- Neumu.probe_pin(project_id(ctx), track_id, note_id) do
-          Neumu.mount_phoneme_duration(project_id(ctx), track_id, note_id, durations, probe)
+        with {:ok, token} <- Neumu.preflight_pin(project_id(ctx), track_id, note_id) do
+          Neumu.mount_phoneme_duration(project_id(ctx), track_id, note_id, durations, token)
         end
 
       {:error, reason} ->

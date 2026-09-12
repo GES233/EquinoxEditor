@@ -7,11 +7,17 @@
 
 ## 已拍板的决定
 
-1. **pin 挂载走两阶段**。probe（G2P + 组展开，真声库要调 worker）在
-   ProjectServer 外执行，mount 带 History pin 校验进 server；probe 期间
+1. **pin 挂载走两阶段**。预检（第一阶段的 `preflight_pin/3`）在
+   ProjectServer 外执行，mount 带 History pin 校验进 server；预检期间
    工程被编辑则 mount 以 `{:error, {:stale_pin, _}}` 拒绝，UI 重试。
    动机：本地推理预期很慢（OpenUTAU 使用经验），不能在 GenServer 内
-   同步阻塞所有编辑/查询。推论：UI 需要"probe 待定"态，不假装它很快。
+   同步阻塞所有编辑/查询。
+   ~~推论：UI 需要"probe 待定"态，不假装它很快。~~
+   **勘误（2026-09-12）**：该推论已失效——2026-09-05 身份底料改为输入事实
+   签名后，第一阶段是纯派生、即时返回、不调 worker（见
+   `apps/neume/docs/decision-2026-09-pin-input-base.md`「挂载纯化」），UI
+   不需要为它准备加载态。术语上第一阶段现称**预检（preflight）**，
+   `probe` 一词保留给"向引擎索取一次物化中间结果"，见根 `CONTEXT.md`。
 2. **facade 边界定义 payload schema**：UI ↔ Neumu 之间只传可序列化
    plain data（如 Bezier 曲线用 plain map 而非 `Coconut.Curve.Adapter.Bezier`
    struct）。暂不做版本化。
@@ -31,7 +37,7 @@
 推论：
 
 - 冲突/降级（pin 死亡、repatch 降级）要占 UI 一等位置，不许静默。
-- "按 pin 试听对比"（artifact 已带 `source_pin`）尽量早做，成本最低、
+- "按 history_pin 试听对比"（artifact 已带 `source_pin`）尽量早做，成本最低、
   差异度最高。
 - 逐帧手绘曲线编辑器不急：pin + repatch 的健壮性叙事优先于曲线完整度。
 

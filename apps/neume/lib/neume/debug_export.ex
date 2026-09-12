@@ -5,7 +5,7 @@ defmodule Neume.DebugExport do
 
   Track 维度 + 可选 `span`（tick 区间）裁剪，为多轨适配预留；`meta.patches`
   携带存活 pin 的锚点投影（kind/refs/at_version + 解析出的 tick 区间）与
-  payload，`curves` 是 pitch intervention 控制点的绝对 MIDI 投影。
+  payload，`curves` 是 pitch pin 控制点的绝对 MIDI 投影。
 
   帧网约定：`frames` / `phonemes` 一律落在**歌曲时间轴**上（与 notes、
   tempos 同轴）。`Analysis`/`RenderArtifact` 内部的「绝对帧」是制品音频轴

@@ -39,7 +39,7 @@ defmodule Neumu.OpenVinoIntegrationTest do
     assert {:ok, 2} =
              Neumu.insert_note(id, "lead", "n1", :head, {0, 960}, %{pitch: 60, lyric: "啦"})
 
-    assert {:ok, %{pin: 2, status: :ok}} = Neumu.check(id)
+    assert {:ok, %{history_pin: 2, status: :ok}} = Neumu.check(id)
     assert :ok = Neumu.subscribe(id)
 
     for repeat <- 1..2 do
@@ -57,6 +57,6 @@ defmodule Neumu.OpenVinoIntegrationTest do
     assert {:ok, ^path} = Neumu.save_project(id, path)
     assert :ok = Neumu.close_project(id)
     assert {:ok, _pid} = Neumu.load_project(id, path, opts)
-    assert {:ok, %{pin: 2, status: :ok}} = Neumu.check(id)
+    assert {:ok, %{history_pin: 2, status: :ok}} = Neumu.check(id)
   end
 end

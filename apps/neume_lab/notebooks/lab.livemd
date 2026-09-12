@@ -3,7 +3,7 @@
 ## Section
 
 Livebook/Kino 壳层，验证 Neumu facade 契约的交互闭环：
-**改词 → 冲突 → 一键 repatch → 按 pin 渲染 → 并排试听**。
+**改词 → 冲突 → 一键 repatch → 按 history_pin 渲染 → 并排试听**。
 
 ## 运行方式（先读）
 

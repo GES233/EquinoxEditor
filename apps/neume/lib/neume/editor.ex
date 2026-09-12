@@ -345,7 +345,7 @@ defmodule Neume.Editor do
   end
 
   @doc """
-  在音符上挂载 identity-base Bezier pitch intervention（批次 E 起默认产出
+  在音符上挂载 identity-base Bezier pitch pin（批次 E 起默认产出
   `pitch_curve_v2`）。
 
   控制点入参使用绝对 tick + 绝对 MIDI；handle 是相对 anchor 的 tick/value
@@ -464,10 +464,10 @@ defmodule Neume.Editor do
   纯派生：只读当前会话的乐谱事实与声库摘要，不跑 G2P、不调 worker。
   只读，不改会话。挂载路径的底料自批次 B 起由 channel 语义按 payload
   schema 现场推导（`mount_pin` 的 `base/4` 分派），本函数只作只读
-  probe/校验入口（legacy 底料的显式签名仍可经 `opts[:base]` 传入）。
+  推导/校验入口（legacy 底料的显式签名仍可经 `opts[:base]` 传入）。
   """
-  @spec probe_base(t(), term()) :: {:ok, Identity.input_base()} | {:error, term()}
-  def probe_base(%__MODULE__{} = editor, note_id) do
+  @spec derive_base(t(), term()) :: {:ok, Identity.input_base()} | {:error, term()}
+  def derive_base(%__MODULE__{} = editor, note_id) do
     with {:ok, track} <- current_track(editor) do
       Identity.base_for(track, note_id, voicebank_digest(editor))
     end
@@ -935,7 +935,7 @@ defmodule Neume.Editor do
 
   # 挂载共用路径：底料经 channel 语义现场推导（`describe/1` 按 payload
   # 分派 schema → `base/4` 推导底料），显式 `:base` 仅作兼容入口；
-  # `opts[:pin]` 透传 History 的 stale-write 校验。
+  # `opts[:history_pin]` 透传 History 的 stale-write 校验。
   defp mount_pin(%__MODULE__{} = editor, note_id, channel, payload, opts) do
     with {:ok, semantics} <- fetch_semantics(editor.session.channels, channel),
          {:ok, descriptor} <- semantics.describe(payload),
@@ -944,7 +944,7 @@ defmodule Neume.Editor do
          {:ok, session, patch} <-
            Coconut.mount(editor.session, editor.track_id, note_id, channel, payload,
              base: base,
-             pin: Keyword.get(opts, :pin)
+             pin: Keyword.get(opts, :history_pin)
            ) do
       {:ok, %{editor | session: session}, patch}
     end

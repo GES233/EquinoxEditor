@@ -4,7 +4,7 @@ defmodule Coconut.Edit.Track do
 
   Tracks own everything that used to live in the workspace `Side` drawer
   (design doc §11.3): the versioned span table (the timing authority,
-  §11.2), the element payloads, and the track's patches — interventions
+  §11.2), the element payloads, and the track's patches — they
   transport per track, so they are stored per track. The `version_clock`
   maps each of the track's Space versions to the workspace `edit_version`
   at which it was committed — the cross-track correlation facility that lets

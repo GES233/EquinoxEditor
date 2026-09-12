@@ -74,19 +74,19 @@
 
 - `snapshot/1`、`history_pin/1`
 - `list_voicebanks/1` → `{:ok, [%{id, name, mode, engine, digest}]}`
-- `check/1` → `{:ok, %{pin, status: :ok|:failed, entries: [...]}}`；
+- `check/1` → `{:ok, %{history_pin, status: :ok|:failed, entries: [...]}}`；
   冲突条目 plain data（patch 只留 `patch_id`/`channel`/`note_id`），
   在调用方进程执行（真声库较慢），不阻塞 ProjectServer
 - `note_phonemes/1`（E0b，2026-09-12）→
-  `{:ok, %{pin, tracks}}`：`tracks` 为
+  `{:ok, %{history_pin, tracks}}`：`tracks` 为
   `%{track_id => %{note_id => %{span: [s, e], segments: [...],
   extras: %{}}}}`；`segments` 逐项 `%{segment: %{unit, member, index},
   phoneme: symbol}`——`segment` 即 `phoneme_duration_v2` 的 stable
   ref，UI 拿着可直接撰写 v2 envelope；melisma 组头给全组序列，续音符
   只给自己的延续元音。在调用方进程执行（真声库要调 worker），不产生
   历史边、不派发事件；probe/G2P 失败返回
-  `{:ok, %{pin, status: :failed, entries}}`（同 `check/1` 的 entries
-  风格，`kind: :probe`，带 `track_id`/`note_id` 定位）
+  `{:ok, %{history_pin, status: :failed, entries}}`（同 `check/1` 的
+  entries 风格，`kind: :probe`，带 `track_id`/`note_id` 定位）
 - `list_render_jobs/1` → `{:ok, [%{job_id, source_pin, status,
   artifact_id, error}]}`
 - `artifact/1` → `{:ok, artifact}`（含 WAV `path`、采样率、时长等）
@@ -101,19 +101,22 @@
 
 ## pin 族两阶段挂载与 stale_pin
 
-1. `probe_pin/3` → `{:ok, %{track_id, note_id, pin}}`（纯派生、即时返回）。
+1. `preflight_pin/3`（pin 挂载**预检** preflight）→ `{:ok, %{track_id,
+   note_id, history_pin}}`（纯派生、即时返回；令牌里的 `history_pin`
+   是 History cursor。原名 `probe_pin`，2026-09-05 挂载纯化后已不调
+   worker，改名批次正名）。
    批次 B 起令牌**不再携带底料**：挂载底料由 server 在 stale 校验覆盖
    的当前状态上经 channel 语义现场推导（payload 分派 schema → `base/4`），
-   客户端传回的 base 一律拒绝（`{:error, {:invalid_pin_probe, _, _, _}}`）。
+   客户端传回的 base 一律拒绝（`{:error, {:invalid_pin_token, _, _, _}}`）。
    pitch 点列落库为 `score_pitch_v2` envelope（`note_tick` 相对坐标，
    拖动跟随）；Bezier 曲线传绝对 tick 的 `pitch_curve_v1` 形 plain map，
    server 侧换算落库为 `pitch_curve_v2` envelope（批次 E，同坐标系，
    handle 保持相对 anchor 偏移），也可显式传 v2 envelope 透传。旧
    `pin_input_v1` 输入事实签名见
    `apps/neume/docs/decision-2026-09-pin-input-base.md`。
-2. 三个 mount 携 probe 令牌提交；probe 之后工程被编辑则
-   `{:error, {:stale_pin, _}}`——**重新 probe 后重放**，令牌绑定
-   track/note，张冠李戴返回 `{:error, {:invalid_pin_probe, _, _, _}}`。
+2. 三个 mount 携预检令牌提交；预检之后工程被编辑则
+   `{:error, {:stale_pin, _}}`——**重新预检后重放**，令牌绑定
+   track/note，张冠李戴返回 `{:error, {:invalid_pin_token, _, _, _}}`。
    duration 还接受批次 D 的 `phoneme_duration_v2` envelope（stable
    segment ref：`%{unit: 组头 note_id, member: 组内序号, index: 成员内
    音素下标}`），签 `phoneme_correspondence_v1` 底料（track/note +

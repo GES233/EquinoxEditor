@@ -89,8 +89,8 @@ defmodule Neumu.ScoreGesturesTest do
     # 贴接：n1b 是 n1 的续音。E0a 起 list 挂载换算为 phoneme_duration_v2
     # （segment %{unit: "n1", member: 1, index: 0}，底料钉全组输入事实），
     # 组关系变化在 check 冲突界面可见。
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1b")
-    assert {:ok, 5} = Neumu.mount_phoneme_duration(id, "lead", "n1b", [[0, 96]], probe)
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1b")
+    assert {:ok, 5} = Neumu.mount_phoneme_duration(id, "lead", "n1b", [[0, 96]], token)
 
     # harmony 空轨的 empty_score 与 pin 无关；只看冲突 entry。
     assert {:ok, %{entries: entries}} = Neumu.check(id)
@@ -158,12 +158,12 @@ defmodule Neumu.ScoreGesturesTest do
     assert_received {:project_changed, ^id, 4}
 
     # into（n1）与被吸收者（n2）各挂一个 pin。
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
-    assert {:ok, 5} = Neumu.mount_pitch(id, "lead", "n1", [[120, 62]], probe)
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
+    assert {:ok, 5} = Neumu.mount_pitch(id, "lead", "n1", [[120, 62]], token)
     assert_received {:project_changed, ^id, 5}
 
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n2")
-    assert {:ok, 6} = Neumu.mount_phoneme_duration(id, "lead", "n2", [[0, 96]], probe)
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n2")
+    assert {:ok, 6} = Neumu.mount_phoneme_duration(id, "lead", "n2", [[0, 96]], token)
     assert_received {:project_changed, ^id, 6}
 
     assert [%{id: n1_pin, channel: :pitch}, %{id: n2_pin, channel: :duration}] = pins!(id, "lead")
@@ -203,8 +203,8 @@ defmodule Neumu.ScoreGesturesTest do
     assert [%{id: "n1"}, %{id: "n1b", metadata: %{"melisma" => "continue"}}] = notes!(id, "lead")
 
     # 源音符上挂一个 pin：跨轨后不迁移（源轨 Delete 判死锚）。
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1b")
-    assert {:ok, 5} = Neumu.mount_pitch(id, "lead", "n1b", [[300, 62]], probe)
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1b")
+    assert {:ok, 5} = Neumu.mount_pitch(id, "lead", "n1b", [[300, 62]], token)
     assert_received {:project_changed, ^id, 5}
 
     assert {:ok, 6} =

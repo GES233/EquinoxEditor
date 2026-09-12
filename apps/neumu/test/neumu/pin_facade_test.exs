@@ -1,7 +1,7 @@
 defmodule Neumu.PinFacadeTest do
   @moduledoc """
-  pin 族手势的 facade 矩阵：两阶段挂载（probe 在 ProjectServer 外、mount
-  携 pin 校验）、repatch 批量重挂、unmount_pin，以及快照 pins 投影。
+  pin 族手势的 facade 矩阵：两阶段挂载（预检在 ProjectServer 外、mount
+  携预检令牌校验）、repatch 批量重挂、unmount_pin，以及快照 pins 投影。
   probe 走 `Neumu.ProjectStub.PhonemesClient`（纯 Elixir 假 G2P/组展开）。
   """
 
@@ -85,30 +85,30 @@ defmodule Neumu.PinFacadeTest do
 
   defp refute_projection_tuples(_term, _path), do: :ok
 
-  test "probe_pin 返回 plain-data 令牌，不改状态不发事件", %{project_id: id} do
+  test "preflight_pin 返回 plain-data 令牌，不改状态不发事件", %{project_id: id} do
     :ok = Neumu.subscribe(id)
 
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
     # 令牌只钉 track/note 与 History cursor；底料不随令牌下发——mount 时
     # 由 server 在 stale 校验覆盖的当前状态上经 channel 语义现场推导
     # （批次 B 起 pitch 点列落 score_pitch_v2，客户端不代为选底料）。
-    assert %{track_id: "lead", note_id: "n1", pin: 2} = probe
-    refute Map.has_key?(probe, :base)
-    assert_plain_data(probe)
+    assert %{track_id: "lead", note_id: "n1", history_pin: 2} = token
+    refute Map.has_key?(token, :base)
+    assert_plain_data(token)
 
-    # probe 是只读旁路：pin 不变、无事件。
+    # 预检是只读旁路：history_pin 不变、无事件。
     assert {:ok, 2} = Neumu.history_pin(id)
-    assert {:error, {:unknown_note, "no-such"}} = Neumu.probe_pin(id, "lead", "no-such")
-    assert {:error, {:unknown_track, "no-such"}} = Neumu.probe_pin(id, "no-such", "n1")
+    assert {:error, {:unknown_note, "no-such"}} = Neumu.preflight_pin(id, "lead", "no-such")
+    assert {:error, {:unknown_track, "no-such"}} = Neumu.preflight_pin(id, "no-such", "n1")
     refute_received {:project_changed, _, _}
   end
 
-  test "mount_pitch 携 probe 落边，快照 pins 投影一致且无运行时对象", %{project_id: id} do
+  test "mount_pitch 携预检令牌落边，快照 pins 投影一致且无运行时对象", %{project_id: id} do
     :ok = Neumu.subscribe(id)
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
-    assert {:ok, 3} = Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], probe)
+    assert {:ok, 3} = Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], token)
     assert_received {:project_changed, ^id, 3}
 
     assert [
@@ -129,43 +129,43 @@ defmodule Neumu.PinFacadeTest do
     refute_received {:project_changed, _, _}
   end
 
-  test "probe 期间工程被编辑，mount 以 stale_pin 拒绝且状态不变", %{project_id: id} do
+  test "预检之后工程被编辑，mount 以 stale_pin 拒绝且状态不变", %{project_id: id} do
     :ok = Neumu.subscribe(id)
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
-    # probe 之后工程前进了一条边。
+    # 预检之后工程前进了一条边。
     assert {:ok, 3} = Neumu.edit_note(id, "lead", "n1", %{pitch: 62})
     assert_received {:project_changed, ^id, 3}
 
     assert {:error, {:stale_pin, _}} =
-             Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], probe)
+             Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], token)
 
-    # 状态不变、不发事件；重新 probe 后重试成功。
+    # 状态不变、不发事件；重新预检后重试成功。
     assert {:ok, 3} = Neumu.history_pin(id)
     assert [] = pins!(id)
     refute_received {:project_changed, _, _}
 
-    assert {:ok, fresh} = Neumu.probe_pin(id, "lead", "n1")
-    assert fresh.pin == 3
+    assert {:ok, fresh} = Neumu.preflight_pin(id, "lead", "n1")
+    assert fresh.history_pin == 3
     assert {:ok, 4} = Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], fresh)
     assert_received {:project_changed, ^id, 4}
   end
 
-  test "probe 令牌绑定 track/note，张冠李戴或畸形令牌被拒绝", %{project_id: id} do
+  test "预检令牌绑定 track/note，张冠李戴或畸形令牌被拒绝", %{project_id: id} do
     assert {:ok, 3} =
              Neumu.insert_note(id, "lead", "n2", "n1", {480, 960}, %{pitch: 62, lyric: "mi"})
 
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
-    assert {:error, {:invalid_pin_probe, "lead", "n2", _}} =
-             Neumu.mount_pitch(id, "lead", "n2", [[120, 72]], probe)
+    assert {:error, {:invalid_pin_token, "lead", "n2", _}} =
+             Neumu.mount_pitch(id, "lead", "n2", [[120, 72]], token)
 
-    assert {:error, {:invalid_pin_probe, "lead", "n1", _}} =
+    assert {:error, {:invalid_pin_token, "lead", "n1", _}} =
              Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], %{})
 
     # 携带 base 的旧形令牌一律拒绝（底料由 server 侧现场推导）。
-    assert {:error, {:invalid_pin_probe, "lead", "n1", _}} =
-             Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], Map.put(probe, :base, %{}))
+    assert {:error, {:invalid_pin_token, "lead", "n1", _}} =
+             Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], Map.put(token, :base, %{}))
 
     assert {:ok, 3} = Neumu.history_pin(id)
     assert [] = pins!(id)
@@ -173,11 +173,11 @@ defmodule Neumu.PinFacadeTest do
 
   test "mount_phoneme_duration 与 unmount_pin 闭环，可 undo/redo", %{project_id: id} do
     :ok = Neumu.subscribe(id)
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
     # E0a：list 入参在 server 侧换算为 phoneme_duration_v2 envelope
     # （成员内下标 0 → segment %{unit: "n1", member: 0, index: 0}）。
-    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], probe)
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], token)
     assert_received {:project_changed, ^id, 3}
 
     assert [
@@ -215,14 +215,14 @@ defmodule Neumu.PinFacadeTest do
 
   test "mount_phoneme_duration 接受 phoneme_duration_v2 envelope", %{project_id: id} do
     :ok = Neumu.subscribe(id)
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
     v2 = %{
       schema: "phoneme_duration_v2",
       values: [%{segment: %{unit: "n1", member: 0, index: 1}, duration_tick: 96}]
     }
 
-    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", v2, probe)
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", v2, token)
     assert_received {:project_changed, ^id, 3}
 
     assert [
@@ -241,11 +241,11 @@ defmodule Neumu.PinFacadeTest do
 
   test "replace_pin：同 schema v2 替换一条边一次事件，undo 还原", %{project_id: id} do
     :ok = Neumu.subscribe(id)
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
     # E0a 起 facade 挂载零 legacy：list 换算为 v2 envelope；legacy → v2
     # 升级手势只剩读档来源（Editor 层契约由 neume 侧测试钉住）。
-    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], probe)
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], token)
     assert_received {:project_changed, ^id, 3}
 
     [%{id: old_id, payload: old_payload}] = pins!(id)
@@ -283,14 +283,14 @@ defmodule Neumu.PinFacadeTest do
 
   test "replace_pin：v2 → legacy 降级拒绝，不改状态不发事件", %{project_id: id} do
     :ok = Neumu.subscribe(id)
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
     v2 = %{
       schema: "phoneme_duration_v2",
       values: [%{segment: %{unit: "n1", member: 0, index: 0}, duration_tick: 96}]
     }
 
-    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", v2, probe)
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", v2, token)
     assert_received {:project_changed, ^id, 3}
     [%{id: patch_id}] = pins!(id)
 
@@ -307,7 +307,7 @@ defmodule Neumu.PinFacadeTest do
 
   test "mount_pitch_curve 接受绝对 tick plain map，落 v2 envelope", %{project_id: id} do
     :ok = Neumu.subscribe(id)
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
     curve = %{
       format: :pitch_curve_v1,
@@ -320,7 +320,7 @@ defmodule Neumu.PinFacadeTest do
       ]
     }
 
-    assert {:ok, 3} = Neumu.mount_pitch_curve(id, "lead", "n1", curve, probe)
+    assert {:ok, 3} = Neumu.mount_pitch_curve(id, "lead", "n1", curve, token)
     assert_received {:project_changed, ^id, 3}
 
     # 批次 E：facade 仍传绝对 tick plain map，server 侧按 span 起点换算为
@@ -350,15 +350,15 @@ defmodule Neumu.PinFacadeTest do
     assert_plain_data(snapshot!(id))
 
     # 畸形 payload：tagged error，不落边。
-    assert {:error, _} = Neumu.mount_pitch_curve(id, "lead", "n1", %{bogus: true}, probe)
+    assert {:error, _} = Neumu.mount_pitch_curve(id, "lead", "n1", %{bogus: true}, token)
     assert {:ok, 3} = Neumu.history_pin(id)
     refute_received {:project_changed, _, _}
   end
 
   test "repatch 批量重签返回 {:ok, pin, results}，一条历史边", %{project_id: id} do
     :ok = Neumu.subscribe(id)
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
-    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], probe)
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], token)
     assert_received {:project_changed, ^id, 3}
     assert [%{id: patch_id}] = pins!(id)
 
@@ -394,10 +394,10 @@ defmodule Neumu.PinFacadeTest do
 
   test "repatch 降级不落边不发事件；不在册的 patch 报 tagged error", %{project_id: id} do
     :ok = Neumu.subscribe(id)
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
 
     # 下标 1 指向第二个音素。
-    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[1, 96]], probe)
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[1, 96]], token)
     assert_received {:project_changed, ^id, 3}
     assert [%{id: patch_id}] = pins!(id)
 
@@ -419,7 +419,7 @@ defmodule Neumu.PinFacadeTest do
     assert {:error, {:unknown_track, "no-such"}} = Neumu.repatch(id, "no-such", [patch_id])
   end
 
-  test "note_phonemes 返回拍板形状，pin 一致且只读无副作用", %{project_id: id} do
+  test "note_phonemes 返回拍板形状，history_pin 一致且只读无副作用", %{project_id: id} do
     :ok = Neumu.subscribe(id)
 
     assert {:ok, result} = Neumu.note_phonemes(id)
@@ -427,7 +427,7 @@ defmodule Neumu.PinFacadeTest do
     # 拍板形状（E0b）：segment 即可直接撰写 phoneme_duration_v2 envelope
     # 的 stable ref；span 已 JSON-safe 化为 list；extras 预留。
     assert %{
-             pin: 2,
+             history_pin: 2,
              tracks: %{
                "lead" => %{
                  "n1" => %{
@@ -453,7 +453,7 @@ defmodule Neumu.PinFacadeTest do
   test "note_phonemes：melisma 组头给全组序列，续音符只给延续元音", %{project_id: id} do
     assert {:ok, 3} = Neumu.split_note(id, "lead", "n1", 240, "n1b")
 
-    assert {:ok, %{pin: 3, tracks: %{"lead" => notes}}} = Neumu.note_phonemes(id)
+    assert {:ok, %{history_pin: 3, tracks: %{"lead" => notes}}} = Neumu.note_phonemes(id)
 
     assert %{
              "n1" => %{
@@ -494,7 +494,7 @@ defmodule Neumu.PinFacadeTest do
                lyric: "la"
              })
 
-    assert {:ok, %{pin: 2, status: :failed, entries: [entry]}} =
+    assert {:ok, %{history_pin: 2, status: :failed, entries: [entry]}} =
              Neumu.note_phonemes(failing_id)
 
     assert %{kind: :probe, track_id: "lead", reason: {:encoder_failed, {:g2p_failed, "la"}}} =
@@ -512,11 +512,11 @@ defmodule Neumu.PinFacadeTest do
     registry: registry,
     tmp_dir: tmp_dir
   } do
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
-    assert {:ok, 3} = Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], probe)
-    # 第一次 mount 后 pin 前进，旧 probe 作废，需重新 probe。
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
-    assert {:ok, 4} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], probe)
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
+    assert {:ok, 3} = Neumu.mount_pitch(id, "lead", "n1", [[120, 72]], token)
+    # 第一次 mount 后 history_pin 前进，旧令牌作废，需重新预检。
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
+    assert {:ok, 4} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], token)
 
     assert [%{channel: :pitch}, %{channel: :duration}] = pins!(id)
 

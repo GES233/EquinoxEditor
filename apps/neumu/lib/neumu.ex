@@ -196,19 +196,24 @@ defmodule Neumu do
   历史边、不派发事件。
 
   执行在调用方进程（真声库要调 worker，可能较慢），不占用
-  ProjectServer。返回 `{:ok, %{pin, status, entries}}`：`status` 为
-  `:ok | :failed`；`entries` 为 plain-data 冲突投影（patch 只留
+  ProjectServer。返回 `{:ok, %{history_pin, status, entries}}`：`status`
+  为 `:ok | :failed`；`entries` 为 plain-data 冲突投影（patch 只留
   `patch_id`/`channel`/`note_id`），供冲突/降级的一等界面展示。
   """
   @spec check(RenderJob.project_id()) :: {:ok, map()} | {:error, term()}
   def check(project_id) do
-    with {:ok, multi_track, pin} <- call_project(project_id, :probe_context) do
+    with {:ok, multi_track, history_pin} <- call_project(project_id, :preflight_context) do
       case Neume.MultiTrack.check(multi_track) do
         {:ok, _refreshed, _reports} ->
-          {:ok, %{pin: pin, status: :ok, entries: []}}
+          {:ok, %{history_pin: history_pin, status: :ok, entries: []}}
 
         {:error, {:check_failed, entries}} ->
-          {:ok, %{pin: pin, status: :failed, entries: Neumu.CheckReport.project_entries(entries)}}
+          {:ok,
+           %{
+             history_pin: history_pin,
+             status: :failed,
+             entries: Neumu.CheckReport.project_entries(entries)
+           }}
       end
     end
   end
@@ -217,7 +222,7 @@ defmodule Neumu do
   查询当前状态的逐音符物化音素序列（E0b），供 UI 撰写
   `phoneme_duration_v2` envelope。
 
-  返回 `{:ok, %{pin, tracks}}`：`tracks` 为
+  返回 `{:ok, %{history_pin, tracks}}`：`tracks` 为
   `%{track_id => %{note_id => %{span, segments, extras}}}`（plain
   data，`span` 为 `[start_tick, end_tick]`）；`segments` 逐项
   `%{segment: %{unit, member, index}, phoneme: symbol}`——`segment` 即
@@ -226,25 +231,30 @@ defmodule Neumu do
 
   执行在调用方进程（真声库要调 worker），不占用 ProjectServer；只读，
   不产生历史边、不派发事件。probe/G2P 失败返回
-  `{:ok, %{pin, status: :failed, entries}}`，entries 为 plain-data
+  `{:ok, %{history_pin, status: :failed, entries}}`，entries 为 plain-data
   投影（同 `check/1` 的 entries 风格）。
   """
   @spec note_phonemes(RenderJob.project_id()) :: {:ok, map()} | {:error, term()}
   def note_phonemes(project_id) do
-    with {:ok, multi_track, pin} <- call_project(project_id, :probe_context) do
+    with {:ok, multi_track, history_pin} <- call_project(project_id, :preflight_context) do
       case Neume.MultiTrack.note_phonemes(multi_track) do
         {:ok, tracks} ->
-          {:ok, %{pin: pin, tracks: Neumu.CheckReport.deep_lists(tracks)}}
+          {:ok, %{history_pin: history_pin, tracks: Neumu.CheckReport.deep_lists(tracks)}}
 
         {:error, {:probe_failed, entries}} ->
-          {:ok, %{pin: pin, status: :failed, entries: Neumu.CheckReport.project_entries(entries)}}
+          {:ok,
+           %{
+             history_pin: history_pin,
+             status: :failed,
+             entries: Neumu.CheckReport.project_entries(entries)
+           }}
       end
     end
   end
 
   @doc """
   列出该工程的渲染任务（按 job_id 升序；plain data：`%{job_id,
-  source_pin, status, artifact_id, error}`），供"按 pin 试听对比"枚举
+  source_pin, status, artifact_id, error}`），供"按 history_pin 试听对比"枚举
   制品。只读查询。
   """
   @spec list_render_jobs(RenderJob.project_id()) :: {:ok, [map()]} | {:error, term()}
@@ -470,34 +480,36 @@ defmodule Neumu do
   # --- pin 干预（两阶段挂载） ---
 
   @doc """
-  pin 挂载第一阶段：钉住当前 History cursor 并校验音符存活。
+  pin 挂载预检（preflight，两阶段挂载第一阶段）：钉住当前 History
+  cursor 并校验音符存活。
 
   纯派生、不跑 G2P、不调 worker，即时返回；在 ProjectServer 之外的调用
-  方进程执行，不占用 server。返回 `{:ok, probe}`；`probe` 是 plain
-  data：`%{track_id, note_id, pin}`，原样传给三个 mount 手势。身份底料
-  不再随令牌下发——mount 由 server 在 stale 校验覆盖的当前状态上经
-  channel 语义现场推导（payload 分派 schema → `base/4`），客户端传回的
-  base 一律拒绝。probe 之后工程被编辑，mount 返回
-  `{:error, {:stale_pin, _}}`（状态不变），UI 重新 probe 后重试。
+  方进程执行，不占用 server。返回 `{:ok, token}`；`token` 是 plain
+  data：`%{track_id, note_id, history_pin}`（`history_pin` 是 History
+  cursor），原样传给三个 mount 手势。身份底料不再随令牌下发——mount 由
+  server 在 stale 校验覆盖的当前状态上经 channel 语义现场推导（payload
+  分派 schema → `base/4`），客户端传回的 base 一律拒绝。预检之后工程被
+  编辑，mount 返回 `{:error, {:stale_pin, _}}`（状态不变），UI 重新预检
+  后重试。
   """
-  @spec probe_pin(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term()) ::
+  @spec preflight_pin(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term()) ::
           {:ok, map()} | {:error, term()}
-  def probe_pin(project_id, track_id, note_id) do
-    with {:ok, multi_track, pin} <- call_project(project_id, :probe_context),
-         :ok <- Neume.MultiTrack.probe_pin(multi_track, track_id, note_id) do
-      {:ok, %{track_id: track_id, note_id: note_id, pin: pin}}
+  def preflight_pin(project_id, track_id, note_id) do
+    with {:ok, multi_track, history_pin} <- call_project(project_id, :preflight_context),
+         :ok <- Neume.MultiTrack.preflight_pin(multi_track, track_id, note_id) do
+      {:ok, %{track_id: track_id, note_id: note_id, history_pin: history_pin}}
     end
   end
 
   @doc """
   在音符上挂载绝对 tick→MIDI 的稀疏 pitch 控制点（`[[tick, midi]]`，
   plain data）；落库为 `score_pitch_v2` envelope（`note_tick` 相对坐标，
-  拖动跟随）。`probe` 为 `probe_pin/3` 的原样返回。
+  拖动跟随）。`token` 为 `preflight_pin/3` 的原样返回。
   """
   @spec mount_pitch(RenderJob.project_id(), Coconut.Edit.Track.track_id(), term(), term(), map()) ::
           {:ok, history_pin()} | {:error, term()}
-  def mount_pitch(project_id, track_id, note_id, points, probe) do
-    edit(project_id, {:mount_pin, track_id, note_id, :pitch, {:points, points}, probe})
+  def mount_pitch(project_id, track_id, note_id, points, token) do
+    edit(project_id, {:mount_pin, track_id, note_id, :pitch, {:points, points}, token})
   end
 
   @doc """
@@ -518,8 +530,8 @@ defmodule Neumu do
           map(),
           map()
         ) :: {:ok, history_pin()} | {:error, term()}
-  def mount_pitch_curve(project_id, track_id, note_id, curve, probe) do
-    edit(project_id, {:mount_pin, track_id, note_id, :pitch, {:curve, curve}, probe})
+  def mount_pitch_curve(project_id, track_id, note_id, curve, token) do
+    edit(project_id, {:mount_pin, track_id, note_id, :pitch, {:curve, curve}, token})
   end
 
   @doc """
@@ -540,8 +552,8 @@ defmodule Neumu do
           term(),
           map()
         ) :: {:ok, history_pin()} | {:error, term()}
-  def mount_phoneme_duration(project_id, track_id, note_id, durations, probe) do
-    edit(project_id, {:mount_pin, track_id, note_id, :duration, {:durations, durations}, probe})
+  def mount_phoneme_duration(project_id, track_id, note_id, durations, token) do
+    edit(project_id, {:mount_pin, track_id, note_id, :duration, {:durations, durations}, token})
   end
 
   @doc """
@@ -605,8 +617,9 @@ defmodule Neumu do
   - `:job_id` — 指定任务 id，默认生成唯一整数；该工程内已存在同名
     job（在途或终态）时返回 `{:error, {:job_already_exists, job_id}}`，
     不覆盖权威 job；
-  - `:pin` — 渲染指定历史 pin 的状态（"按 pin 试听对比"）；被 squash
-    或不存在的 pin 返回 `{:error, {:unknown_node, pin}}`，不产生任务。
+  - `:history_pin` — 渲染指定 history_pin 的状态（"按 history_pin 试听
+    对比"）；被 squash 或不存在的节点返回
+    `{:error, {:unknown_node, history_pin}}`，不产生任务。
   """
   @spec submit_render(RenderJob.project_id(), keyword()) ::
           {:ok, RenderJob.t()} | {:error, term()}

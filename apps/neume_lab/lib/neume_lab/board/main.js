@@ -235,8 +235,8 @@ export function init(ctx, data) {
     }
     banner.className = "banner";
     const stale =
-      state.snapshot && state.check.pin !== state.snapshot.history_pin
-        ? `<div class="muted">该结果对应 pin ${esc(state.check.pin)}，当前已是 pin ${esc(state.snapshot.history_pin)}——请重新检查确认。</div>`
+      state.snapshot && state.check.history_pin !== state.snapshot.history_pin
+        ? `<div class="muted">该结果对应 history_pin ${esc(state.check.history_pin)}，当前已是 history_pin ${esc(state.snapshot.history_pin)}——请重新检查确认。</div>`
         : "";
     banner.innerHTML =
       `<div class="banner-title">检查发现 ${state.check.entries.length} 处冲突</div>` +

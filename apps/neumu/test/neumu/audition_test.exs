@@ -102,19 +102,19 @@ defmodule Neumu.AuditionTest do
   test "check 通过时返回 :ok，只读无副作用", %{project_id: id} do
     :ok = Neumu.subscribe(id)
 
-    assert {:ok, %{pin: 2, status: :ok, entries: []}} = Neumu.check(id)
+    assert {:ok, %{history_pin: 2, status: :ok, entries: []}} = Neumu.check(id)
     assert {:ok, 2} = Neumu.history_pin(id)
     refute_received {:project_changed, _, _}
   end
 
   test "check 失败时返回 plain-data 冲突条目（patch 只留引用）", %{project_id: id} do
-    assert {:ok, probe} = Neumu.probe_pin(id, "lead", "n1")
-    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], probe)
+    assert {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
+    assert {:ok, 3} = Neumu.mount_phoneme_duration(id, "lead", "n1", [[0, 96]], token)
 
     # 改显式音素 → 输入底料变化 → pin 冲突。
     assert {:ok, 4} = Neumu.edit_note(id, "lead", "n1", %{phonemes: [["zh", "l"], ["zh", "u"]]})
 
-    assert {:ok, %{pin: 4, status: :failed, entries: [entry]}} = Neumu.check(id)
+    assert {:ok, %{history_pin: 4, status: :failed, entries: [entry]}} = Neumu.check(id)
 
     assert %{
              kind: :conflict,
@@ -135,7 +135,7 @@ defmodule Neumu.AuditionTest do
 
     # 冲突可 repatch 兜住，之后 check 恢复 :ok。
     assert {:ok, 5, [%{status: :repatched}]} = Neumu.repatch(id, "lead", [patch_id])
-    assert {:ok, %{pin: 5, status: :ok, entries: []}} = Neumu.check(id)
+    assert {:ok, %{history_pin: 5, status: :ok, entries: []}} = Neumu.check(id)
   end
 
   test "按 pin 渲染：渲染历史状态，source_pin 钉住目标 pin", %{project_id: id} do
@@ -154,7 +154,7 @@ defmodule Neumu.AuditionTest do
     end
 
     # 渲染 pin 2 的历史状态。
-    assert {:ok, job} = Neumu.submit_render(id, pin: 2, renderer: spy)
+    assert {:ok, job} = Neumu.submit_render(id, history_pin: 2, renderer: spy)
     assert job.source_pin == 2
     assert_receive {:render_changed, _, :running}
     assert_receive {:render_changed, job_id, :completed}
@@ -176,8 +176,10 @@ defmodule Neumu.AuditionTest do
     assert [%{lyric: "lu"}] = snapshot.tracks |> hd() |> Map.fetch!(:notes)
 
     # 被 squash/不存在的 pin 与非法 pin：tagged error，不产生任务。
-    assert {:error, {:unknown_node, 999}} = Neumu.submit_render(id, pin: 999, renderer: spy)
-    assert {:error, {:invalid_source_pin, :bogus}} = Neumu.submit_render(id, pin: :bogus)
+    assert {:error, {:unknown_node, 999}} =
+             Neumu.submit_render(id, history_pin: 999, renderer: spy)
+
+    assert {:error, {:invalid_source_pin, :bogus}} = Neumu.submit_render(id, history_pin: :bogus)
 
     assert {:ok, jobs} = Neumu.list_render_jobs(id)
     assert length(jobs) == 2
@@ -231,6 +233,6 @@ defmodule Neumu.AuditionTest do
     assert {:error, {:unknown_project, :nope}} = Neumu.note_phonemes(:nope)
     assert {:error, {:unknown_project, :nope}} = Neumu.list_render_jobs(:nope)
 
-    assert {:error, {:unknown_project, :nope}} = Neumu.submit_render(:nope, pin: 2)
+    assert {:error, {:unknown_project, :nope}} = Neumu.submit_render(:nope, history_pin: 2)
   end
 end
