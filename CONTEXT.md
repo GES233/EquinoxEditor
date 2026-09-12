@@ -59,15 +59,15 @@ Neume → 引擎；凡 Host/facade 方向取挂载前状态，一律说"预检�
 |---|---|---|---|---|---|
 | 用户对模型生成施加的意图 | **干预 intervention** | 概念（载体是 patch） | 概念（翻译成 Oi data） | pin 是它的身份具体化，不叫 intervention | 手势 |
 | 编辑载体（可 undo 的历史单元） | patch | `Coconut.Edit.Patch` | — | — | — |
-| 底座 patch（依赖层） | tamale patch | `%Patch{patch: %Tamale.Patch{}}` | — | — | — |
+| 底座 patch（依赖层） | tamale patch | `%Patch{tamale_patch: %Tamale.Patch{}}` | — | — | — |
 | 引擎消费的数据切面 | channel | `Coconut.Render.Channel`；`Coconut.Render.Channels.{Lyric,Duration,Pitch}` | `port_map` | `Neume.Channels.{PitchPin,DurationPin}`——就是 channel，只是多实现 `Neume.Pin.Semantics` | 手势参数 `channel ∈ {:pitch, :duration}`（= channel 键） |
 | 引擎 base 输入 | base interventions | `Coconut.Session.interventions` | — | `Neume.TrackRuntime.interventions` | — |
 | 折叠后的引擎输入 | resolved interventions | `Resolve.run_check/3` 返回的 `:interventions` | `Assemble.assemble/2` | — | — |
 | 身份单元（存活/裁决对象） | pin | 无此概念 | — | `Neume.Pin.*`、`Neume.Identity` | snapshot 的 `pins` |
 | pin 承载的领域对象分类 | carrier | — | — | `:score` / `:phonology` / `:correspondence` | — |
 | 身份底料（被签名的输入事实） | base | `base_digest`（tamale） | — | base schema `pin_input_v1` / `score_region_v1` / `phoneme_correspondence_v1` | 预检令牌不携底料 |
-| 挂载前预检（两阶段挂载第一阶段） | **pin 挂载预检 preflight** | — | — | `Neume.MultiTrack.probe_pin/3`、`Editor.probe_base/2` | `Neumu.probe_pin/3`；令牌 = `%{track_id, note_id, pin}` |
-| 历史窗口根（最老仍保留的节点） | **root_seq** | `Coconut.Edit.History.base_seq`（待改名 `root_seq`） | — | — | `ProjectSnapshot` 用它算 `can_undo` |
+| 挂载前预检（两阶段挂载第一阶段） | **pin 挂载预检 preflight** | — | — | `Neume.MultiTrack.preflight_pin/3`、`Editor.derive_base/2` | `Neumu.preflight_pin/3`；令牌 = `%{track_id, note_id, history_pin}` |
+| 历史窗口根（最老仍保留的节点） | **root_seq** | `Coconut.Edit.History.root_seq` | — | — | `ProjectSnapshot` 用它算 `can_undo` |
 | History cursor（版本钉） | **history_pin（版本钉）**；裸词 `pin` 不指 cursor | `Tamale.Anchor.at_version`（同一个"钉"） | — | `Editor`/`RenderJob.source_pin`、`at_pin/2` | `history_pin`、事件与任务里的 `pin` |
 
 ## 分歧清单（grill 对象）
@@ -135,59 +135,43 @@ Neume → 引擎；凡 Host/facade 方向取挂载前状态，一律说"预检�
 ### Q6：base 的限定词
 
 - 引擎输入底座一律写 **base interventions**，不裸叫 base。
-- History 的 `base_seq` 散文里写全 `base_seq` 或称"历史窗口根"，禁止简写成 base。
+- History 的窗口根一律写全 `root_seq` 或称"历史窗口根"，禁止简写成 base。
   现有散文未见违规，作为新增文档的约束。
 
 ### Q7：tamale patch 必须写全名
 
 - 散文统一说"tamale patch"（中文可说"底座"），禁止裸 patch 指它。现有散文未见
-  违规（`pickle/patch.ex:9`、`design-2026-09-pin-carriers.md:73` 都已带模块名）；
-  `resolve.ex:37` 的 `patch.patch.base_digest` 属代码文档，随字段改名一起改。
+  违规；`resolve.ex:37` 的 `patch.tamale_patch.base_digest` 已随字段改名
+  （2026-09 改名批次包 3）更新。
 
 明确不动：`design-2026-08-orchid-intervention.md` 文件名与正文（自洽）、
 `orchid_intervention` 依赖与 hook 名（外部契约）、所有 `interventions` 字段名、
 coconut `resolve_stage() :: :probe` 与 `stage: :probe` 冲突界面（义 A）。
 
-## 候选改名清单（本次不改代码，只登记）
+## 候选改名清单
 
 > 施工交接（逐项落点、陷阱、验收、提交切分）见
 > `docs/plans/plan-2026-09-rename-batch.md`。
 
-### probe 双义（Q4）
+**2026-09 改名批次已施工完毕**，原清单全部条目已移出：
 
-- `Neumu.probe_pin/3` → `preflight_pin/3`
-- `Neume.MultiTrack.probe_pin/3` → `preflight_pin/3`
-- `Neume.Editor.probe_base/2` → `derive_base/2`
-- `:probe_context`（`ProjectServer.handle_call/3` 与 `call_project/2` 的模式）→
-  `:preflight_context`
-- 令牌形参 `probe` → `token`：`Neumu.mount_pitch/5` / `mount_pitch_curve/5` /
-  `mount_phoneme_duration/5`、`ProjectServer.apply_edit({:mount_pin, _, _, _, _, probe})`、
-  `mount_probe_opts/3`、`Neumu.RefClient`、`NeumeLab.Board`
-- 错误 `:invalid_pin_probe` → `:invalid_pin_token`
+- probe 双义（Q4）与 pin 双义（Q5）条目 → 包 1 `c7a1955`
+  （`refactor(neumu,neume,neume_lab): 预检正名 preflight_pin/derive_base，
+  cursor 键统一 history_pin`）；施工时拍板扩面两处：`check/1` 与
+  `note_phonemes/1` 返回键 `pin` → `history_pin`，`submit_render/2`
+  选项 `:pin` → `:history_pin`。coconut 侧 `Coconut.mount/6` 的 `pin:`
+  选项拍板不动。
+- base 多义（Q6）条目 → 包 2 `fb57948`（`refactor(coconut):
+  History.base_seq 正名为 root_seq，旧档读档兼容`）。
+- patch 同名（Q7）条目 → 包 3 `2511493`（`refactor(coconut,neume,neumu):
+  Patch.patch 字段正名为 tamale_patch，旧档读档兼容`）。
 
-### patch 三处同名（Q7）
+### 剩余候选
 
-- `Coconut.Edit.Patch` 的字段 `patch` → `tamale_patch`，一次消掉这些
-  `patch.patch.*` 读法：`neume/identity.ex:209-210,222`、
-  `neume/debug_export.ex:291,345`、`neume/editor.ex:656,760-761,1024-1035,1172-1177`、
-  `neumu/project_snapshot.ex:116`、`coconut/render/resolve.ex:37,162,174`。
-  连带 `Coconut.Pickle.Patch` 的字段规格与 `resolve.ex:37` 的 `@typedoc`。
-- 不动：`Tamale.Patch` 模块名（外部 hex 依赖）、`Coconut.Pickle.Patch`
-  （`Pickle.<结构>` 命名规范）。
-
-### base 多义（Q6）
-
-- `Coconut.Edit.History.base_seq` → `root_seq`（依据：同文件已用
-  `{:missing_root_checkpoint, hist.base_seq}` 与 `nodes[base_seq].checkpoint`；
-  调用点含 `pickle/history.ex:12,34,50`、`project_snapshot.ex:78`）
-
-### pin 双义（Q5）
-
-- `Neumu.probe_pin/3` 返回 map 的键 `pin`（History cursor）→ `history_pin`
-- `ProjectServer.mount_probe_opts/3` 的 `pin: pin` → `history_pin:`
-- `Neume.Editor` 挂载共用路径 `opts[:pin]`（`editor.ex:938`，透传 History
-  stale-write 校验）→ `opts[:history_pin]`
-- `Neumu.RefClient` 的 `pin:` 字段 → `history_pin:`
+- `Coconut.mount/6` 与 examples 里的局部变量 `probe`（试用 patch 之义，
+  `%Patch{track_id: ..., anchor: ..., channel: ...}` 半成品）：与 Q4 的
+  probe 正名不同义，改名批次中登记但未动，待另立批次决定（如
+  `trial_patch`）。
 
 ## 开放问题队列
 
