@@ -22,8 +22,10 @@ erl_crash.dump
 # 临时文件，例如来自测试。
 tmp/
 
-# 忽略包tar包（通过 "mix hex.build" 构建）。
+# 忽略 tar 包（通过 "mix hex.build" 构建）。
+coconut*.tar
 equinox*.tar
+neum*.tar
 
 # 忽略构建工具生成的资源文件。
 /ui_shell/priv/static/assets/
