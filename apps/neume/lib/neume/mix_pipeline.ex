@@ -4,8 +4,34 @@ defmodule Neume.MixPipeline do
   输入轨道必须已经由各自的声库 pipeline 渲染为 WAV。
   """
 
+  alias Coconut.Edit.Track
+  alias Neume.TrackConfig
   alias Neume.MixPipeline.Steps.{Export, Master, Mix, TrackGainPan}
   alias Oi.Flowgraph
+
+  @doc """
+  solo/mute 路由：决定哪些轨进入 Mix（也是 render 时要渲染的轨）。
+
+  规则（见 `design-2026-09-multitrack-runtime.md` §Solo）：
+
+  - 没有 solo 轨时，所有非 mute 轨进入 Mix；
+  - 存在 solo 轨时，只有 solo 且非 mute 的轨进入 Mix；
+  - 被排除的轨不渲染，可复用已有制品；solo/mute 变化只影响路由，
+    不使声学 phrase 缓存失效。
+
+  返回按 `track_id` 排序的 `{track_id, track}` 列表，保证图构建确定性。
+  """
+  @spec audible_tracks(%{Track.track_id() => Track.t()} | [{Track.track_id(), Track.t()}]) ::
+          [{Track.track_id(), Track.t()}]
+  def audible_tracks(tracks) do
+    list = tracks |> Enum.to_list() |> Enum.sort_by(fn {track_id, _track} -> track_id end)
+    solo? = Enum.any?(list, fn {_track_id, track} -> TrackConfig.mix(track).solo end)
+
+    Enum.filter(list, fn {_track_id, track} ->
+      mix = TrackConfig.mix(track)
+      not mix.mute and (not solo? or mix.solo)
+    end)
+  end
 
   @spec compile(keyword()) :: {:ok, Oi.Compiled.t()} | {:error, term()}
   def compile(opts \\ []) do

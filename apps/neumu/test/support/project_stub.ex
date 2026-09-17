@@ -22,7 +22,8 @@ defmodule Neumu.ProjectStub do
       tracks: %{},
       mix_pipeline: mix_pipeline,
       output_dir: "tmp/neumu-test",
-      open_opts: []
+      open_opts: [],
+      cache_stores: Neume.RenderGraph.new_cache_stores()
     }
   end
 

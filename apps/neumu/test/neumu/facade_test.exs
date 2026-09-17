@@ -66,7 +66,7 @@ defmodule Neumu.FacadeTest do
     lead = track(snapshot, "lead")
     assert lead.name == nil
     assert lead.voicebank == stock.signature
-    assert lead.mix == %{gain: 1.0, pan: 0.0, mute: false}
+    assert lead.mix == %{gain: 1.0, pan: 0.0, mute: false, solo: false}
     assert lead.globals == %{}
     assert lead.notes == []
 
@@ -139,7 +139,7 @@ defmodule Neumu.FacadeTest do
 
     assert {:ok, 2} = Neumu.update_mix(id, "lead", %{gain: 0.5, pan: -1.0})
     assert_received {:project_changed, ^id, 2}
-    assert track(snapshot!(id), "lead").mix == %{gain: 0.5, pan: -1.0, mute: false}
+    assert track(snapshot!(id), "lead").mix == %{gain: 0.5, pan: -1.0, mute: false, solo: false}
 
     assert {:ok, 3} = Neumu.update_globals(id, "lead", %{energy: 1.5})
     assert_received {:project_changed, ^id, 3}
@@ -274,7 +274,7 @@ defmodule Neumu.FacadeTest do
     assert {:ok, snapshot} = Neumu.snapshot(id)
     assert snapshot.history_pin == 4
     lead = track(snapshot, "lead")
-    assert lead.mix == %{gain: 0.5, pan: 0.0, mute: false}
+    assert lead.mix == %{gain: 0.5, pan: 0.0, mute: false, solo: false}
     assert lead.globals == %{breathiness: 1.2}
     assert [%{id: "n1", lyric: "la", start_tick: 0, end_tick: 480}] = lead.notes
 

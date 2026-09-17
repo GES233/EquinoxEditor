@@ -103,8 +103,16 @@ Stock + seed + 修改工艺版本」失效，编辑后只重推内容变化的�
 多轨使用 `Neume.MultiTrack`：整个工程只持有一个 Coconut Session/History，
 每条 Vocal track 只保留可重建的 `Neume.TrackRuntime`，独立解析声库、检查与
 渲染，随后进入 Neume-owned Oi 图 `TrackGainPan → Mix → Master → Export`。
-音符、pin、声库重绑定和 `mute/gain/pan` 都写入同一 History；多轨工程文件会
+音符、pin、声库重绑定和 `mute/gain/pan/solo` 都写入同一 History；多轨工程文件会
 一并保存、恢复该 History。任一轨 check 失败时不会执行 master 导出。
+
+渲染编排走 `Neume.RenderGraph`：每轨一个 render 节点（独立 cluster，经
+`Oi.Executor.TaskSup` 并行 fan-out）→ 按 arity 生成的 collect 节点 fan-in →
+混音四步；TrackGainPan/Mix/Master/Export 挂 orchid_stratum 整步缓存
+（per-MultiTrack ETS stores，生命周期随工程）。solo/mute 路由
+（`MixPipeline.audible_tracks/1`）在建图前完成：被排除轨不 check、不渲染；
+路由变化只改变 Mix 输入集合，不使声学 phrase 缓存失效。取消与结构化进度
+仍是 Oi 侧缺口，目前维持「关闭工程回收在途任务」语义。
 
 ## TODO
 
@@ -112,5 +120,9 @@ Stock + seed + 修改工艺版本」失效，编辑后只重推内容变化的�
   不做，三旋钮保持轨道级全局系数；未来重启时普通表现曲线可作为仅结构
   裁决的 patch，增量型 patch（preserve、相对旧值）走 output base
   （coconut `design-2026-08-orchid-intervention.md` §6.6），并与全局旋钮复合。
-- [ ] Oi 多轨并发调度、播放与导出管理。
+- [x] Oi 多轨并发调度——track 级 fan-out/fan-in 与 mix/master 节点缓存已接线
+  （`Neume.RenderGraph`，见上）；剩余：cooperative cancellation / execution
+  handle、结构化进度回调（需扩展 Oi）、check 并行化、GenStage 背压，
+  播放与导出管理仍归后续批次。
+- [ ] 播放与导出管理（Neumu application service 契约）。
 - [ ] 最小钢琴卷帘、音素边界编辑和播放 UI。

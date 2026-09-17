@@ -101,7 +101,8 @@ defmodule Neume.MultiTrackTest do
     assert TrackConfig.mix(Coconut.workspace(runtime.session).tracks["lead"]) == %{
              gain: 0.25,
              pan: -0.5,
-             mute: false
+             mute: false,
+             solo: false
            }
 
     assert {:ok, runtime} = MultiTrack.undo(runtime)
@@ -109,7 +110,8 @@ defmodule Neume.MultiTrackTest do
     assert TrackConfig.mix(Coconut.workspace(runtime.session).tracks["lead"]) == %{
              gain: 1.0,
              pan: 0.0,
-             mute: false
+             mute: false,
+             solo: false
            }
   end
 
@@ -213,7 +215,8 @@ defmodule Neume.MultiTrackTest do
     assert TrackConfig.mix(Coconut.workspace(loaded.session).tracks["backing"]) == %{
              gain: 1.0,
              pan: 0.0,
-             mute: false
+             mute: false,
+             solo: false
            }
 
     assert {:ok, loaded} = MultiTrack.undo(loaded)

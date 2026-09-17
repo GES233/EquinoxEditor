@@ -210,6 +210,16 @@ Neume.Editor
 - Neume-owned Oi 混音图（`Neume.MixPipeline`）：`TrackGainPan → Mix → Master →
   Export`，支持逐轨 mute/gain/pan、sample-rate 门禁、PCM16 master 限幅与立体声
   WAV 导出；mix 配置保存在 track extras，并经 Coconut History 更新。
+- 多轨渲染图 `Neume.RenderGraph`（2026-09-17，设计文档第 1 项首批）：每轨
+  一个 render 节点（独立 cluster，`Oi.Executor.TaskSup` stage 内并行
+  fan-out）→ 按 arity 生成的 collect 节点 fan-in（Oi 静态 DAG 单端口
+  只收一条入边）→ TrackGainPan/Mix/Master/Export；后四步挂
+  orchid_stratum 整步缓存（key 含轨制品 WAV 内容摘要，per-MultiTrack
+  ETS stores 随工程生命周期）。solo/mute 路由（`MixPipeline.audible_tracks/1`）
+  在建图前完成：被排除轨不 check 不渲染；solo 随 mix 进 `Track.extras`
+  与 History（`TrackConfig` 接受 legacy 三键 map 补 `solo: false`）。
+  失败聚合 `{:error, {:render_failed, entries}}`（entry 带 track_id）；
+  `Neume.RenderCache.put` 改临时文件 + rename 防并行同 key 写截断。
 - 分窗增量渲染：RestSplit3Beats 规则切窗（空档 < 3 拍粘连，≥ 3 拍切开、
   前 1 拍归前窗、后 2 拍归后窗、更长留死区）；窗口级 WAV 缓存
   （key 覆盖声库摘要、globals、窗内音符内容与 pins），编辑只失效内容变化
@@ -310,12 +320,16 @@ Neume.Editor
   真 DiffSinger 要求 Pure-FP CPU；演示 UI 仍使用 mock，暂无真实声库渲染/播放入口。
 - `apps/equinox_web`：11 项 Channel 测试、9 项 Playwright 浏览器
   场景通过；前端 `check` 无错误/警告、`build` 通过。umbrella 共
-  `673 passed, 11 excluded`（2026-09-17）；本批 Asaritsu 真声库集成测试
+  `685 passed, 11 excluded`（2026-09-17，含多轨渲染图首批 12 项）；本批
+  Asaritsu 真声库集成测试
   `10 passed`（含输出重放与邻居漂移）；Python `55 passed`。OpenVINO 真机未运行。
 - `mix compile --force --warnings-as-errors`：通过。
 - `mix dialyzer`：`Total errors: 0`。
 - `git diff --check`：通过。
-- `apps/neume` 核心测试：`174 passed`（含输出型 pin 与混合 repatch 的 channel 语义隔离；pin carrier 批次 A–E/E0 的
+- `apps/neume` 核心测试：`186 passed`（含多轨渲染图 12 项：solo/mute
+  路由矩阵、track fan-out 图结构、混音制品、失败聚合、stratum 缓存
+  命中/失效四类场景；测试支撑 `WavMockPipeline` 输出确定性正弦 WAV。
+  另含输出型 pin 与混合 repatch 的 channel 语义隔离；pin carrier 批次 A–E/E0 的
   survival matrix、lowering 契约与 fallback 规则、repatch/replace_pin
   语义、`Neume.Phonology.Ref` 派生/解析与漂移矩阵；逐项清单见各测试
   文件）；`apps/neume_opu_ds` 适配器测试：`46 passed, 8 excluded`
@@ -348,8 +362,18 @@ Neume.Editor
 - 同一 Vocal track 仍是单声部；同轨重叠音符会明确报错。
 - 当前只有 pitch 和 phoneme duration 两种生成参数编辑。
 - 分窗规则不含 slice_flag 手动覆盖（音符 metadata 覆盖未移植）。
-- Oi 尚未接管多轨 fan-out/fan-in 的并发、取消、solo 路由与 mix/master
-  节点缓存；当前图已声明混音步骤，但轨道调度仍是同步 facade。
+- 多轨渲染编排已交 Oi（`Neume.RenderGraph`，2026-09-17 首批）：每轨一个
+  render 节点独立 cluster、经 `Oi.Executor.TaskSup` 并行 fan-out，fan-in
+  走按 arity 生成的 collect 节点（Oi 静态 DAG 单端口只收一条入边，无法
+  直接多对一）；TrackGainPan/Mix/Master/Export 挂 orchid_stratum 整步
+  缓存（per-MultiTrack ETS stores，owner 为 `MultiTrack.open/2` 调用
+  进程，工程关闭即回收）。solo/mute 路由在建图前由
+  `MixPipeline.audible_tracks/1` 完成：被排除轨不 check、不渲染，路由
+  变化只改 Mix 输入集合、不使声学 phrase 缓存失效；solo 进
+  `Track.extras[:neume][:mix]`，随 History 持久化、可 undo。
+  仍缺：cooperative cancellation / execution handle、结构化进度回调
+  （需扩展 Oi，见设计文档"下一实现顺序"）、check 并行化、GenStage 背压
+  （orchid_stage 与 orchid 0.6.3 不兼容且不能插 `Oi.Executor`）。
 - PCM 热路径仍是纯 Elixir reference 实现，尚未引入 Rust NIF。
 - Neumu application service（`apps/neumu`）：工程按 `project_id` 注册、
   一工程一 `ProjectServer` 持有唯一 `Neume.MultiTrack`、渲染经
@@ -372,7 +396,10 @@ Neume.Editor
 详细职责决定见 [`apps/neume/docs/design-2026-09-multitrack-runtime.md`](apps/neume/docs/design-2026-09-multitrack-runtime.md)。
 
 1. 多轨并发/取消、solo 路由和 phrase/track/mix/master 缓存交给 Oi；Neume
-   只声明业务图、identity、veto 与 artifact 契约。
+   只声明业务图、identity、veto 与 artifact 契约。**首批已完成**（track
+   fan-out/fan-in、solo 路由、mix/master stratum 缓存，见"当前限制"），
+   剩余：Oi 侧 cooperative cancellation / execution handle 与结构化进度
+   回调、check 并行化、背压。
 2. 增加 `Neume.Audio` facade，以当前纯 Elixir 算法为 reference backend，
    引入 Rust NIF 承担 PCM 解码/增益/equal-power pan/混合/限幅等热路径。
 3. 在 Neumu application service 上补齐 playback/export 请求契约（编辑

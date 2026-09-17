@@ -63,7 +63,8 @@ defmodule Neume.MultiTrackNotePhonemesTest do
       tracks: runtimes,
       mix_pipeline: mix_pipeline,
       output_dir: "tmp/neume-test",
-      open_opts: []
+      open_opts: [],
+      cache_stores: Neume.RenderGraph.new_cache_stores()
     }
   end
 

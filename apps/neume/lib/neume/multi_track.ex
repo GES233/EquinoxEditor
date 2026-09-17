@@ -11,7 +11,7 @@ defmodule Neume.MultiTrack do
   alias Coconut.Pickle.File
   alias Coconut.Pickle.Track, as: PickleTrack
   alias Coconut.Render.Engine.Snapshot
-  alias Neume.{Editor, MixPipeline, TrackConfig, TrackRuntime}
+  alias Neume.{Editor, MixPipeline, RenderGraph, TrackConfig, TrackRuntime}
   alias Neume.Phonology.Ref
   alias Neume.Voicebank.{Entry, Registry}
 
@@ -22,7 +22,8 @@ defmodule Neume.MultiTrack do
     :tracks,
     :mix_pipeline,
     :output_dir,
-    :open_opts
+    :open_opts,
+    :cache_stores
   ]
   defstruct @enforce_keys
 
@@ -33,7 +34,8 @@ defmodule Neume.MultiTrack do
           tracks: %{Track.track_id() => TrackRuntime.t()},
           mix_pipeline: Oi.Compiled.t(),
           output_dir: Path.t(),
-          open_opts: keyword()
+          open_opts: keyword(),
+          cache_stores: map()
         }
 
   @spec open(Coconut.Project.t(), keyword()) :: {:ok, t()} | {:error, term()}
@@ -58,7 +60,8 @@ defmodule Neume.MultiTrack do
          tracks: tracks,
          mix_pipeline: mix_pipeline,
          output_dir: output_dir,
-         open_opts: open_opts
+         open_opts: open_opts,
+         cache_stores: RenderGraph.new_cache_stores()
        }}
     end
   end
@@ -645,10 +648,15 @@ defmodule Neume.MultiTrack do
   end
 
   @spec check(t()) :: {:ok, t(), map()} | {:error, {:check_failed, [map()]}}
-  def check(%__MODULE__{} = runtime) do
+  def check(%__MODULE__{} = runtime), do: check_tracks(runtime, Map.keys(runtime.tracks))
+
+  # 只检查（并将要渲染的）可听轨：被 solo/mute 排除的轨跳过 check 与 render，
+  # 其运行态保持原样（见 design-2026-09-multitrack-runtime.md §Solo）。
+  defp check_tracks(%__MODULE__{} = runtime, track_ids) do
     {tracks, reports, errors} =
-      Enum.reduce(runtime.tracks, {%{}, %{}, []}, fn {track_id, track_runtime},
-                                                     {tracks, reports, errors} ->
+      runtime.tracks
+      |> Map.take(track_ids)
+      |> Enum.reduce({%{}, %{}, []}, fn {track_id, track_runtime}, {tracks, reports, errors} ->
         with {:ok, editor} <- attach_editor(runtime, track_id),
              {:ok, editor, report} <- Editor.check(editor),
              {:ok, track_runtime} <- Editor.detach_runtime(editor) do
@@ -663,16 +671,33 @@ defmodule Neume.MultiTrack do
         end
       end)
 
-    runtime = %{runtime | tracks: tracks}
-    if errors == [], do: {:ok, runtime, reports}, else: {:error, {:check_failed, errors}}
+    if errors == [] do
+      {:ok, %{runtime | tracks: Map.merge(runtime.tracks, tracks)}, reports}
+    else
+      {:error, {:check_failed, errors}}
+    end
   end
 
+  @doc """
+  渲染整轨混音制品。
+
+  solo/mute 路由后只渲染可听轨（`MixPipeline.audible_tracks/1`），track 级
+  fan-out、mix/master 节点缓存与混音图执行交给 `Neume.RenderGraph`（Oi）。
+  """
   @spec render(t()) :: {:ok, t(), Neume.MixArtifact.t()} | {:error, term()}
   def render(%__MODULE__{} = runtime) do
-    with {:ok, runtime, _reports} <- check(runtime),
-         {:ok, tracks, artifacts} <- render_tracks(runtime),
-         {:ok, artifact} <- MixPipeline.run(runtime.mix_pipeline, artifacts) do
-      {:ok, %{runtime | tracks: tracks}, artifact}
+    with {:ok, project} <- Coconut.project(runtime.session),
+         audible <- MixPipeline.audible_tracks(project.workspace.tracks) do
+      render_audible(runtime, audible)
+    end
+  end
+
+  defp render_audible(_runtime, []), do: {:error, :no_audible_tracks}
+
+  defp render_audible(runtime, audible) do
+    with {:ok, runtime, _reports} <- check_tracks(runtime, Enum.map(audible, &elem(&1, 0))),
+         {:ok, runtime, artifact} <- RenderGraph.run(runtime, audible) do
+      {:ok, runtime, artifact}
     end
   end
 
@@ -808,25 +833,6 @@ defmodule Neume.MultiTrack do
         {:ok, tracks} -> {:ok, %{runtime | tracks: tracks}}
         {:error, _} = error -> error
       end
-    end
-  end
-
-  defp render_tracks(runtime) do
-    Enum.reduce_while(runtime.tracks, {:ok, %{}, []}, fn {track_id, _track_runtime},
-                                                         {:ok, tracks, artifacts} ->
-      with {:ok, editor} <- attach_editor(runtime, track_id),
-           {:ok, editor, artifact} <- Editor.render(editor),
-           {:ok, track_runtime} <- Editor.detach_runtime(editor),
-           {:ok, track} <- Workspace.fetch_track(Coconut.workspace(runtime.session), track_id) do
-        item = %{track_id: track_id, artifact: artifact, mix: TrackConfig.mix(track)}
-        {:cont, {:ok, Map.put(tracks, track_id, track_runtime), [item | artifacts]}}
-      else
-        {:error, reason} -> {:halt, {:error, {:track_render_failed, track_id, reason}}}
-      end
-    end)
-    |> case do
-      {:ok, tracks, artifacts} -> {:ok, tracks, Enum.reverse(artifacts)}
-      {:error, _} = error -> error
     end
   end
 end

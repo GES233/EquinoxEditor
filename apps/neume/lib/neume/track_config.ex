@@ -8,9 +8,9 @@ defmodule Neume.TrackConfig do
   alias Coconut.Edit.Track
 
   @namespace :neume
-  @default_mix %{gain: 1.0, pan: 0.0, mute: false}
+  @default_mix %{gain: 1.0, pan: 0.0, mute: false, solo: false}
 
-  @type mix :: %{gain: float(), pan: float(), mute: boolean()}
+  @type mix :: %{gain: float(), pan: float(), mute: boolean(), solo: boolean()}
 
   @spec voicebank(Track.t()) :: Coconut.Project.voicebank() | nil
   def voicebank(%Track{extras: extras}), do: get_in(extras, [@namespace, :voicebank])
@@ -46,10 +46,16 @@ defmodule Neume.TrackConfig do
   def put_mix(_track, attrs), do: {:error, {:invalid_mix, attrs}}
 
   @spec validate_mix(map()) :: :ok | {:error, term()}
-  def validate_mix(%{gain: gain, pan: pan, mute: mute})
+  def validate_mix(%{gain: gain, pan: pan, mute: mute, solo: solo})
       when is_number(gain) and gain >= 0 and is_number(pan) and pan >= -1 and pan <= 1 and
-             is_boolean(mute),
+             is_boolean(mute) and is_boolean(solo),
       do: :ok
+
+  # legacy 三键 map（旧档/旧调用）补 solo: false；显式带非法 solo 的不落入此条。
+  def validate_mix(%{gain: gain, pan: pan, mute: mute} = mix)
+      when is_number(gain) and gain >= 0 and is_number(pan) and pan >= -1 and pan <= 1 and
+             is_boolean(mute) and not is_map_key(mix, :solo),
+      do: validate_mix(Map.put(mix, :solo, false))
 
   def validate_mix(value), do: {:error, {:invalid_mix, value}}
 
@@ -63,6 +69,6 @@ defmodule Neume.TrackConfig do
   end
 
   defp normalize_mix(mix) do
-    %{gain: mix.gain * 1.0, pan: mix.pan * 1.0, mute: mix.mute}
+    %{gain: mix.gain * 1.0, pan: mix.pan * 1.0, mute: mix.mute, solo: Map.get(mix, :solo, false)}
   end
 end

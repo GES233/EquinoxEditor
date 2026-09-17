@@ -243,10 +243,20 @@ UI 不直接启动 Task、不直接调用 NIF、不把浏览器本地播放状�
 
 ## 下一实现顺序
 
-1. 为 Oi 定义/补齐可取消 fan-out/fan-in execution 与节点缓存；
+1. 为 Oi 定义/补齐可取消 fan-out/fan-in execution 与节点缓存。
+   **进展（2026-09-17，首批）**：不改 Oi 现有能力已接线——`Neume.RenderGraph`
+   把每轨 render 节点展开为独立 cluster 的并行 fan-out（`Oi.Executor.TaskSup`），
+   fan-in 经按 arity 生成的 collect 节点（Oi 静态 DAG 单端口只收一条入边）；
+   TrackGainPan/Mix/Master/Export 挂 orchid_stratum 整步缓存
+   （per-MultiTrack ETS stores，工程生命周期）；solo/mute 路由在建图前由
+   `MixPipeline.audible_tracks/1` 完成（solo 进 `Track.extras[:neume][:mix]`，
+   随 History 持久化）。**仍缺**（需扩展 Oi）：cooperative cancellation /
+   execution handle、结构化进度回调、check 并行化（同构小步）、GenStage 背压
+   （orchid_stage 与 orchid 0.6.3 不兼容且不能插 `Oi.Executor`，暂用
+   `:concurrency` 上限）。
 2. 将现有 TrackGainPan/Mix/Master 的纯 Elixir 实现保留为 reference backend，
    增加 `Neume.Audio` facade 和 Rust NIF backend；
-3. 由 Oi graph 实现 solo 路由和 mix/master cache；
+3. 由 Oi graph 实现 solo 路由和 mix/master cache；**（首批已落地，见第 1 条）**
 4. 补齐 playback/export 请求契约，在已有 Neume job/event 协议上建立 Neumu
    application service；
 5. 最后让 UI 只消费命令、查询和事件接口。

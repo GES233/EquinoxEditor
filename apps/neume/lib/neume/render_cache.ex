@@ -35,14 +35,32 @@ defmodule Neume.RenderCache do
     end
   end
 
-  @doc "把渲染产物 WAV 复制进缓存并写入元数据。"
+  @doc "把渲染产物 WAV 复制进缓存并写入元数据。先写临时文件再 rename，多轨并行渲染同 key 时不互相截断。"
   @spec put(Path.t(), String.t(), Path.t(), map()) :: {:ok, entry()} | {:error, term()}
   def put(dir, key, source_wav, meta) when is_map(meta) do
+    wav_tmp = tmp_path(dir, key, "wav")
+    meta_tmp = tmp_path(dir, key, "json")
+    wav_path = wav_path(dir, key)
+    meta_path = meta_path(dir, key)
+
     with :ok <- File.mkdir_p(dir),
-         :ok <- File.cp(source_wav, wav_path(dir, key)),
-         :ok <- File.write(meta_path(dir, key), Jason.encode!(Map.put(meta, :version, @version))) do
-      {:ok, %{path: wav_path(dir, key), meta: stringify(meta)}}
+         :ok <- File.cp(source_wav, wav_tmp),
+         :ok <- File.write(meta_tmp, Jason.encode!(Map.put(meta, :version, @version))),
+         :ok <- replace(wav_tmp, wav_path),
+         :ok <- replace(meta_tmp, meta_path) do
+      {:ok, %{path: wav_path, meta: stringify(meta)}}
     end
+  end
+
+  # Windows 上 rename 不覆盖已存在目标：先删后改，读取侧把短暂缺失当 miss。
+  # 目标不存在时 File.rm 返回 :enoent，属正常路径。
+  defp replace(tmp, target) do
+    _ = File.rm(target)
+    File.rename(tmp, target)
+  end
+
+  defp tmp_path(dir, key, ext) do
+    Path.join(dir, "#{key}.#{System.unique_integer([:positive])}.#{ext}.tmp")
   end
 
   defp wav_path(dir, key), do: Path.join(dir, "#{key}.wav")
