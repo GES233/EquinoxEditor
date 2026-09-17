@@ -29,7 +29,7 @@ defmodule Neume.MixProject do
     [
       {:coconut, in_umbrella: true},
       {:coconut_oi, in_umbrella: true},
-      {:oi, "~> 0.8"},
+      {:oi, "~> 0.9"},
       {:orchid_stratum, "~> 0.2"},
       {:jason, "~> 1.4"}
     ]

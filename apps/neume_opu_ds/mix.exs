@@ -27,7 +27,7 @@ defmodule NeumeOpuDs.MixProject do
     [
       {:neume, in_umbrella: true},
       {:coconut_oi, in_umbrella: true},
-      {:oi, "~> 0.8"},
+      {:oi, "~> 0.9"},
       {:jason, "~> 1.4"},
       {:yaml_elixir, "~> 2.12"}
     ]

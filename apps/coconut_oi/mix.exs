@@ -26,7 +26,7 @@ defmodule CoconutOi.MixProject do
   defp deps do
     [
       {:coconut, in_umbrella: true},
-      {:oi, "~> 0.8"},
+      {:oi, "~> 0.9"},
       {:orchid_intervention, "~> 0.2.0"}
     ]
   end
