@@ -99,6 +99,12 @@
   `artifact_ready`）。注入的 `:renderer` 收不到令牌，结果同样丢弃。
   未知 job `{:error, {:job_not_found, _}}`；终态（含已取消）
   `{:error, {:job_not_cancellable, job_id, status}}`
+- 渲染排队（2026-09-17，背压）：在途渲染数量受
+  `:neumu, :max_concurrent_renders`（默认 1）约束；超限的 job 停留
+  `:queued`（派发 `render_changed`，快照已在提交时物化），在途任务
+  结算后按提交顺序晋升 `:running`。取消的排队 job 不占槽位；取消的
+  在途 job 要等协作停止落地后才释放槽位。取消 job 用
+  `cancel_render/2`；排队期间可用 `render_job/2` 查询状态
 - `artifact/1` → `{:ok, artifact}`（含 WAV `path`、采样率、时长等）
 - `region_duration_sec/3` → `{:ok, float}`：`[start_tick, end_tick)` 在
   当前 tempo 阶梯下的物理秒数；空 tempo 轨回退 flat 120 BPM
@@ -106,8 +112,16 @@
 ## 事件（`Neumu.subscribe/1` 订阅，幂等）
 
 - `{:project_changed, project_id, history_pin}` — 落边一次发一次
-- `{:render_changed, job_id, status}` — `status` 为 `:running|:completed|:failed|:cancelled`
+- `{:render_changed, job_id, status}` — `status` 为
+  `:queued|:running|:completed|:failed|:cancelled`
 - `{:artifact_ready, job_id, artifact_id, source_pin}`
+- `{:render_progress, job_id, payload}`（2026-09-17）— 进度回报。
+  payload 由生产者自由定义（plain data），信封外无契约；当前生产者：
+  `Neume.RenderGraph` 轨级 `%{kind: :track, track_id, status:
+  :started|:finished|:failed}`，DiffSinger 管线乐句级 `%{kind:
+  :phrase, track_id, index, count, cache: :hit|:miss}`。只对 `:running`
+  的 job 转发；进度不是权威状态，丢失/乱序不影响一致性，UI 可随时
+  重查 job 状态校正。注入的 `:renderer` 不产生进度
 
 ## pin 族两阶段挂载与 stale_pin
 

@@ -685,8 +685,11 @@ defmodule Neumu do
   提交一次渲染。
 
   捕获当前 Coconut History cursor node id 作为 `source_pin` 创建
-  `Neume.RenderJob`，任务在 ProjectServer 之外执行。返回处于 `:running`
-  状态的权威 job。选项：
+  `Neume.RenderJob`，任务在 ProjectServer 之外执行。在途渲染数量受
+  `:neumu, :max_concurrent_renders`（默认 1）约束：有槽位时立即
+  `:running`，否则停留 `:queued`（快照已在提交时物化），在途任务
+  结算后按提交顺序晋升。返回权威 job（`:running` 或 `:queued`）。
+  选项：
 
   - `:renderer` — 覆盖本次渲染的渲染函数（测试注入用）；注入 renderer
     收不到取消令牌，`cancel_render/2` 后其迟到结果整体丢弃；

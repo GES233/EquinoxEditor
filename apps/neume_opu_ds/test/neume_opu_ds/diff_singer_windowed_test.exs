@@ -368,6 +368,44 @@ defmodule Neume.DiffSingerWindowedTest do
     assert Enum.count(drain_calls("render")) == 1
   end
 
+  @tag tmp_dir: true
+  test "进度回调：逐乐句上报 index/count 与缓存命中", %{tmp_dir: tmp_dir} do
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
+
+    assert {:ok, editor} =
+             Editor.new(
+               voicebank_path: voicebank,
+               voicebank_mode: :stock,
+               diffsinger_client: CountingClient,
+               diffsinger_client_config: %{test_pid: self()},
+               output_dir: Path.join(tmp_dir, "renders")
+             )
+
+    # 两个窗口：n1 一窗，空档 >= 3 拍切开，n2 一窗。
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "啊"})
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n2", "n1", {4800, 5280}, %{pitch: 64, lyric: "灿"})
+
+    test_pid = self()
+    progress = fn payload -> send(test_pid, {:progress, payload}) end
+
+    assert {:ok, editor, _artifact} = Editor.render(editor, progress: progress)
+
+    assert_received {:progress,
+                     %{kind: :phrase, track_id: "vocal", index: 1, count: 2, cache: :miss}}
+
+    assert_received {:progress,
+                     %{kind: :phrase, track_id: "vocal", index: 2, count: 2, cache: :miss}}
+
+    # 重渲全部命中缓存，进度照常上报（cache: :hit）。
+    assert {:ok, _editor, _artifact} = Editor.render(editor, progress: progress)
+
+    assert_received {:progress, %{kind: :phrase, index: 1, count: 2, cache: :hit}}
+    assert_received {:progress, %{kind: :phrase, index: 2, count: 2, cache: :hit}}
+  end
+
   defp drain_checked_phrases do
     receive do
       {:checked_phrase, count} -> [count | drain_checked_phrases()]

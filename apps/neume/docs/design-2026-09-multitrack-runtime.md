@@ -257,10 +257,14 @@ UI 不直接启动 Task、不直接调用 NIF、不把浏览器本地播放状�
    `TrackRender` 入口 + `Neume.Runtime.render_checked/6` 契约（
    `NeumeOpuDs.Pipeline` 逐乐句轮询），统一归一 `{:error, :render_cancelled}`；
    Neumu 侧 `cancel_render/2` 落 `RenderJob :cancelled` 并丢弃迟到结果。
-   **仍缺**（需扩展 Oi）：结构化进度回调、check 并行化（同构小步）、
-   GenStage 背压
-   （orchid_stage 与 orchid 0.6.3 不兼容且不能插 `Oi.Executor`，暂用
-   `:concurrency` 上限）。
+   结构化进度（2026-09-17，不改 Oi）：`:progress` 一元回调沿同一 opts 链
+   透传，`TrackRender` 报轨级、runtime 报乐句级，Neumu 转
+   `{:render_progress, job_id, payload}`（payload 自由定义）。背压
+   （2026-09-17）：job 级由 Neumu `ProjectServer` 排队承担
+   （`:neumu, :max_concurrent_renders`，默认 1）；评估过 GenStage 桥接
+   不采纳（事件流语义与有身份/可取消的 job 错配，且不减代码）。
+   **仍缺**：check 并行化（同构小步）；图内 executor 若需排队/优先级
+   可外挂 `Oi.Executor` 实现（`run/3` 单回调），无需 orchid_stage。
 2. 将现有 TrackGainPan/Mix/Master 的纯 Elixir 实现保留为 reference backend，
    增加 `Neume.Audio` facade 和 Rust NIF backend；
 3. 由 Oi graph 实现 solo 路由和 mix/master cache；**（首批已落地，见第 1 条）**

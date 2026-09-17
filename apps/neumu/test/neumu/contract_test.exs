@@ -122,10 +122,11 @@ defmodule Neumu.ContractTest do
              client.snapshot.tracks |> hd() |> Map.fetch!(:pins)
 
     # —— 试听 A/B：渲染挂载前（history_pin 4）与挂载后（history_pin 6） ——
+    # max_concurrent_renders 默认 1：job_b 排队，job_a 结算后晋升，顺序不变。
     assert {:ok, job_a} = Neumu.submit_render(id, history_pin: 4, renderer: renderer)
     assert {:ok, job_b} = Neumu.submit_render(id, history_pin: 6, renderer: renderer)
-    assert_receive {:artifact_ready, _, artifact_a, 4}
-    assert_receive {:artifact_ready, _, artifact_b, 6}
+    assert_receive {:artifact_ready, _, artifact_a, 4}, 500
+    assert_receive {:artifact_ready, _, artifact_b, 6}, 500
     assert job_a.source_pin == 4 and job_b.source_pin == 6
 
     # —— 改词 → 冲突占一等位置 → 一键 repatch ——

@@ -271,4 +271,33 @@ defmodule Neume.RenderGraphTest do
     # 令牌只随调用传递，不污染 runtime：不带令牌重渲照常出制品。
     assert {:ok, _runtime, %Neume.MixArtifact{}} = MultiTrack.render(runtime)
   end
+
+  # ---------- 进度 ----------
+
+  test "进度回调：TrackRender 上报轨级 started/finished" do
+    runtime =
+      mock_runtime(["lead", "harmony"])
+      |> insert_note("lead", "n1", %{pitch: 60, lyric: "la"})
+      |> insert_note("harmony", "h1", %{pitch: 55, lyric: "mi"})
+
+    test_pid = self()
+
+    assert {:ok, _runtime, %Neume.MixArtifact{}} =
+             MultiTrack.render(runtime,
+               progress: fn payload -> send(test_pid, {:progress, payload}) end
+             )
+
+    assert_received {:progress, %{kind: :track, track_id: "lead", status: :started}}
+    assert_received {:progress, %{kind: :track, track_id: "lead", status: :finished}}
+    assert_received {:progress, %{kind: :track, track_id: "harmony", status: :started}}
+    assert_received {:progress, %{kind: :track, track_id: "harmony", status: :finished}}
+  end
+
+  test "无进度回调时渲染照常（空操作）" do
+    runtime =
+      mock_runtime(["lead"])
+      |> insert_note("lead", "n1", %{pitch: 60, lyric: "la"})
+
+    assert {:ok, _runtime, %Neume.MixArtifact{}} = MultiTrack.render(runtime)
+  end
 end

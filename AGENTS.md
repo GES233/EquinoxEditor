@@ -169,20 +169,26 @@ Neume.Editor
 - 最小渲染任务/事件契约：`Neume.RenderJob` 是钉住工程 History node id 的纯值
   状态机（`queued -> running -> completed | failed | cancelled`，取消令牌
   等运行态由上层持有，不进入领域值），不持有进程、Oi handle
-  或调度策略；`Neume.Event` 只产生 `project_changed`、`render_changed` 和
-  `artifact_ready` 三种 identity tuple。制品内容留在权威存储中，事件只传
-  `artifact_id`，并沿用任务创建时的 `source_pin`。
+  或调度策略；`Neume.Event` 产生 `project_changed`、`render_changed`、
+  `artifact_ready` 三种 identity tuple，外加 2026-09-17 起的
+  `render_progress`（进度回报，payload 由生产者自由定义、仅要求
+  plain data；进度不是权威状态，丢失不影响一致性）。制品内容留在权威
+  存储中，状态事件只传 `artifact_id`，并沿用任务创建时的 `source_pin`。
 - Neumu 最小纵向闭环（`apps/neumu` OTP application service）：监督树含
   `Neumu.ProjectRegistry`（按 `project_id` 定位）、`Neumu.EventRegistry`
   （事件订阅）、`Neumu.RenderSupervisor`（`Task.Supervisor`）、
   `Neumu.ArtifactStore` 与 `Neumu.ProjectSupervisor`；`ProjectServer`
   一工程一进程、持有唯一 `Neume.MultiTrack` 值，渲染在 GenServer 外
   异步执行并回落 `RenderJob` 状态与 `artifact_id`；renderer 可注入，
-  生产默认走 `Neume.MultiTrack.render/1`。重复 `job_id` 返回
+  生产默认走 `Neume.MultiTrack.render/2`。重复 `job_id` 返回
   `{:error, {:job_already_exists, job_id}}`（在途/终态均不覆盖），未知
   job 返回 `{:error, {:job_not_found, job_id}}`；订阅幂等（同一进程
   重复订阅每个事件只投递一次）；关闭工程时在途渲染任务随
   `ProjectServer` 终止一并回收，不泄漏到应用级 `RenderSupervisor`。
+  渲染并发受 `:neumu, :max_concurrent_renders`（默认 1）约束：超限
+  job 停留 `:queued`（快照在提交时物化），在途任务结算后按提交顺序
+  晋升；取消的排队 job 不占槽位，取消的在途 job 等协作停止落地后才
+  释放槽位。
 - Neumu UI-facing backend facade（`Neumu` 模块）：`create_project` /
   `load_project` / `save_project` 复用 `Neume.MultiTrack` 与 Coconut
   Pickle 持久化（不另造文件格式）；`snapshot/1` 返回当前 History cursor
@@ -225,7 +231,11 @@ Neume.Editor
   `MultiTrack.render/2` 的 `:cancel_token` 选项透传——Oi stage 边界
   闸门 + `TrackRender` 入口检查 + `Neume.Runtime.render_checked/6`
   契约（`NeumeOpuDs.Pipeline` 逐乐句轮询，未实现 /6 的 runtime 跑完
-  不抢占）；取消统一归一为 `{:error, :render_cancelled}`。
+  不抢占）；取消统一归一为 `{:error, :render_cancelled}`。进度经
+  `MultiTrack.render/2` 的 `:progress` 一元回调透传（同一条 opts 链）：
+  `TrackRender` 上报轨级 started/finished/failed，
+  `NeumeOpuDs.Pipeline` 逐乐句上报 index/count/cache；payload 自由
+  定义，helper 为 `Neume.Runtime.report_progress/2`。
 - 分窗增量渲染：RestSplit3Beats 规则切窗（空档 < 3 拍粘连，≥ 3 拍切开、
   前 1 拍归前窗、后 2 拍归后窗、更长留死区）；窗口级 WAV 缓存
   （key 覆盖声库摘要、globals、窗内音符内容与 pins），编辑只失效内容变化
@@ -326,29 +336,31 @@ Neume.Editor
   真 DiffSinger 要求 Pure-FP CPU；演示 UI 仍使用 mock，暂无真实声库渲染/播放入口。
 - `apps/equinox_web`：11 项 Channel 测试、9 项 Playwright 浏览器
   场景通过；前端 `check` 无错误/警告、`build` 通过。umbrella 共
-  `692 passed, 11 excluded`（2026-09-17，含多轨渲染图首批与协作取消）；本批
+  `699 passed, 11 excluded`（2026-09-17，含多轨渲染图、协作取消、渲染
+  进度与排队背压）；本批
   Asaritsu 真声库集成测试
   `10 passed`（含输出重放与邻居漂移）；Python `55 passed`。OpenVINO 真机未运行。
 - `mix compile --force --warnings-as-errors`：通过。
 - `mix dialyzer`：`Total errors: 0`。
 - `git diff --check`：通过。
-- `apps/neume` 核心测试：`189 passed`（含多轨渲染图 13 项：solo/mute
+- `apps/neume` 核心测试：`191 passed`（含多轨渲染图 15 项：solo/mute
   路由矩阵、track fan-out 图结构、混音制品、失败聚合、stratum 缓存
-  命中/失效四类场景、协作取消归一 `:render_cancelled`；测试支撑
+  命中/失效四类场景、协作取消归一 `:render_cancelled`、轨级进度上报；测试支撑
   `WavMockPipeline` 输出确定性正弦 WAV。
   另含 `RenderJob` 取消状态机与事件形状；输出型 pin 与混合 repatch 的
   channel 语义隔离；pin carrier 批次 A–E/E0 的
   survival matrix、lowering 契约与 fallback 规则、repatch/replace_pin
   语义、`Neume.Phonology.Ref` 派生/解析与漂移矩阵；逐项清单见各测试
-  文件）；`apps/neume_opu_ds` 适配器测试：`47 passed, 10 excluded`
+  文件）；`apps/neume_opu_ds` 适配器测试：`48 passed, 10 excluded`
   （excluded 为真声库集成测试，含双 runtime lowering 契约、v2 duration
   ref 降下标与失配 loud 报错、ref 契约向量与字典级 phonology digest
   门禁）。
-- `apps/neumu` 的 `mix test`：`79 passed, 1 excluded`（工程/渲染/事件/
+- `apps/neumu` 的 `mix test`：`83 passed, 1 excluded`（工程/渲染/事件/
   制品生命周期，facade 编辑命令与 pin 族手势全 matrix、试听支撑、
   tempo 族、E0b 音素查询、渲染协作取消（落 `:cancelled`/迟到结果丢弃/
-  终态拒绝），contract_test 完整契约回路；逐项清单见各
-  测试文件）。
+  终态拒绝）、渲染排队背压（`:queued` 晋升/排队取消不占槽位/在途取消
+  延迟释放槽位）与默认渲染路径进度事件端到端透传，contract_test 完整
+  契约回路；逐项清单见各测试文件）。
 - `apps/neume_lab` 的 `mix test`：`9 passed`（Kino.Test 驱动面板全链
   路：状态同步、编辑事件桥、冲突四步流、按 history_pin 渲染试听、undo/redo、
   正弦渲染器 WAV 制品与空工程 `:no_notes` tagged error）。
@@ -380,11 +392,11 @@ Neume.Editor
   `MixPipeline.audible_tracks/1` 完成：被排除轨不 check、不渲染，路由
   变化只改 Mix 输入集合、不使声学 phrase 缓存失效；solo 进
   `Track.extras[:neume][:mix]`，随 History 持久化、可 undo。
-  仍缺：结构化进度回调（需扩展 Oi，见设计文档"下一实现顺序"）、
-  check 并行化、GenStage 背压
-  （orchid_stage 与 orchid 0.6.3 不兼容且不能插 `Oi.Executor`）。
-  cooperative cancellation 已由 oi 0.9 `Oi.CancelToken` 接入（见"已完成"
-  渲染图条目）。
+  cooperative cancellation（oi 0.9 `Oi.CancelToken`）与结构化进度
+  （`:progress` 回调链，payload 自由定义）已接入（见"已完成"渲染图
+  条目）；job 级背压由 Neumu 排队承担（不引入 GenStage：事件流语义
+  与有身份/可取消的 job 错配，且图内 `Oi.Executor` 契约可外挂实现，
+  无需 orchid_stage）。仍缺：check 并行化。
 - PCM 热路径仍是纯 Elixir reference 实现，尚未引入 Rust NIF。
 - Neumu application service（`apps/neumu`）：工程按 `project_id` 注册、
   一工程一 `ProjectServer` 持有唯一 `Neume.MultiTrack`、渲染经

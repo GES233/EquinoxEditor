@@ -2,8 +2,11 @@ defmodule Neume.Event do
   @moduledoc """
   Neume 向 application service 暴露的最小领域事件。
 
-  事件只携带用于重新查询权威状态的 identity，不携带工程快照、制品内容、
-  Orchid report 或 UI 展示数据。
+  状态类事件（`project_changed`/`render_changed`/`artifact_ready`）只携带
+  用于重新查询权威状态的 identity，不携带工程快照、制品内容、
+  Orchid report 或 UI 展示数据。唯一的例外是 `render_progress`：
+  进度不是权威状态（丢失不影响一致性，UI 可随时重查 job 状态），
+  其 payload 由生产者自由定义，仅要求 plain data。
   """
 
   alias Coconut.Edit.History
@@ -15,6 +18,7 @@ defmodule Neume.Event do
           {:project_changed, RenderJob.project_id(), History.node_id()}
           | {:render_changed, RenderJob.id(), RenderJob.status()}
           | {:artifact_ready, RenderJob.id(), artifact_id(), History.node_id()}
+          | {:render_progress, RenderJob.id(), term()}
 
   @doc "工程 History cursor 发生变化。"
   @spec project_changed(RenderJob.project_id(), History.node_id()) :: t()
@@ -40,4 +44,13 @@ defmodule Neume.Event do
     do: {:error, {:artifact_not_ready, status}}
 
   def artifact_ready(%RenderJob{}, nil), do: {:error, :invalid_artifact_id}
+
+  @doc """
+  渲染进度报告。payload 形状由生产者自由定义（必须是 plain data），
+  本契约只固定信封；当前生产者见 `Neume.RenderGraph`（轨级
+  started/finished/failed）与实现 `render_checked/6` 的 runtime
+  （乐句粒度）。
+  """
+  @spec render_progress(RenderJob.id(), term()) :: t()
+  def render_progress(job_id, payload), do: {:render_progress, job_id, payload}
 end

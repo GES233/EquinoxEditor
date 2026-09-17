@@ -313,7 +313,7 @@ defmodule NeumeOpuDs.Pipeline do
         ) ::
           {:ok, Neume.RenderArtifact.t()} | {:error, term()}
   def render_checked(%{} = state, %Snapshot{} = snapshot, checked, session_globals, track_id) do
-    run_render_checked(state, snapshot, checked, session_globals, track_id, nil)
+    run_render_checked(state, snapshot, checked, session_globals, track_id, nil, nil)
   end
 
   def render_checked(%{} = state, %Snapshot{} = snapshot, checked, session_globals, track_id, opts) do
@@ -323,16 +323,26 @@ defmodule NeumeOpuDs.Pipeline do
       checked,
       session_globals,
       track_id,
-      Keyword.get(opts, :cancel_token)
+      Keyword.get(opts, :cancel_token),
+      Keyword.get(opts, :progress)
     )
   end
 
-  defp run_render_checked(%{} = state, %Snapshot{} = snapshot, checked, session_globals, track_id, token) do
+  defp run_render_checked(
+         %{} = state,
+         %Snapshot{} = snapshot,
+         checked,
+         session_globals,
+         track_id,
+         token,
+         progress
+       ) do
     globals = effective_globals(state.globals, session_globals)
 
     with {:ok, view} <- fetch_vocal_view(snapshot, track_id),
          windows <- Enum.map(checked, fn {phrase, _analysis, _data} -> phrase end),
-         {:ok, results} <- render_checked_phrases(state, view, checked, globals, token) do
+         {:ok, results} <-
+           render_checked_phrases(state, view, checked, globals, token, progress, track_id) do
       assemble(state, windows, results)
     else
       {:error, reason} -> {:error, OrchidError.slim(reason)}
@@ -383,13 +393,32 @@ defmodule NeumeOpuDs.Pipeline do
 
   # 逐乐句渲染循环：每个乐句边界轮询协作取消令牌（在途乐句跑完），
   # 取消时以 {:error, :render_cancelled} 终止（经 OrchidError.slim 原样
-  # 透出）。
-  defp render_checked_phrases(state, view, checked, globals, token) do
-    Enum.reduce_while(checked, {:ok, []}, fn {phrase, _analysis, data}, {:ok, acc} ->
+  # 透出）；乐句完成后以自由 payload 上报进度（`Neume.Runtime.
+  # report_progress/2`，无回调为空操作）。
+  defp render_checked_phrases(state, view, checked, globals, token, progress, track_id) do
+    total = length(checked)
+
+    checked
+    |> Enum.with_index(1)
+    |> Enum.reduce_while({:ok, []}, fn {{phrase, _analysis, data}, index}, {:ok, acc} ->
       if cancel_requested?(token) do
         {:halt, {:error, :render_cancelled}}
       else
-        render_checked_phrase(state, view, phrase, data, acc, globals)
+        case render_checked_phrase(state, view, phrase, data, acc, globals) do
+          {:cont, {:ok, [value | _]} = tagged} ->
+            Neume.Runtime.report_progress(progress, %{
+              kind: :phrase,
+              track_id: track_id,
+              index: index,
+              count: total,
+              cache: Map.get(value, :cache)
+            })
+
+            {:cont, tagged}
+
+          {:halt, _} = halted ->
+            halted
+        end
       end
     end)
     |> case do

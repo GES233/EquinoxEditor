@@ -788,7 +788,9 @@ defmodule Neume.Editor do
   选项：`:cancel_token`（`Oi.CancelToken`）为协作取消信号。实现了
   `render_checked/6` 的 runtime 在乐句边界轮询并以
   `{:error, :render_cancelled}` 终止；未实现的 runtime 忽略该选项，
-  渲染跑完为止（不抢占）。
+  渲染跑完为止（不抢占）。`:progress` 为一元进度回调，payload 由
+  生产者自由定义；未实现 `render_checked/6` 的 runtime 不报乐句
+  粒度进度。
   """
   @spec render(t(), keyword()) :: {:ok, t(), Neume.RenderArtifact.t()} | {:error, term()}
   def render(%__MODULE__{} = editor, opts \\ []) do

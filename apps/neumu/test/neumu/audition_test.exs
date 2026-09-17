@@ -12,6 +12,31 @@ defmodule Neumu.AuditionTest do
   alias Neumu.ProjectStub
   alias Neumu.ProjectStub.PhonemesClient
 
+  defmodule RenderClient do
+    @moduledoc false
+    # PhonemesClient 的 probe 能力 + 最小 render 动作（确定性静音 WAV），
+    # 供默认渲染路径的端到端进度测试使用。
+    @behaviour NeumeOpuDs.Worker
+
+    @impl true
+    def call(%{action: "render", out_path: path, ph_dur: ph_dur}, _config) do
+      frames = Enum.sum(ph_dur)
+      samples = frames * 512
+      :ok = Neume.Wav.write(path, :binary.copy(<<0, 0>>, samples), 44_100)
+
+      {:ok,
+       %{
+         "path" => path,
+         "sample_rate" => 44_100,
+         "frames" => frames,
+         "samples" => samples,
+         "duration_sec" => samples / 44_100
+       }}
+    end
+
+    def call(payload, config), do: PhonemesClient.call(payload, config)
+  end
+
   # 默认工程：一条 fixture 声库的 "lead" 人声轨 + 一个双音素音符
   # （pin 0 = 空工程，pin 1 = 加轨，pin 2 = 插音符）。
   setup %{tmp_dir: tmp_dir} do
@@ -183,6 +208,45 @@ defmodule Neumu.AuditionTest do
 
     assert {:ok, jobs} = Neumu.list_render_jobs(id)
     assert length(jobs) == 2
+  end
+
+  test "默认渲染路径上报轨级与乐句级进度（自由 payload 原样透传）", %{tmp_dir: tmp_dir} do
+    {registry, stock} = ProjectStub.stock_registry(tmp_dir)
+    id = "project-#{System.unique_integer([:positive])}"
+
+    {:ok, _pid} = Neumu.create_project(id, ProjectStub.open_opts(registry, tmp_dir, RenderClient))
+
+    on_exit(fn ->
+      if Neumu.ProjectServer.whereis(id), do: Neumu.close_project(id)
+    end)
+
+    {:ok, 1} = Neumu.add_track(id, "lead", stock.id)
+
+    {:ok, 2} =
+      Neumu.insert_note(id, "lead", "n1", :head, {0, 480}, %{
+        pitch: 60,
+        lyric: "la",
+        phonemes: [["zh", "l"], ["zh", "a"]]
+      })
+
+    :ok = Neumu.subscribe(id)
+    assert {:ok, job} = Neumu.submit_render(id)
+    assert job.status == :running
+
+    assert_receive {:render_progress, job_id,
+                    %{kind: :track, track_id: "lead", status: :started}},
+                   500
+
+    assert job_id == job.id
+
+    assert_receive {:render_progress, ^job_id, %{kind: :phrase, track_id: "lead", index: 1}},
+                   500
+
+    assert_receive {:render_progress, ^job_id,
+                    %{kind: :track, track_id: "lead", status: :finished}},
+                   500
+
+    assert_receive {:artifact_ready, ^job_id, _artifact_id, 2}, 500
   end
 
   test "list_render_jobs 枚举 source_pin 与 artifact_id，失败任务带净化后的 error", %{

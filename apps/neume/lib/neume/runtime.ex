@@ -60,9 +60,10 @@ defmodule Neume.Runtime do
   @doc """
   携带调用级选项的 `render_checked`。`:cancel_token`（`Oi.CancelToken`）
   是协作取消信号：runtime 应在乐句/窗口边界轮询，取消时以
-  `{:error, :render_cancelled}` 终止；不抢占在途步骤。未实现本回调
-  的 runtime 不支持窗粒度取消，`Editor.render/2` 回退到无选项入口，
-  渲染跑完为止。
+  `{:error, :render_cancelled}` 终止，不抢占在途步骤。`:progress`
+  是一元进度回调，runtime 在乐句边界以自由 payload 上报。未实现
+  本回调的 runtime 不支持窗粒度取消与进度，`Editor.render/2` 回退
+  到无选项入口，渲染跑完为止。
   """
   @callback render_checked(state(), Snapshot.t(), list(), map(), term(), keyword()) ::
               {:ok, Neume.RenderArtifact.t()} | {:error, term()}
@@ -79,6 +80,18 @@ defmodule Neume.Runtime do
   """
   @callback lower_pins(state(), Snapshot.t(), [Neume.Pin.Resolved.t()], term()) ::
               {:ok, pins()} | {:error, term()}
+
+  @doc """
+  向渲染调用方报告进度（`render_checked/6` 的 `:progress` 一元回调，
+  payload 由生产者自由定义）；无回调时为空操作。
+  """
+  @spec report_progress((term() -> any()) | nil, term()) :: :ok
+  def report_progress(progress, payload) when is_function(progress, 1) do
+    progress.(payload)
+    :ok
+  end
+
+  def report_progress(_progress, _payload), do: :ok
 
   @optional_callbacks output_packets: 5,
                       render_checked: 5,

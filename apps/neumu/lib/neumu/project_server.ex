@@ -5,15 +5,22 @@ defmodule Neumu.ProjectServer do
   持有该工程唯一的 `Neume.MultiTrack` 值（`Coconut.Session` 保持纯值，
   不做 OTP 进程化）。渲染任务经 `Neumu.RenderSupervisor` 在 GenServer 之外
   执行，渲染期间本进程仍可响应查询；进程关闭时在途渲染任务一并终止，
-  不泄漏到应用级 `RenderSupervisor`。
+  不泄漏到应用级 `RenderSupervisor`。在途渲染数量受
+  `:neumu, :max_concurrent_renders`（默认 1）上限约束：超限的 job 停留
+  `:queued`（随 `pending` 快照等待），在途任务结算后按提交顺序晋升
+  启动；取消的排队 job 不占槽位，取消的在途 job 要等协作停止落地
+  （结果返回被丢弃）后才释放槽位。
 
-  公开事件严格只有三种 payload（见 `Neume.Event`），由订阅机制派发：
+  公开事件严格只有四种 payload（见 `Neume.Event`），由订阅机制派发：
 
   - `{:project_changed, project_id, history_pin}`：编辑命令实际产生
     History 边（含 undo/redo 移动 cursor）后派发一次；无变化的编辑
     （如无改动的 globals 合并）不派发。
   - `{:render_changed, job_id, status}`
   - `{:artifact_ready, job_id, artifact_id, source_pin}`
+  - `{:render_progress, job_id, payload}`：进度回报，payload 由生产者
+    自由定义；只对 `:running` 的 job 转发，迟到回报丢弃。进度不是
+    权威状态，丢失不影响一致性。
 
   所有编辑都经 `{:edit, command}` 在本进程内串行应用到唯一的
   `Neume.MultiTrack` 值上；命令集是封闭分派（见 `apply_edit/2`），
@@ -31,7 +38,9 @@ defmodule Neumu.ProjectServer do
           multi_track: Neume.MultiTrack.t(),
           jobs: %{RenderJob.id() => RenderJob.t()},
           artifacts: %{RenderJob.id() => Neumu.ArtifactStore.artifact_id()},
-          tasks: %{reference() => render_task()}
+          tasks: %{reference() => render_task()},
+          queue: [RenderJob.id()],
+          pending: %{RenderJob.id() => pending_render()}
         }
 
   @type render_task :: %{
@@ -41,13 +50,20 @@ defmodule Neumu.ProjectServer do
           cancel_token: Oi.CancelToken.t()
         }
 
+  # 排队等待槽位的渲染：提交时已钉住 source_pin 并物化渲染目标，
+  # 晋升时按原样启动。
+  @type pending_render :: %{
+          snapshot: Neume.MultiTrack.t(),
+          renderer: (Neume.MultiTrack.t() -> term()) | nil
+        }
+
   # --- 进程生命周期 ---
 
   @doc """
   在 `Neumu.ProjectSupervisor` 下启动一个工程进程。
 
   依赖应用级命名进程 `Neumu.RenderSupervisor` / `Neumu.ArtifactStore` /
-  `Neumu.EventRegistry`；渲染默认走 `Neume.MultiTrack.render/1` 的生产
+  `Neumu.EventRegistry`；渲染默认走 `Neume.MultiTrack.render/2` 的生产
   路径（单次渲染可经 `Neumu.submit_render/2` 的 `:renderer` 覆盖）。
   """
   @spec start_link(keyword()) :: GenServer.on_start()
@@ -92,7 +108,9 @@ defmodule Neumu.ProjectServer do
            multi_track: multi_track,
            jobs: %{},
            artifacts: %{},
-           tasks: %{}
+           tasks: %{},
+           queue: [],
+           pending: %{}
          }}
 
       other ->
@@ -110,27 +128,26 @@ defmodule Neumu.ProjectServer do
     else
       with {:ok, source_pin, render_target} <-
              render_target(state.multi_track, Keyword.get(opts, :history_pin)),
-           {:ok, job} <- RenderJob.new(job_id, state.project_id, source_pin),
-           {:ok, job} <- RenderJob.start(job) do
-        cancel_token = Oi.CancelToken.new()
-        task_fun = render_task_fun(Keyword.get(opts, :renderer), render_target, cancel_token)
+           {:ok, job} <- RenderJob.new(job_id, state.project_id, source_pin) do
+        renderer = Keyword.get(opts, :renderer)
 
-        task = Task.Supervisor.async_nolink(Neumu.RenderSupervisor, task_fun)
+        if running_full?(state) do
+          # 背压：在途渲染达到上限时停留 :queued（快照已在提交时物化），
+          # 等待在途任务结算后按提交顺序晋升。
+          state = %{
+            state
+            | jobs: Map.put(state.jobs, job_id, job),
+              queue: state.queue ++ [job_id],
+              pending:
+                Map.put(state.pending, job_id, %{snapshot: render_target, renderer: renderer})
+          }
 
-        state = %{
-          state
-          | jobs: Map.put(state.jobs, job_id, job),
-            tasks:
-              Map.put(state.tasks, task.ref, %{
-                job_id: job_id,
-                snapshot: render_target,
-                pid: task.pid,
-                cancel_token: cancel_token
-              })
-        }
-
-        broadcast(state, Event.render_changed(job))
-        {:reply, {:ok, job}, state}
+          broadcast(state, Event.render_changed(job))
+          {:reply, {:ok, job}, state}
+        else
+          {:ok, state, job} = start_render(state, job, render_target, renderer)
+          {:reply, {:ok, job}, state}
+        end
       else
         {:error, _} = error -> {:reply, error, state}
       end
@@ -139,12 +156,20 @@ defmodule Neumu.ProjectServer do
 
   # 协作取消：job 立即落 :cancelled 并派发 render_changed；默认渲染路径
   # 的令牌随任务创建、经 MultiTrack.render/2 透传到渲染图。迟到结果在
-  # settle_render 整体丢弃（不入 ArtifactStore、不再派发事件）。
+  # settle_render 整体丢弃（不入 ArtifactStore、不再派发事件）。排队中
+  # 的 job 没有任务可停，直接从队列移除。
   def handle_call({:cancel_render, job_id}, _from, state) do
     with {:ok, job} <- Map.fetch(state.jobs, job_id),
          {:ok, job} <- RenderJob.cancel(job) do
       cancel_task_token(state.tasks, job_id)
-      state = %{state | jobs: Map.put(state.jobs, job_id, job)}
+
+      state = %{
+        state
+        | jobs: Map.put(state.jobs, job_id, job),
+          queue: List.delete(state.queue, job_id),
+          pending: Map.delete(state.pending, job_id)
+      }
+
       broadcast(state, Event.render_changed(job))
       {:reply, {:ok, job}, state}
     else
@@ -293,7 +318,11 @@ defmodule Neumu.ProjectServer do
       {%{job_id: job_id, snapshot: snapshot}, tasks} ->
         Process.demonitor(ref, [:flush])
         state = %{state | tasks: tasks}
-        {:noreply, settle_render(state, job_id, snapshot, result)}
+
+        {:noreply,
+         state
+         |> settle_render(job_id, snapshot, result)
+         |> maybe_promote()}
     end
   end
 
@@ -305,8 +334,22 @@ defmodule Neumu.ProjectServer do
 
       {%{job_id: job_id}, tasks} ->
         state = %{state | tasks: tasks}
-        {:noreply, fail_render(state, job_id, {:render_crashed, reason})}
+
+        {:noreply,
+         state
+         |> fail_render(job_id, {:render_crashed, reason})
+         |> maybe_promote()}
     end
+  end
+
+  # 渲染进度回报：只对仍在运行的 job 转发；迟到回报（已取消/终态）丢弃。
+  def handle_info({:render_progress_report, job_id, payload}, state) do
+    case Map.fetch(state.jobs, job_id) do
+      {:ok, %{status: :running}} -> broadcast(state, Event.render_progress(job_id, payload))
+      _other -> :ok
+    end
+
+    {:noreply, state}
   end
 
   def handle_info(_message, state), do: {:noreply, state}
@@ -564,19 +607,20 @@ defmodule Neumu.ProjectServer do
     Neume.Voicebank.Registry.fetch(multi_track.voicebank_registry, voicebank_id)
   end
 
-  # 生产默认渲染路径：现有 Neume.MultiTrack render API；取消令牌经
-  # 渲染选项透传到渲染图（Oi stage 闸门 + 乐句轮询）。
-  defp render_task_fun(nil, render_target, cancel_token) do
-    fn -> default_renderer(render_target, cancel_token) end
+  # 生产默认渲染路径：现有 Neume.MultiTrack render API；取消令牌与进度
+  # 回调经渲染选项透传到渲染图（Oi stage 闸门 + 乐句轮询/上报）。
+  defp render_task_fun(nil, render_target, cancel_token, progress) do
+    fn -> default_renderer(render_target, cancel_token, progress) end
   end
 
-  # 注入 renderer 保持一元契约，收不到令牌；取消后其返回结果整体丢弃。
-  defp render_task_fun(renderer, render_target, _cancel_token) do
+  # 注入 renderer 保持一元契约，收不到令牌与进度回调；取消后其返回
+  # 结果整体丢弃。
+  defp render_task_fun(renderer, render_target, _cancel_token, _progress) do
     fn -> renderer.(render_target) end
   end
 
-  defp default_renderer(%Neume.MultiTrack{} = multi_track, cancel_token) do
-    case Neume.MultiTrack.render(multi_track, cancel_token: cancel_token) do
+  defp default_renderer(%Neume.MultiTrack{} = multi_track, cancel_token, progress) do
+    case Neume.MultiTrack.render(multi_track, cancel_token: cancel_token, progress: progress) do
       {:ok, refreshed, artifact} -> {:ok, refreshed, artifact}
       {:error, _} = error -> error
     end
@@ -587,6 +631,59 @@ defmodule Neumu.ProjectServer do
       {_ref, %{job_id: ^job_id, cancel_token: token}} -> Oi.CancelToken.cancel(token)
       {_ref, _other} -> :ok
     end)
+  end
+
+  # --- 渲染排队（背压） ---
+
+  # 启动一个渲染任务：创建取消令牌与进度回报通道（send 回本进程），
+  # 派生任务并广播 :running。
+  defp start_render(state, job, render_target, renderer) do
+    {:ok, job} = RenderJob.start(job)
+    cancel_token = Oi.CancelToken.new()
+    server = self()
+    progress = fn payload -> send(server, {:render_progress_report, job.id, payload}) end
+    task_fun = render_task_fun(renderer, render_target, cancel_token, progress)
+
+    task = Task.Supervisor.async_nolink(Neumu.RenderSupervisor, task_fun)
+
+    state = %{
+      state
+      | jobs: Map.put(state.jobs, job.id, job),
+        tasks:
+          Map.put(state.tasks, task.ref, %{
+            job_id: job.id,
+            snapshot: render_target,
+            pid: task.pid,
+            cancel_token: cancel_token
+          })
+    }
+
+    broadcast(state, Event.render_changed(job))
+    {:ok, state, job}
+  end
+
+  # 有空位时按提交顺序晋升队首 job。取消的在途任务要等协作停止落地
+  # （任务结果返回）才释放槽位，晋升只在结算路径触发。
+  defp maybe_promote(state) do
+    case {running_full?(state), state.queue} do
+      {false, [job_id | rest]} ->
+        {%{snapshot: snapshot, renderer: renderer}, pending} = Map.pop(state.pending, job_id)
+        job = Map.fetch!(state.jobs, job_id)
+
+        {:ok, state, _job} =
+          start_render(%{state | queue: rest, pending: pending}, job, snapshot, renderer)
+
+        maybe_promote(state)
+
+      _other ->
+        state
+    end
+  end
+
+  defp running_full?(state), do: map_size(state.tasks) >= max_concurrent_renders()
+
+  defp max_concurrent_renders do
+    Application.get_env(:neumu, :max_concurrent_renders, 1)
   end
 
   defp new_job_id, do: System.unique_integer([:positive, :monotonic])

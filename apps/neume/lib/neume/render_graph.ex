@@ -23,8 +23,12 @@ defmodule Neume.RenderGraph do
     Oi dispatch（stage 边界闸门）与各轨渲染请求（`TrackRender` 入口
     检查 + `Editor.render/2` 透传给实现 `render_checked/6` 的 runtime
     做乐句粒度轮询）。取消统一归一为 `{:error, :render_cancelled}`；
-    不抢占在途步骤。结构化进度仍是 Oi 侧缺口（见设计文档"下一实现
-    顺序"），本图不自建第二执行器。
+    不抢占在途步骤。
+  - 进度：`run/3` 的 `:progress` 一元回调随请求透传。`TrackRender`
+    上报轨级 `%{kind: :track, track_id: _, status: :started | :finished
+    | :failed}`；乐句粒度由 runtime 自报（`render_checked/6` 契约）。
+    payload 形状是生产者自由约定，不进 `Neume.Event` 信封以外的契约。
+    本图不自建第二执行器。
   """
 
   alias Coconut.Edit.{Track, Workspace}
@@ -50,25 +54,41 @@ defmodule Neume.RenderGraph do
           track_id: track_id
         } = req ->
           token = Map.get(req, :cancel_token)
+          progress = Map.get(req, :progress)
 
           if Neume.RenderGraph.cancel_requested?(token) do
             {:error, {:track_render_failed, track_id, :render_cancelled}}
           else
-            with {:ok, editor} <- Editor.attach_runtime(track_runtime, session, registry),
-                 {:ok, editor, artifact} <- Editor.render(editor, render_opts(token)),
-                 {:ok, track_runtime} <- Editor.detach_runtime(editor),
-                 {:ok, track} <- Workspace.fetch_track(Coconut.workspace(session), track_id) do
-              ok(%{
-                track_id: track_id,
-                artifact: artifact,
-                track_runtime: track_runtime,
-                mix: TrackConfig.mix(track),
-                # 每次渲染的制品路径都是新文件，内容摘要才是稳定的缓存 key 成分。
-                wav_digest: wav_digest(artifact.path)
-              })
-            else
-              {:error, reason} -> {:error, {:track_render_failed, track_id, reason}}
-            end
+            Neume.Runtime.report_progress(progress, %{
+              kind: :track,
+              track_id: track_id,
+              status: :started
+            })
+
+            result =
+              with {:ok, editor} <- Editor.attach_runtime(track_runtime, session, registry),
+                   {:ok, editor, artifact} <- Editor.render(editor, render_opts(token, progress)),
+                   {:ok, track_runtime} <- Editor.detach_runtime(editor),
+                   {:ok, track} <- Workspace.fetch_track(Coconut.workspace(session), track_id) do
+                ok(%{
+                  track_id: track_id,
+                  artifact: artifact,
+                  track_runtime: track_runtime,
+                  mix: TrackConfig.mix(track),
+                  # 每次渲染的制品路径都是新文件，内容摘要才是稳定的缓存 key 成分。
+                  wav_digest: wav_digest(artifact.path)
+                })
+              else
+                {:error, reason} -> {:error, {:track_render_failed, track_id, reason}}
+              end
+
+            Neume.Runtime.report_progress(progress, %{
+              kind: :track,
+              track_id: track_id,
+              status: track_progress_status(result)
+            })
+
+            result
           end
 
         other ->
@@ -76,8 +96,13 @@ defmodule Neume.RenderGraph do
       end
     end
 
-    defp render_opts(nil), do: []
-    defp render_opts(token), do: [cancel_token: token]
+    defp render_opts(token, progress) do
+      [cancel_token: token, progress: progress]
+      |> Enum.reject(fn {_key, value} -> is_nil(value) end)
+    end
+
+    defp track_progress_status({:ok, _}), do: :finished
+    defp track_progress_status({:error, _}), do: :failed
 
     defp wav_digest(path) do
       case File.read(path) do
@@ -200,7 +225,7 @@ defmodule Neume.RenderGraph do
           {:ok, MultiTrack.t(), Neume.MixArtifact.t()} | {:error, term()}
   def run(%MultiTrack{} = runtime, audible, opts \\ []) do
     with {:ok, compiled} <- build(audible, output_dir: runtime.output_dir),
-         data <- build_data(runtime, audible, Keyword.get(opts, :cancel_token)),
+         data <- build_data(runtime, audible, opts),
          {:ok, sup} <- Task.Supervisor.start_link() do
       try do
         execute_and_collect(runtime, compiled, data, audible, sup, opts)
@@ -228,7 +253,10 @@ defmodule Neume.RenderGraph do
     end)
   end
 
-  defp build_data(runtime, audible, cancel_token) do
+  defp build_data(runtime, audible, opts) do
+    cancel_token = Keyword.get(opts, :cancel_token)
+    progress = Keyword.get(opts, :progress)
+
     Map.new(audible, fn {track_id, _track} ->
       request = %{
         session: runtime.session,
@@ -239,6 +267,8 @@ defmodule Neume.RenderGraph do
 
       request =
         if cancel_token, do: Map.put(request, :cancel_token, cancel_token), else: request
+
+      request = if progress, do: Map.put(request, :progress, progress), else: request
 
       {render_node(track_id), %{request: request}}
     end)

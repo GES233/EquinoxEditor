@@ -239,6 +239,80 @@ defmodule Neumu.ProjectServerTest do
     send(render_pid, :release_render)
   end
 
+  # ---------- 排队（背压） ----------
+
+  test "超出在途上限的渲染排队，结算后按提交顺序晋升", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+
+    assert {:ok, job_a} =
+             Neumu.submit_render(id, renderer: blocking_renderer(self()))
+
+    assert_receive {:render_started, pid_a}, 500
+    assert_receive {:render_changed, _, :running}, 500
+
+    # 默认上限 1：job_b 停留 :queued，不启动任务。
+    assert {:ok, job_b} =
+             Neumu.submit_render(id, renderer: blocking_renderer(self()))
+
+    assert job_b.status == :queued
+    assert_receive {:render_changed, job_b_id, :queued}, 500
+    assert job_b_id == job_b.id
+    refute_received {:render_started, _}
+
+    # job_a 结算后 job_b 晋升启动。
+    send(pid_a, :release_render)
+    assert_receive {:render_started, pid_b}, 500
+    assert pid_b != pid_a
+    assert_receive {:render_changed, ^job_b_id, :running}, 500
+
+    send(pid_b, :release_render)
+    assert {:ok, %{status: :completed}} = await_status(id, job_a.id, :completed)
+    assert {:ok, %{status: :completed}} = await_status(id, job_b.id, :completed)
+  end
+
+  test "取消排队中的 job：不占槽位、不晋升", %{project_id: id} do
+    assert {:ok, job_a} = Neumu.submit_render(id, renderer: blocking_renderer(self()))
+    assert_receive {:render_started, pid_a}, 500
+
+    assert {:ok, job_b} = Neumu.submit_render(id, renderer: blocking_renderer(self()))
+    assert job_b.status == :queued
+
+    assert {:ok, %{status: :cancelled}} = Neumu.cancel_render(id, job_b.id)
+
+    # job_a 结算后队列已空，不再有任务启动。
+    send(pid_a, :release_render)
+    assert {:ok, %{status: :completed}} = await_status(id, job_a.id, :completed)
+    refute_received {:render_started, _}
+
+    # 槽位空闲：新渲染立即启动。
+    assert {:ok, job_c} = Neumu.submit_render(id, renderer: blocking_renderer(self()))
+    assert job_c.status == :running
+    assert_receive {:render_started, pid_c}, 500
+    send(pid_c, :release_render)
+  end
+
+  test "取消在途 job 不立即释放槽位：协作停止落地后才晋升", %{project_id: id} do
+    assert {:ok, job_a} = Neumu.submit_render(id, renderer: blocking_renderer(self()))
+    assert_receive {:render_started, pid_a}, 500
+
+    assert {:ok, job_b} = Neumu.submit_render(id, renderer: blocking_renderer(self()))
+    assert job_b.status == :queued
+
+    # job_a 立即落 :cancelled，但其任务仍在跑（协作取消），槽位未释放。
+    assert {:ok, %{status: :cancelled}} = Neumu.cancel_render(id, job_a.id)
+    refute_received {:render_started, _}
+    assert {:ok, %{status: :queued}} = Neumu.render_job(id, job_b.id)
+
+    # 在途任务落地（结果被丢弃）后，job_b 晋升。
+    send(pid_a, :release_render)
+    assert_receive {:render_started, pid_b}, 500
+    assert {:ok, %{status: :running}} = Neumu.render_job(id, job_b.id)
+
+    send(pid_b, :release_render)
+    assert {:ok, %{status: :completed}} = await_status(id, job_b.id, :completed)
+    assert {:ok, %{status: :cancelled, artifact: nil}} = Neumu.render_job(id, job_a.id)
+  end
+
   test "重复订阅幂等：每个事件只投递一次", %{project_id: id} do
     :ok = Neumu.subscribe(id)
     :ok = Neumu.subscribe(id)
