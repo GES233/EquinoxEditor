@@ -2,7 +2,7 @@
 
 ## Project Status
 
-Equinox is the singing-synthesis editor (this Mix umbrella). **Neume** names the editing paradigm — the Tamale/Coconut edit model (History, pin interventions, check/repatch discipline) — and its Elixir implementation: the kernel apps `coconut`, `coconut_oi`, `neume`, `neumu`. Concrete synthesis runtimes live in separate adapter apps such as `neume_opu_ds`. The deliverable is the paradigm itself plus its technical reports/videos; the editor is its host. `apps/neume_lab` is development tooling (Livebook bench), not the product UI. There is no active Phoenix/Svelte UI shell in this branch.
+Equinox is the singing-synthesis editor (this Mix umbrella). **Neume** names the editing paradigm — the Tamale/Coconut edit model (History, pin interventions, check/repatch discipline) — and its Elixir implementation: the kernel apps `coconut`, `coconut_oi`, `neume`, `neumu`. Concrete synthesis runtimes live in separate adapter apps such as `neume_opu_ds`. The deliverable is the paradigm itself plus its technical reports/videos; the editor is its host. `apps/neume_lab` is development tooling (Livebook bench), not the product UI. `apps/equinox_web` is the first Phoenix/Svelte UI milestone: a local single-note workspace over the real Neumu facade, with an explicitly labelled mock runtime.
 
 The source of truth for implementation status is the **Neume Implementation Status** section at the end of this file (migrated from the retired `apps/neume/STATUS.md`).
 
@@ -17,6 +17,7 @@ The source of truth for implementation status is the **Neume Implementation Stat
 - `apps/neumu/` — OTP application service over Neume: per-project `ProjectServer` processes (one `Neume.MultiTrack` value each), async render via `Task.Supervisor`, runtime `ArtifactStore`, and the three small event shapes. No playback device, cancellation, persistence, or UI.
 - `apps/neume_lab/` — Livebook/Kino 实验台（开发工具，非产品 UI）。`Kino.JS.Live` 面板验证 Neumu facade 契约闭环（编辑/冲突/repatch/按 history_pin 渲染/试听），自带 fixture 声库、假 DiffSinger client 与正弦演示渲染器。notebook 在 `apps/neume_lab/notebooks/lab.livemd`，以 Attached Node 方式附着到 umbrella 节点运行。
 - `config/` — shared umbrella configuration.
+- `apps/equinox_web/` — 本机 Phoenix Channel / Svelte 5 UI 原型。首批只有单音符编辑、声库选择和真实 History 接线；组件样例与启动方式见其 README。默认不监听端口，显式设置 `EQUINOX_WEB_SERVER=1` 才启动演示。
 
 The repository must build without sibling Coconut or CoconutOi checkouts. Tamale, Oi, and Orchid packages remain external dependencies resolved by Mix.
 
@@ -300,6 +301,10 @@ Neume.Editor
 
 ### 验证基线
 
+- `apps/equinox_web` 首个里程碑：5 项 Channel 测试、4 项 Playwright 浏览器
+  场景通过；前端 `check` 无错误/警告、`build` 通过。umbrella 共
+  `660 passed, 9 excluded`（2026-09-17）；用户随后运行
+  `mix test --only integration`，适配器集成测试 `8 passed`，OpenVINO 仍未运行。
 - `mix compile --force --warnings-as-errors`：通过。
 - `mix dialyzer`：`Total errors: 0`。
 - `git diff --check`：通过。
@@ -345,7 +350,8 @@ Neume.Editor
   UI-facing facade 已就位（见上）。仍无播放设备适配或渲染取消；交互
   界面目前只有 `apps/neume_lab` 的 Livebook 实验台（`Kino.JS.Live`
   面板 + fixture 声库/假 client/正弦演示渲染，notebook 需 Attached
-  Node 运行），无产品级 UI。
+  Node 运行）；另有 `apps/equinox_web` 首个单音符 UI 原型，已接真实
+  facade 编辑/撤销/声库绑定，但无保存、干预编辑、合成与播放 UI。
 
 ### 声库处置
 

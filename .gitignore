@@ -34,7 +34,9 @@ equinox*.tar
 # 如果使用 Node.js/npm，需要忽略这些。
 npm-debug.log
 node_modules/
-/ui_shell/assets/node_modules/
+/apps/equinox_web/priv/static/
+/apps/equinox_web/assets/test-results/
+/apps/equinox_web/assets/playwright-report/
 
 # Python 相关
 *.pyc

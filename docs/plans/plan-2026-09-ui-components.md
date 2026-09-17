@@ -1,7 +1,8 @@
 # 草案：UI 组件清单与消息契约（2026-09）
 
 > 状态：**草案，评审中**。本文只定"有什么组件、每个组件说什么话"，不定
-> 宿主（LiveView hook 还是 SPA）与视觉设计。
+> 完整视觉设计。2026-09-17 已选 Svelte + TypeScript / Phoenix Channel，
+> 第一个单音符里程碑落在 `apps/equinox_web`；运行与边界见其 README。
 >
 > 前置阅读：`apps/neumu/docs/facade-protocol.md`（facade 契约，本文所有
 > 数据形状的唯一真相）、根 `CONTEXT.md`（术语正名表）。
@@ -85,6 +86,18 @@ C7 显示时由宿主按需查询；`project_changed` 后失效并重查，回�
 
 1. cursor 跳转手势是否进下一批 facade 手势计划
    （`apps/neume/docs/plan-2026-09-ui-facade-gestures.md`）。
-2. 宿主选型（LiveView + JS hook vs SPA + Channel）：组件原型可先行，
-   事件桥与制品播放接入在宿主选定后落实。
-3. 组件实现技术（canvas vs SVG）在 C1 原型阶段定。
+2. 第一个里程碑采用 Svelte + TypeScript / Phoenix Channel；事件桥已接通，
+   制品播放接入仍待施工。
+3. C1 原型采用 SVG；更大工程规模的性能验证与 Canvas 取舍留待后续。
+
+## 首个里程碑（2026-09-17）
+
+已接线：工作区骨架、单音符横向拖动与歌词/音高表单、撤销/重做、声库
+选择器、组件状态样例页、真实 Neumu 提交与快照刷新、断线重连。
+演示条目使用内置 mock runtime，服务重启后重新起步；无声学推理和保存 UI。
+外围声库组件交给 Kimi Code，主代理统一数据契约、宿主、卷帘与集成验收。
+
+下一批进入 C1 干预之前需明确两个数据缺口：`note_phonemes` 只有音素和
+stable ref，没有预测时长；真实比例音素条及模型参考音高曲线需要带来源
+版本的分析投影。多音符原子编辑也没有通用 facade 入口，不能逐个提交来
+冒充一次可撤销的批量手势。
