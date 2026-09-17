@@ -239,7 +239,9 @@ defmodule Neume.PitchCurve do
   defp project(%{adapter: :bezier}, _note, _snapshot, _origin_sec, frame_rate),
     do: {:error, {:invalid_frame_rate, frame_rate}}
 
-  defp validate_inside(payload, note) do
+  @doc "校验曲线控制点落在音符半开 tick 区间内；检查与消费边界共用。"
+  @spec validate_inside(term(), map()) :: :ok | {:error, term()}
+  def validate_inside(payload, note) do
     with {:ok, points} <- display_points(payload) do
       case Enum.find(points, fn [tick, _midi] ->
              tick < note.start_tick or tick >= note.end_tick

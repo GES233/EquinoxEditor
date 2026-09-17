@@ -3,6 +3,152 @@ defmodule EquinoxWeb.ProjectChannelTest do
   import Phoenix.ChannelTest
 
   @endpoint EquinoxWeb.Endpoint
+  @moduletag capture_log: true
+
+  defp token(socket) do
+    ref = push(socket, "preflight_pin", %{"track_id" => "lead", "note_id" => "n1"})
+    assert_reply(ref, :ok, %{data: token})
+    Jason.decode!(Jason.encode!(token))
+  end
+
+  defp mount(socket, points) do
+    push(socket, "edit", %{
+      "command" => "mount_pitch",
+      "track_id" => "lead",
+      "note_id" => "n1",
+      "points" => points,
+      "token" => token(socket)
+    })
+  end
+
+  test "音高挂载、改词与拖动存活、替换不叠加、移除可撤销", %{socket: socket, project_id: id} do
+    ref = mount(socket, [[480, 60.25], [840, 62]])
+    assert_reply(ref, :ok, %{data: 3})
+    assert {:ok, %{tracks: [%{pins: [pin]}]}} = Neumu.snapshot(id)
+    assert pin.payload.values == [[0, 60.25], [360, 62.0]]
+    assert {:ok, _} = Neumu.edit_note(id, "lead", "n1", %{lyric: "改词", pitch: 64})
+    assert {:ok, _} = Neumu.move_note(id, "lead", "n1", :head, {600, 1080})
+    ref = push(socket, "check", %{})
+    assert_reply(ref, :ok, %{data: %{status: :ok}}, 2000)
+
+    ref =
+      push(socket, "edit", %{
+        "command" => "replace_pitch",
+        "track_id" => "lead",
+        "patch_id" => pin.id,
+        "points" => [[0, 61], [240, 63]]
+      })
+
+    assert_reply(ref, :ok, %{data: %{history_pin: 6}})
+    assert {:ok, %{tracks: [%{pins: [replacement]}]}} = Neumu.snapshot(id)
+    refute replacement.id == pin.id
+
+    ref =
+      push(socket, "edit", %{
+        "command" => "unmount_pitch",
+        "track_id" => "lead",
+        "note_id" => "n1"
+      })
+
+    assert_reply(ref, :ok, %{data: 7})
+    assert {:ok, %{tracks: [%{pins: []}]}} = Neumu.snapshot(id)
+    assert {:ok, 6} = Neumu.undo(id)
+    assert {:ok, %{tracks: [%{pins: [^replacement]}]}} = Neumu.snapshot(id)
+  end
+
+  test "过期预检与客户端携带底料都拒绝且不落边", %{socket: socket, project_id: id} do
+    stale = token(socket)
+    {:ok, pin} = Neumu.edit_note(id, "lead", "n1", %{lyric: "新词"})
+
+    ref =
+      push(socket, "edit", %{
+        "command" => "mount_pitch",
+        "track_id" => "lead",
+        "note_id" => "n1",
+        "points" => [[480, 60]],
+        "token" => stale
+      })
+
+    assert_reply(ref, :error, %{reason: reason})
+    assert reason =~ "stale_pin"
+
+    ref =
+      push(socket, "edit", %{
+        "command" => "mount_pitch",
+        "track_id" => "lead",
+        "note_id" => "n1",
+        "points" => [[480, 60]],
+        "token" => Map.put(token(socket), "base", %{})
+      })
+
+    assert_reply(ref, :error, %{reason: ":invalid_pin_token"})
+    assert {:ok, ^pin} = Neumu.history_pin(id)
+    assert {:ok, %{tracks: [%{pins: []}]}} = Neumu.snapshot(id)
+  end
+
+  test "越界控制点检查失败，重挂降级保留原件，重写恢复", %{socket: socket, project_id: id} do
+    ref = mount(socket, [[480, 60], [1080, 62]])
+    assert_reply(ref, :ok, %{data: pin})
+    {:ok, original} = Neumu.snapshot(id)
+    [patch] = hd(original.tracks).pins
+    ref = push(socket, "check", %{})
+    assert_reply(ref, :ok, %{data: %{history_pin: ^pin, status: :failed, entries: entries}}, 2000)
+    assert Enum.any?(entries, &match?(%{reason: [:pitch_point_outside_note, "n1", 1080]}, &1))
+    assert {:ok, _json} = Jason.encode(entries)
+
+    ref =
+      push(socket, "edit", %{
+        "command" => "repatch",
+        "track_id" => "lead",
+        "patch_ids" => [patch.id]
+      })
+
+    assert_reply(ref, :ok, %{data: %{history_pin: ^pin, results: [%{status: :degraded}]}}, 2000)
+    assert {:ok, ^original} = Neumu.snapshot(id)
+
+    ref =
+      push(socket, "edit", %{
+        "command" => "replace_pitch",
+        "track_id" => "lead",
+        "patch_id" => patch.id,
+        "points" => [[0, 60], [360, 62]]
+      })
+
+    assert_reply(ref, :ok, %{data: %{history_pin: _}})
+    ref = push(socket, "check", %{})
+    assert_reply(ref, :ok, %{data: %{status: :ok}}, 2000)
+  end
+
+  test "兼容音高载体改词产生真实身份冲突，重挂重新签名", %{socket: socket, project_id: id} do
+    {:ok, token} = Neumu.preflight_pin(id, "lead", "n1")
+
+    legacy = %{
+      format: :pitch_curve_v1,
+      adapter: :bezier,
+      coord: :absolute_tick,
+      value: :absolute_midi,
+      points: [%{tick: 480, value: 60, handle_left: nil, handle_right: nil}]
+    }
+
+    {:ok, _} = Neumu.mount_pitch(id, "lead", "n1", legacy, token)
+    {:ok, _} = Neumu.edit_note(id, "lead", "n1", %{lyric: "新"})
+    ref = push(socket, "check", %{})
+    assert_reply(ref, :ok, %{data: %{status: :failed, entries: entries}}, 2000)
+    conflict = Enum.find(entries, &(&1.kind == :conflict))
+    assert conflict.note_id == "n1"
+    assert {:ok, _} = Jason.encode(entries)
+
+    ref =
+      push(socket, "edit", %{
+        "command" => "repatch",
+        "track_id" => "lead",
+        "patch_ids" => [conflict.patch_id]
+      })
+
+    assert_reply(ref, :ok, %{data: %{results: [%{status: :repatched}]}}, 2000)
+    ref = push(socket, "check", %{})
+    assert_reply(ref, :ok, %{data: %{status: :ok}}, 2000)
+  end
 
   setup do
     project_id = "ui-test-#{System.unique_integer([:positive])}"

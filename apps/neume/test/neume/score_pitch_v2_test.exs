@@ -240,13 +240,16 @@ defmodule Neume.ScorePitchV2Test do
       assert Enum.at(artifact.midi, 12) == 63.0
     end
 
-    test "trim 越界：消费边界 loud 报错，repatch 降级、不落历史边", %{editor: editor} do
+    test "trim 越界：检查与消费都报错，repatch 降级、不落历史边", %{editor: editor} do
       assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[0, 62], [120, 63]])
       assert {:ok, editor} = Editor.trim_note(editor, "n1", {0, 100})
 
-      # 偏移 120 越界：render 在消费边界 loud 报错（与 legacy 同一规则）。
-      assert {:error, error} = Editor.render(editor)
-      assert inspect(error) =~ "outside_note_span"
+      # 偏移 120 越界：check 提前报告，render 经过同一道门禁。
+      assert {:error, {:check_failed, [%{reason: {:pitch_point_outside_note, "n1", 120}}]}} =
+               Editor.check(editor)
+
+      assert {:error, {:check_failed, [%{reason: {:pitch_point_outside_note, "n1", 120}}]}} =
+               Editor.render(editor)
 
       # repatch：expressible?/4 判越界 → 降级，旧 patch 原样保留。
       patch = alive_patch(editor, :pitch)

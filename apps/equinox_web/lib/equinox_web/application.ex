@@ -6,6 +6,7 @@ defmodule EquinoxWeb.Application do
   def start(_type, _args) do
     children = [
       {Phoenix.PubSub, name: EquinoxWeb.PubSub},
+      {Task.Supervisor, name: EquinoxWeb.QuerySupervisor},
       EquinoxWeb.Endpoint
     ]
 

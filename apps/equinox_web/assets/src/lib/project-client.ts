@@ -1,10 +1,11 @@
 import { Socket, type Channel } from 'phoenix';
-import type { ConnectionState, EditIntent, Snapshot, Voicebank } from './types';
+import type { CheckReport, ConnectionState, EditIntent, EditResult, PinToken, Snapshot, Voicebank } from './types';
 
 interface Callbacks {
   snapshot: (snapshot: Snapshot) => void;
   connection: (state: ConnectionState) => void;
   error: (message: string) => void;
+  invalidated?: () => void;
 }
 
 // 唯一接线点。组件不认识 Phoenix，也不把本地预览当作工程状态。
@@ -36,6 +37,7 @@ export class ProjectClient {
     this.socket.onError(disconnected);
     this.channel.onError(disconnected);
     this.channel.on('project_changed', () => {
+      this.callbacks.invalidated?.();
       void this.refresh().catch((error: Error) => this.callbacks.error(error.message));
     });
     this.channel.join()
@@ -61,12 +63,12 @@ export class ProjectClient {
     this.socket.connect();
   }
 
-  private request<T>(event: string, payload: object = {}): Promise<T> {
+  private request<T>(event: string, payload: object = {}, timeout = 10_000): Promise<T> {
     if (this.stopped || !this.channel || !this.joined) {
       return Promise.reject(new Error('连接已断开，本次操作没有提交。'));
     }
     return new Promise((resolve, reject) => {
-      this.channel!.push(event, payload, 10_000)
+      this.channel!.push(event, payload, timeout)
         .receive('ok', ({ data }: { data: T }) => resolve(data))
         .receive('error', ({ reason }: { reason: string }) => reject(new Error(`操作未生效：${reason}`)))
         .receive('timeout', () => reject(new Error('服务回复超时，结果尚未确认。请重新连接后核对，不要重复提交。')));
@@ -91,10 +93,15 @@ export class ProjectClient {
   }
 
   voicebanks() { return this.request<Voicebank[]>('voicebanks'); }
+  check() { return this.request<CheckReport>('check', {}, 120_000); }
+  preflight(track_id: string, note_id: string) {
+    return this.request<PinToken>('preflight_pin', { track_id, note_id });
+  }
 
   async edit(intent: EditIntent) {
-    await this.request<number>('edit', intent);
+    const result = await this.request<number | EditResult>('edit', intent);
     await this.refresh();
+    return typeof result === 'number' ? { history_pin: result } : result;
   }
 
   close() {

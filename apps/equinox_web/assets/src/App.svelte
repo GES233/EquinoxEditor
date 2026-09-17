@@ -2,11 +2,11 @@
   import { onMount } from 'svelte';
   import editorMark from '../../../../artwoks/editor_dark.svg';
   import VoicebankSelector from './components/VoicebankSelector.svelte';
-  import PianoRoll from './components/PianoRoll.svelte';
+  import PitchWorkspace from './components/PitchWorkspace.svelte';
   import NoteEditor from './components/NoteEditor.svelte';
   import ComponentGallery from './ComponentGallery.svelte';
   import { ProjectClient } from './lib/project-client';
-  import type { ConnectionState, EditIntent, Snapshot, Voicebank } from './lib/types';
+  import type { CheckReport, CheckState, ConnectionState, EditIntent, PitchPoint, Snapshot, Voicebank } from './lib/types';
 
   const gallery = new URLSearchParams(location.search).has('components');
   let snapshot = $state<Snapshot | null>(null);
@@ -17,6 +17,12 @@
   let error = $state('');
   let busy = $state(false);
   let uncertain = $state(false);
+  let checkReport = $state<CheckReport | null>(null);
+  let checkState = $state<CheckState>('unchecked');
+  let checking = $state(false);
+  let checkError = $state('');
+  let notice = $state('');
+  let revision = 0;
   let client: ProjectClient | undefined;
   let generation = 0;
   let track = $derived(snapshot?.tracks[0]);
@@ -24,6 +30,58 @@
   let disabled = $derived(connection !== 'connected' || busy || uncertain);
   let currentVoicebankId = $derived(track?.voicebank ?
     (voicebanks.find((v) => v.digest === track?.voicebank?.digest && v.engine === track?.voicebank?.engine)?.id ?? '__unavailable__') : null);
+
+  function invalidateCheck() {
+    revision++;
+    checkReport = null;
+    checkState = 'unchecked';
+    notice = '';
+  }
+
+  async function check() {
+    if (disabled || checking || !client || !snapshot) return;
+    const active = client;
+    const started = revision;
+    const pin = snapshot.history_pin;
+    checking = true;
+    checkState = 'checking';
+    checkError = '';
+    try {
+      const result = await active.check();
+      if (active !== client || revision !== started || result.history_pin !== snapshot?.history_pin || result.history_pin !== pin) return;
+      checkReport = result;
+      checkState = result.status === 'ok' ? 'ok' : 'failed';
+    } catch (reason) {
+      if (active === client && revision === started) {
+        checkState = 'error'; checkError = (reason as Error).message;
+      }
+    } finally { if (active === client) checking = false; }
+  }
+
+  async function applyPitch(points: PitchPoint[], patchId?: string) {
+    if (disabled || !client || !track || !note || !snapshot) return;
+    const active = client;
+    const started = revision;
+    const pin = snapshot.history_pin;
+    const trackId = track.id;
+    const noteId = note.id;
+    const noteStart = note.start_tick;
+    busy = true; error = '';
+    try {
+      const token = await active.preflight(trackId, noteId);
+      if (active !== client || revision !== started || token.history_pin !== pin) {
+        await active.refresh();
+        error = '工程已变化，未提交音高草稿。请在当前音符上重新确认。';
+        return;
+      }
+      invalidateCheck();
+      await active.edit(patchId ? { command: 'replace_pitch', track_id: trackId, patch_id: patchId, points } :
+        { command: 'mount_pitch', track_id: trackId, note_id: noteId, points: points.map(([tick, midi]) => [noteStart + tick, midi]), token });
+    } catch (reason) {
+      error = (reason as Error).message;
+      uncertain = !error.startsWith('操作未生效：');
+    } finally { busy = false; }
+  }
 
   async function loadVoicebanks() {
     const active = client;
@@ -45,12 +103,15 @@
     const ownGeneration = generation;
     client?.close();
     connection = 'connecting';
+    invalidateCheck(); checking = false;
     error = '';
     client = new ProjectClient({
-      snapshot: (value) => { if (ownGeneration === generation) { snapshot = value; uncertain = false; } },
+      snapshot: (value) => { if (ownGeneration === generation) { if (snapshot?.history_pin !== value.history_pin) invalidateCheck(); snapshot = value; uncertain = false; } },
+      invalidated: invalidateCheck,
       connection: (value) => {
         if (ownGeneration !== generation) return;
         connection = value;
+        if (value !== 'connected') invalidateCheck();
         if (value === 'connected') void loadVoicebanks();
       },
       error: (message) => { if (ownGeneration === generation) { error = message; uncertain = true; } },
@@ -68,7 +129,17 @@
     if (disabled || !client) return;
     busy = true;
     error = '';
-    try { await client.edit(intent); }
+    const previousReport = checkReport;
+    invalidateCheck();
+    try {
+      const result = await client.edit(intent);
+      if (result.results) notice = result.results.some((entry) => entry.status === 'degraded') ?
+        '无法沿用：原调校已保留，请重新编辑或移除。' : '已沿用到当前事实，请重新检查。';
+      if (previousReport && result.results?.every((entry) => entry.status === 'degraded') && previousReport.history_pin === snapshot?.history_pin) {
+        checkReport = previousReport;
+        checkState = previousReport.status === 'ok' ? 'ok' : 'failed';
+      }
+    }
     catch (reason) {
       error = (reason as Error).message;
       // 未知提交结果不能自动重放；刷新权威状态后才允许继续。
@@ -106,7 +177,13 @@
 
       <main class="editor">
         <div class="editor-toolbar"><div><span class="eyebrow">钢琴卷帘</span><h1>{track?.name ?? '编辑工作区'}</h1></div><div class="toolbar-meta"><span>4/4</span><span>120 BPM</span><span>1/4 拍吸附</span></div></div>
-        <PianoRoll {track} historyPin={snapshot?.history_pin ?? -1} {disabled} onmove={(moved, span) => { if (track) void edit({ command: 'move_note', track_id: track.id, note_id: moved.id, span }); }} />
+        {#key snapshot?.history_pin}
+          <PitchWorkspace {track} historyPin={snapshot?.history_pin ?? -1} {disabled} report={checkReport} {checkState} {checking} {checkError} {notice}
+            oncheck={check} onapply={applyPitch}
+            onremove={() => { if (track && note) void edit({ command: 'unmount_pitch', track_id: track.id, note_id: note.id }); }}
+            onrepatch={(patch_ids) => { if (track) void edit({ command: 'repatch', track_id: track.id, patch_ids }); }}
+            onmove={(moved, span) => { if (track) void edit({ command: 'move_note', track_id: track.id, note_id: moved.id, span }); }} />
+        {/key}
         {#if note && track}
           {#key snapshot?.history_pin}
             <NoteEditor {note} {disabled} onedit={(changes) => edit({ command: 'edit_note', track_id: track!.id, note_id: note!.id, changes })} />

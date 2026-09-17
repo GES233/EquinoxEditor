@@ -15,7 +15,9 @@ defmodule Neume.VoicebankSelectionTest do
   test "注册表选择把 Stock 身份写入工程，并可据此重新打开", %{tmp_dir: tmp_dir} do
     VoicebankFixture.diffsinger(tmp_dir)
     assert {:ok, registry} = Registry.discover(tmp_dir)
-    assert [stock] = Registry.list(registry)
+    # 本机可能已有同内容声库的 Modified 缓存；本例只验证显式选择 Stock。
+    stock = Enum.find(Registry.list(registry), &(&1.mode == :stock))
+    assert stock
 
     opts = [
       voicebank_registry: registry,

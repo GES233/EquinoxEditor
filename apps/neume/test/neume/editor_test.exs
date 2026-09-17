@@ -109,8 +109,11 @@ defmodule Neume.EditorTest do
 
     assert {:ok, editor} = Editor.mount_pitch(editor, "n1", [[500, 72]])
 
-    assert {:error, error} = Editor.render(editor)
-    assert inspect(error) =~ "outside_note_span"
+    assert {:error, {:check_failed, [%{reason: {:pitch_point_outside_note, "n1", 500}}]}} =
+             Editor.check(editor)
+
+    assert {:error, {:check_failed, [%{reason: {:pitch_point_outside_note, "n1", 500}}]}} =
+             Editor.render(editor)
   end
 
   test "内容修改触发 probe 期身份冲突，撤销后恢复可渲染", %{editor: editor} do

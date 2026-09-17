@@ -129,17 +129,39 @@ defmodule Neume.Engine.MockPipeline do
   def analyze(
         %{ticks_per_frame: ticks_per_frame},
         %Snapshot{} = snapshot,
-        _pins,
+        pins,
         _globals,
         track_id
       ) do
     with {:ok, view} <- Map.fetch(snapshot.tracks, track_id),
-         :ok <- ensure_vocal(view) do
+         :ok <- ensure_vocal(view),
+         :ok <- validate_pitch_pins(view.elements, Map.get(pins, :pitch, %{})) do
       build_analysis(view.elements, ticks_per_frame)
     else
       :error -> {:error, {:unknown_track, track_id}}
       {:error, _} = error -> error
     end
+  end
+
+  # 与实际消费共用点列/Bezier 范围校验，避免演示 check 对越界点误报通过。
+  defp validate_pitch_pins(elements, pins) do
+    spans =
+      Map.new(elements, fn {id, _note, {start_tick, end_tick}} ->
+        {id, %{id: id, start_tick: start_tick, end_tick: end_tick}}
+      end)
+
+    Enum.reduce_while(pins, :ok, fn {id, payload}, :ok ->
+      result =
+        case Map.fetch(spans, id) do
+          {:ok, note} -> Neume.PitchCurve.validate_inside(payload, note)
+          :error -> {:error, {:unknown_pitch_pin_note, id}}
+        end
+
+      case result do
+        :ok -> {:cont, :ok}
+        {:error, _} = error -> {:halt, error}
+      end
+    end)
   end
 
   @doc """
