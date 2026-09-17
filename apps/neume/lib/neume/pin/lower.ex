@@ -22,6 +22,8 @@ defmodule Neume.Pin.Lower do
     一致（不一致即 `{:segment_ref_mismatch, note_id, ref}` loud 报错）；
     index 界内判定由消费边界按 legacy 同一规则复核（lowering 不做
     probe，不知道序列长度）；
+  - `model_output_v1` 保留 payload、base_digest 与 patch_id，交给 runtime 的
+    producer 输出处裁决；相同端口多份输出型 pin 明确拒绝；
   - 未知 schema 返回 `{:error, {:unsupported_pin_schema, schema}}`，
     不静默猜解。
   """
@@ -46,7 +48,8 @@ defmodule Neume.Pin.Lower do
       resolved
       |> Enum.reduce_while({:ok, %{}}, fn pin, {:ok, acc} ->
         with {:ok, note_id} <- note_id(pin),
-             {:ok, payload} <- lower_payload(pin, note_id, derived) do
+             {:ok, payload} <- lower_payload(pin, note_id, derived),
+             :ok <- unique_output_pin(acc, pin.channel, note_id, payload) do
           {:cont, {:ok, put_pin(acc, pin.channel, note_id, payload)}}
         else
           {:error, _} = error -> {:halt, error}
@@ -80,6 +83,13 @@ defmodule Neume.Pin.Lower do
   defp note_id(%Resolved{anchor: other}), do: {:error, {:unsupported_anchor, other}}
 
   # legacy payload 原样透传（消费边界已理解这些形状）。
+  defp lower_payload(
+         %Resolved{payload: %{schema: "model_output_v1"} = payload} = pin,
+         _note_id,
+         _derived
+       ),
+       do: {:ok, Map.merge(payload, %{base_digest: pin.base_digest, patch_id: pin.patch_id})}
+
   defp lower_payload(
          %Resolved{descriptor: %Descriptor{payload_schema: schema}, payload: payload},
          _note_id,
@@ -232,5 +242,14 @@ defmodule Neume.Pin.Lower do
 
   defp put_pin(by_channel, channel, note_id, payload) do
     Map.update(by_channel, channel, %{note_id => payload}, &Map.put(&1, note_id, payload))
+  end
+
+  # 合并音符等手势可能让多份 pin 落在同一端口；输出签名不能被 Map.put 静默遮盖。
+  defp unique_output_pin(acc, channel, note_id, payload) do
+    previous = get_in(acc, [channel, note_id])
+
+    if previous != nil and (Neume.Output.payload?(previous) or Neume.Output.payload?(payload)),
+      do: {:error, {:ambiguous_output_pins, channel, note_id}},
+      else: :ok
   end
 end

@@ -12,8 +12,8 @@ defmodule Neume.Pin.Descriptor do
   @enforce_keys [:payload_schema, :base_schema, :carrier]
   defstruct [:payload_schema, :base_schema, :carrier]
 
-  @typedoc "carrier 分类：payload 引用哪个领域对象（谱面 `S` / 语音学 `Ph` / 对应关系 `Co`）。"
-  @type carrier :: :score | :phonology | :correspondence
+  @typedoc "carrier 分类：谱面、语音学、对应关系，或可重放的局部模型输出。"
+  @type carrier :: :score | :phonology | :correspondence | :model_output
 
   @type t :: %__MODULE__{
           payload_schema: String.t(),

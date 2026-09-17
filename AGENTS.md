@@ -42,6 +42,10 @@ DiffSinger worker / ONNX / artifacts
 - Multi-track scheduling, mixing, buses, and export aggregation are implemented as Neume-owned Oi graphs/steps.
 - Phoneme types, frame grids, G2P, vowel anchoring, and model probes belong to the Neume DiffSinger adapter/worker.
 - Coconut History remains the only entry for persistent score, patch, track-extras, and undoable edits.
+- `model_output_v1` pin 钉可重放的局部模型输出及有效域，运行身份本身不进入底料。
+  `Neume.OutputPipeline` 的 Oi 拓扑与 OrchidIntervention 负责 duration → pitch 合并；
+  不在 UI 复制依赖框架。legacy/v2 语义保留，迁移显式；详见
+  `apps/neume/docs/model-output-pins.md`。
 - 现有 legacy pitch/duration pin 底料是 `pin_input_v1` 输入事实签名（歌词/显式音素/melisma 归属/声库摘要），推导为纯函数、不经引擎；digest 裁决在 probe 期统一冲突界面，Coconut 静态 check 不过问。`Pin<S>` / `Pin<Ph>` / `Pin<Co<S,Ph>>` 解耦设计见 `apps/neume/docs/design-2026-09-pin-carriers.md`；v2 carrier（批次 A–E、E0，详见"已完成"）已实施，legacy 双轨是迁移期兼容层，不长期保留（E1 转只读待开工）；旧工程读档兼容不变。
 - melisma 必须由显式 syllable group 表达，不在 worker 中启发式猜测。
 - Model paths, generated models, caches, and WAV files are not committed.
@@ -301,15 +305,17 @@ Neume.Editor
 
 ### 验证基线
 
-- `apps/equinox_web` path 2：9 项 Channel 测试、7 项 Playwright 浏览器
+- 输出型 pin 已接通 duration 与 pitch，`Neumu.extract_output/put_output/repatch_output`
+  在工程进程外重放、提交时校验 cursor/seq，UI 非模态展示漂移并提供显式沿用/移除。
+  真 DiffSinger 要求 Pure-FP CPU；演示 UI 仍使用 mock，暂无真实声库渲染/播放入口。
+- `apps/equinox_web`：11 项 Channel 测试、9 项 Playwright 浏览器
   场景通过；前端 `check` 无错误/警告、`build` 通过。umbrella 共
-  `664 passed, 9 excluded`（2026-09-17）；上个里程碑后用户运行
-  `mix test --only integration`，适配器集成测试 `8 passed`；本批未重跑真声库，
-  OpenVINO 仍未运行。
+  `673 passed, 11 excluded`（2026-09-17）；本批 Asaritsu 真声库集成测试
+  `10 passed`（含输出重放与邻居漂移）；Python `55 passed`。OpenVINO 真机未运行。
 - `mix compile --force --warnings-as-errors`：通过。
 - `mix dialyzer`：`Total errors: 0`。
 - `git diff --check`：通过。
-- `apps/neume` 核心测试：`167 passed`（含混合 repatch 的 channel 语义隔离；pin carrier 批次 A–E/E0 的
+- `apps/neume` 核心测试：`174 passed`（含输出型 pin 与混合 repatch 的 channel 语义隔离；pin carrier 批次 A–E/E0 的
   survival matrix、lowering 契约与 fallback 规则、repatch/replace_pin
   语义、`Neume.Phonology.Ref` 派生/解析与漂移矩阵；逐项清单见各测试
   文件）；`apps/neume_opu_ds` 适配器测试：`46 passed, 8 excluded`

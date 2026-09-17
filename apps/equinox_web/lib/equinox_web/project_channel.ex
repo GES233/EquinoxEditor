@@ -25,15 +25,57 @@ defmodule EquinoxWeb.ProjectChannel do
 
   # 模型检查不能堵住 Channel 的编辑和快照消息；每个连接最多一个检查。
   def handle_in("check", _params, socket) do
-    if socket.assigns[:check_task] do
-      respond({:error, :check_in_progress}, socket)
+    async_query(socket, fn -> Neumu.check(socket.assigns.project_id) end)
+  end
+
+  def handle_in("extract_output", %{"track_id" => track_id}, socket) when is_binary(track_id),
+    do: async_query(socket, fn -> Neumu.extract_output(socket.assigns.project_id, track_id) end)
+
+  def handle_in(
+        "put_output",
+        %{
+          "track_id" => track_id,
+          "note_id" => note_id,
+          "channel" => channel,
+          "values" => values,
+          "digest" => digest,
+          "token" => token
+        },
+        socket
+      )
+      when is_binary(track_id) and is_binary(note_id) and channel in ["pitch", "duration"] and
+             is_list(values) and length(values) <= 256 and is_binary(digest) do
+    with {:ok, token} <- decode_output_token(token) do
+      channel = if channel == "pitch", do: :pitch, else: :duration
+
+      async_query(socket, fn ->
+        Neumu.put_output(
+          socket.assigns.project_id,
+          track_id,
+          note_id,
+          channel,
+          values,
+          digest,
+          token
+        )
+      end)
     else
-      project_id = socket.assigns.project_id
+      error -> respond(error, socket)
+    end
+  end
 
-      task =
-        Task.Supervisor.async_nolink(EquinoxWeb.QuerySupervisor, fn -> Neumu.check(project_id) end)
-
-      {:noreply, assign(socket, :check_task, {task, socket_ref(socket)})}
+  def handle_in(
+        "repatch_output",
+        %{"track_id" => track_id, "patch_id" => patch_id, "token" => token},
+        socket
+      )
+      when is_binary(track_id) and is_binary(patch_id) do
+    with {:ok, token} <- decode_output_token(token) do
+      async_query(socket, fn ->
+        Neumu.repatch_output(socket.assigns.project_id, track_id, patch_id, token)
+      end)
+    else
+      error -> respond(error, socket)
     end
   end
 
@@ -45,6 +87,18 @@ defmodule EquinoxWeb.ProjectChannel do
     do: respond(edit(socket.assigns.project_id, params), socket)
 
   def handle_in(_event, _params, socket), do: respond({:error, :unknown_event}, socket)
+
+  # 检查、提取与输出编辑共享一个异步槽，普通编辑仍可继续；提交时由 facade 检查版本。
+  defp async_query(socket, operation) do
+    if socket.assigns[:check_task] do
+      respond({:error, :check_in_progress}, socket)
+    else
+      task =
+        Task.Supervisor.async_nolink(EquinoxWeb.QuerySupervisor, operation)
+
+      {:noreply, assign(socket, :check_task, {task, socket_ref(socket)})}
+    end
+  end
 
   @impl true
   def handle_info({ref, result}, %{assigns: %{check_task: {%Task{ref: ref}, reply_ref}}} = socket) do
@@ -123,6 +177,21 @@ defmodule EquinoxWeb.ProjectChannel do
 
   defp edit(project_id, %{"command" => "undo"}), do: Neumu.undo(project_id)
   defp edit(project_id, %{"command" => "redo"}), do: Neumu.redo(project_id)
+
+  defp edit(project_id, %{
+         "command" => "unmount_output",
+         "track_id" => track_id,
+         "note_id" => note_id,
+         "channel" => channel
+       })
+       when is_binary(track_id) and is_binary(note_id) and channel in ["pitch", "duration"],
+       do:
+         Neumu.unmount_pin(
+           project_id,
+           track_id,
+           note_id,
+           if(channel == "pitch", do: :pitch, else: :duration)
+         )
 
   defp edit(project_id, %{
          "command" => "edit_note",
@@ -206,6 +275,14 @@ defmodule EquinoxWeb.ProjectChannel do
        do: {:ok, %{track_id: track_id, note_id: note_id, history_pin: pin}}
 
   defp decode_token(_), do: {:error, :invalid_pin_token}
+
+  defp decode_output_token(
+         %{"track_id" => track_id, "history_pin" => pin, "history_seq" => seq} = token
+       )
+       when map_size(token) == 3 and is_binary(track_id) and is_integer(pin) and is_integer(seq),
+       do: {:ok, %{track_id: track_id, history_pin: pin, history_seq: seq}}
+
+  defp decode_output_token(_), do: {:error, :invalid_output_token}
 
   defp respond(result, socket), do: {:reply, wire_reply(result), socket}
 

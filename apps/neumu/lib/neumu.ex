@@ -490,6 +490,70 @@ defmodule Neumu do
 
   # --- pin 干预（两阶段挂载） ---
 
+  @doc "提取模型输出；返回可编辑值及只读底料摘要，不把模型计算放进工程进程。"
+  def extract_output(project_id, track_id) do
+    with {:ok, multi, pin} <- call_project(project_id, :preflight_context),
+         {:ok, extracted} <- Neume.MultiTrack.extract_output(multi, track_id) do
+      regions =
+        Map.new(extracted.regions, fn {id, channels} ->
+          {id,
+           Map.new(channels, fn {channel, projection} ->
+             {channel, Map.drop(projection, [:base, :indices])}
+           end)}
+        end)
+
+      {:ok,
+       %{
+         token: %{track_id: track_id, history_pin: pin, history_seq: multi.session.history.seq},
+         regions: regions,
+         entries: Neumu.CheckReport.project_entries(extracted.entries)
+       }}
+    end
+  end
+
+  @doc "在提取版本上应用输出修改；底料由后端重放校验，提交时再次验证工程版本。"
+  def put_output(project_id, track_id, note_id, channel, values, digest, token) do
+    prepare_output_edit(project_id, track_id, token, fn multi ->
+      Neume.MultiTrack.put_output(multi, track_id, note_id, channel, values, digest)
+    end)
+  end
+
+  @doc "显式沿用输出干预，重放与校验在工程进程外执行。"
+  def repatch_output(project_id, track_id, patch_id, token) do
+    prepare_output_edit(
+      project_id,
+      track_id,
+      token,
+      &Neume.MultiTrack.repatch_output(&1, track_id, patch_id)
+    )
+  end
+
+  defp prepare_output_edit(project_id, track_id, token, operation) do
+    with {:ok, multi, pin} <- call_project(project_id, :preflight_context),
+         true <-
+           token == %{
+             track_id: track_id,
+             history_pin: pin,
+             history_seq: multi.session.history.seq
+           } do
+      expected = {pin, multi.session.history.seq}
+
+      case operation.(multi) do
+        {:ok, prepared} ->
+          call_project(project_id, {:commit_output, expected, prepared, nil})
+
+        {:ok, prepared, extra} ->
+          call_project(project_id, {:commit_output, expected, prepared, extra})
+
+        error ->
+          error
+      end
+    else
+      false -> {:error, :stale_output_context}
+      error -> error
+    end
+  end
+
   @doc """
   pin 挂载预检（preflight，两阶段挂载第一阶段）：钉住当前 History
   cursor 并校验音符存活。

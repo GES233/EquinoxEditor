@@ -177,6 +177,7 @@ defmodule Neume.Identity do
     phonology_digest = Keyword.get(opts, :phonology_digest)
 
     track.patches
+    |> Enum.reject(&Neume.Output.payload?(&1.tamale_patch.payload))
     |> Enum.filter(&MapSet.member?(probe_channels, &1.channel))
     |> Enum.map(
       &adjudicate_one(

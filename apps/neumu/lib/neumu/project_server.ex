@@ -242,6 +242,19 @@ defmodule Neumu.ProjectServer do
     end
   end
 
+  # facade 在进程外从捕获的纯值准备 History 修改；此处只做版本 CAS 和原子落账。
+  def handle_call({:commit_output, expected, prepared, extra}, _from, state) do
+    current = {current_pin(state.multi_track), state.multi_track.session.history.seq}
+
+    if current == expected do
+      {state, pin} = commit_edit(state, prepared, elem(current, 0))
+      reply = if is_nil(extra), do: {:ok, pin}, else: {:ok, pin, extra}
+      {:reply, reply, state}
+    else
+      {:reply, {:error, :stale_output_context}, state}
+    end
+  end
+
   # 预检上下文：把当前权威值与 history_pin 交给调用方，预检与 probe
   # （G2P + 组展开，真声库要调 worker）在本进程之外的调用方进程执行，
   # 期间本进程仍可响应编辑与查询。mount 携预检令牌回来校验。

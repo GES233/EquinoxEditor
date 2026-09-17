@@ -147,6 +147,26 @@
   `{:error, {:artifact_not_found, _}}`，文件错误
   `{:error, {:export_failed, _}}`。
 
+## 模型输出编辑（2026-09-17）
+
+旧 pin 手势语义保留。新输出型 pin 使用独立的提取/提交入口，详见
+[底料与执行约定](../../neume/docs/model-output-pins.md)：
+
+- `extract_output(project_id, track_id)` → `{:ok, %{token, regions, entries}}`。
+  token 为 `%{track_id, history_pin, history_seq}`；regions 按 note_id、channel
+  索引，投影含 `digest/values/segments/start_frame/end_frame/start_sec/frame_rate/blocked`。
+  frame 是乐句局部坐标，start_sec 是歌曲时间；提交的 pitch 偏移从区域起点计数。
+- `put_output(project_id, track_id, note_id, channel, values, digest, token)`
+  → `{:ok, history_pin}`。后端重放校验 digest；旧 pin 需要先显式移除。
+- `repatch_output(project_id, track_id, patch_id, token)`
+  → `{:ok, history_pin, %{patch_id, status: :repatched | :degraded, ...}}`。
+  无法表达时保留原件；上游冲突返回 `{:error, :upstream_output_conflict}`。
+- `unmount_pin/4` 同样移除输出型 pin。
+
+模型请求在工程进程外执行；提交时原子比较 History cursor 与 seq，
+不接受带额外字段的令牌，版本失效返回 `{:error, :stale_output_context}`。
+底料不存到客户端令牌中，不增加另一套持久化。
+
 ## 错误形状
 
 公开边界一律 tagged error，不抛异常；常见形状：`{:unknown_project, _}`、

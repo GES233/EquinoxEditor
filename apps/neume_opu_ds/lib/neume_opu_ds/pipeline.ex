@@ -120,6 +120,7 @@ defmodule NeumeOpuDs.Pipeline do
         {:ok,
          %{
            compiled: compiled,
+           track_id: track_id,
            compiled_analysis: compiled_analysis,
            compiled_synthesis: compiled_synthesis,
            client: client,
@@ -197,6 +198,11 @@ defmodule NeumeOpuDs.Pipeline do
             {:ok, analysis, plan, probe} ->
               {[{phrase, analysis, %{plan: plan, probe: probe}} | results], errors}
 
+            {:error, {:check_failed, entries}} ->
+              {results,
+               Enum.map(entries, &Map.merge(&1, %{track_id: track_id, phrase_id: phrase.id})) ++
+                 errors}
+
             {:error, reason} ->
               {results, [phrase_error(phrase, reason) | errors]}
           end
@@ -219,6 +225,38 @@ defmodule NeumeOpuDs.Pipeline do
   end
 
   defp probe_phrase(state, snapshot, pins, session_globals) do
+    if Neume.Output.pins?(pins) do
+      with {:ok, packet} <-
+             NeumeOpuDs.Output.packet(
+               state,
+               snapshot,
+               pins,
+               effective_globals(state.globals, session_globals),
+               state.track_id
+             ),
+           [] <- packet.entries do
+        %{plan: plan, probe: probe} = NeumeOpuDs.Output.checked(packet)
+        {:ok, to_analysis(probe, state.manifest), plan, probe}
+      else
+        [_ | _] = entries -> {:error, {:check_failed, entries}}
+        error -> error
+      end
+    else
+      probe_legacy(state, snapshot, pins, session_globals)
+    end
+  end
+
+  def output_packets(state, snapshot, pins, globals, track_id),
+    do:
+      NeumeOpuDs.Output.packets(
+        state,
+        snapshot,
+        pins,
+        effective_globals(state.globals, globals),
+        track_id
+      )
+
+  defp probe_legacy(state, snapshot, pins, session_globals) do
     data = %{
       score_plan: %{
         snapshot: snapshot,
@@ -289,6 +327,19 @@ defmodule NeumeOpuDs.Pipeline do
   @spec render(state(), Snapshot.t(), %{pitch: map(), duration: map()}, map(), term()) ::
           {:ok, Neume.RenderArtifact.t()} | {:error, term()}
   def render(%{} = state, %Snapshot{} = snapshot, pins, session_globals, track_id) do
+    if Neume.Output.pins?(pins) do
+      with {:ok, checked, []} <- analyze_phrases(state, snapshot, pins, session_globals, track_id) do
+        render_checked(state, snapshot, checked, session_globals, track_id)
+      else
+        {:ok, _, entries} -> {:error, {:check_failed, entries}}
+        error -> error
+      end
+    else
+      render_legacy(state, snapshot, pins, session_globals, track_id)
+    end
+  end
+
+  defp render_legacy(state, snapshot, pins, session_globals, track_id) do
     globals = effective_globals(state.globals, session_globals)
 
     with {:ok, view} <- fetch_vocal_view(snapshot, track_id),

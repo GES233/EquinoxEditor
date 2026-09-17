@@ -4,9 +4,10 @@
   import VoicebankSelector from './components/VoicebankSelector.svelte';
   import PitchWorkspace from './components/PitchWorkspace.svelte';
   import NoteEditor from './components/NoteEditor.svelte';
+  import OutputControls from './components/OutputControls.svelte';
   import ComponentGallery from './ComponentGallery.svelte';
   import { ProjectClient } from './lib/project-client';
-  import type { CheckReport, CheckState, ConnectionState, EditIntent, PitchPoint, Snapshot, Voicebank } from './lib/types';
+  import type { CheckReport, CheckState, ConnectionState, EditIntent, PitchPoint, Snapshot, Voicebank, OutputExtraction } from './lib/types';
 
   const gallery = new URLSearchParams(location.search).has('components');
   let snapshot = $state<Snapshot | null>(null);
@@ -22,6 +23,9 @@
   let checking = $state(false);
   let checkError = $state('');
   let notice = $state('');
+  let output = $state<OutputExtraction | null>(null);
+  let extracting = $state(false);
+  let outputNotice = $state('');
   let revision = 0;
   let client: ProjectClient | undefined;
   let generation = 0;
@@ -36,10 +40,44 @@
     checkReport = null;
     checkState = 'unchecked';
     notice = '';
+    output = null;
+  }
+
+  async function extractOutput() {
+    if (disabled || extracting || checking || !client || !track) return;
+    const active = client, started = revision, trackId = track.id;
+    extracting = true; outputNotice = '';
+    try {
+      const result = await active.extractOutput(trackId);
+      if (active === client && started === revision && result.token.history_pin === snapshot?.history_pin) output = result;
+    } catch (reason) {
+      if (active === client && started === revision) outputNotice = (reason as Error).message;
+    } finally { if (active === client) extracting = false; }
+  }
+
+  async function changeOutput(channel?: 'duration' | 'pitch', values?: number[] | PitchPoint[], digest?: string, patchId?: string) {
+    if (disabled || extracting || checking || !client || !track || !note || !output) return;
+    const active = client, token = output.token, trackId = track.id, noteId = note.id;
+    busy = true; error = ''; outputNotice = '';
+    try {
+      if (patchId) {
+        const result = await active.repatchOutput(trackId, patchId, token);
+        if (active === client) outputNotice = result.result.status === 'degraded' ? '修改已无法沿用，原干预保留，请重新编辑或移除。' : '已沿用修改。';
+      } else if (channel && values && digest) {
+        await active.putOutput(trackId, noteId, channel, values, digest, token);
+      }
+    } catch (reason) {
+      if (active === client) { error = (reason as Error).message; uncertain = !error.startsWith('操作未生效：'); }
+    } finally { if (active === client) busy = false; }
+    if (active === client && !uncertain) {
+      const message = outputNotice;
+      await extractOutput();
+      if (active === client && message) outputNotice = message;
+    }
   }
 
   async function check() {
-    if (disabled || checking || !client || !snapshot) return;
+    if (disabled || checking || extracting || !client || !snapshot) return;
     const active = client;
     const started = revision;
     const pin = snapshot.history_pin;
@@ -103,7 +141,7 @@
     const ownGeneration = generation;
     client?.close();
     connection = 'connecting';
-    invalidateCheck(); checking = false;
+    invalidateCheck(); checking = false; extracting = false;
     error = '';
     client = new ProjectClient({
       snapshot: (value) => { if (ownGeneration === generation) { if (snapshot?.history_pin !== value.history_pin) invalidateCheck(); snapshot = value; uncertain = false; } },
@@ -185,6 +223,11 @@
             onmove={(moved, span) => { if (track) void edit({ command: 'move_note', track_id: track.id, note_id: moved.id, span }); }} />
         {/key}
         {#if note && track}
+          <OutputControls {output} noteId={note.id} pins={track.pins.filter((pin) => pin.anchor.refs.includes(note!.id))}
+            {disabled} busy={extracting || checking} notice={outputNotice}
+            onextract={extractOutput} onput={(channel, values, digest) => changeOutput(channel, values, digest)}
+            onrepatch={(patchId) => changeOutput(undefined, undefined, undefined, patchId)}
+            onremove={(channel) => edit({ command: 'unmount_output', track_id: track!.id, note_id: note!.id, channel })} />
           {#key snapshot?.history_pin}
             <NoteEditor {note} {disabled} onedit={(changes) => edit({ command: 'edit_note', track_id: track!.id, note_id: note!.id, changes })} />
           {/key}

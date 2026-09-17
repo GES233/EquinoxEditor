@@ -13,6 +13,7 @@ defmodule Neume.Pin.Schema do
   | v2 pitch envelope（批次 B） | `score_pitch_v2` | `score_region_v1` | `:score` |
   | v2 duration envelope（批次 D） | `phoneme_duration_v2` | `phoneme_correspondence_v1` | `:correspondence` |
   | v2 Bezier envelope（批次 E） | `pitch_curve_v2` | `score_region_v1` | `:score` |
+  | duration / pitch 输出修改 | `model_output_v1` | `model_output_base_v1` | `:model_output` |
 
   `score_pitch_v2` 是自描述 envelope：`%{schema, coordinates: "note_tick",
   values: [[offset_tick, midi], ...]}`，坐标为音符内相对 tick（拖动跟随）；
@@ -82,10 +83,11 @@ defmodule Neume.Pin.Schema do
   def legacy_payload_schemas, do: @legacy_payload_schemas
 
   @doc """
-  payload schema 的世代号（1 = legacy，2 = v2）。replace_pin 的降级门卫用：
+  payload schema 的世代号（1 = legacy，2 = v2，3 = 模型输出）。replace_pin 的降级门卫用：
   只允许同世代或向上替换，拒绝 v2 → legacy。
   """
-  @spec payload_generation(String.t()) :: 1 | 2
+  @spec payload_generation(String.t()) :: 1 | 2 | 3
+  def payload_generation("model_output_v1"), do: 3
   def payload_generation(schema) when schema in @legacy_payload_schemas, do: 1
   def payload_generation(@score_pitch_v2), do: 2
   def payload_generation(@phoneme_duration_v2), do: 2
@@ -116,6 +118,10 @@ defmodule Neume.Pin.Schema do
   @doc "分派 pitch payload 的 schema 名。"
   @spec pitch_payload(term()) :: {:ok, String.t()} | {:error, term()}
   def pitch_payload(points) when is_list(points), do: {:ok, @pitch_points_v1}
+
+  def pitch_payload(%{schema: "model_output_v1", channel: "pitch", values: values})
+      when is_list(values), do: {:ok, "model_output_v1"}
+
   def pitch_payload(%{format: :pitch_curve_v1}), do: {:ok, @pitch_curve_v1}
 
   def pitch_payload(%{schema: @score_pitch_v2, coordinates: @note_tick, values: values})
@@ -142,6 +148,9 @@ defmodule Neume.Pin.Schema do
   @doc "分派 duration payload 的 schema 名。"
   @spec duration_payload(term()) :: {:ok, String.t()} | {:error, term()}
   def duration_payload(durations) when is_list(durations), do: {:ok, @phoneme_duration_v1}
+
+  def duration_payload(%{schema: "model_output_v1", channel: "duration", values: values})
+      when is_list(values), do: {:ok, "model_output_v1"}
 
   def duration_payload(%{schema: @phoneme_duration_v2, values: values})
       when is_list(values),

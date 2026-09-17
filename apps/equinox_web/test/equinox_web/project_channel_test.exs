@@ -5,6 +5,112 @@ defmodule EquinoxWeb.ProjectChannelTest do
   @endpoint EquinoxWeb.Endpoint
   @moduletag capture_log: true
 
+  test "输出提取、修改、漂移、沿用和撤销贯通异步桥", %{socket: socket, project_id: id} do
+    assert {:ok, _} = Neumu.edit_note(id, "lead", "n1", %{lyric: "la"})
+    ref = push(socket, "extract_output", %{"track_id" => "lead"})
+    assert_reply(ref, :ok, %{data: output}, 2000)
+    token = Jason.decode!(Jason.encode!(output.token))
+    refute Map.has_key?(output.regions["n1"].pitch, :base)
+
+    ref =
+      push(socket, "put_output", %{
+        "track_id" => "lead",
+        "note_id" => "n1",
+        "channel" => "pitch",
+        "values" => [[0, 64], [10, 65]],
+        "digest" => output.regions["n1"].pitch.digest,
+        "token" => token
+      })
+
+    assert_reply(ref, :ok, %{data: mounted}, 2000)
+    assert {:ok, %{tracks: [%{pins: [pin]}]}} = Neumu.snapshot(id)
+    assert pin.payload.schema == "model_output_v1"
+    assert {:ok, _} = Neumu.edit_note(id, "lead", "n1", %{pitch: 62})
+    ref = push(socket, "check", %{})
+    assert_reply(ref, :ok, %{data: %{status: :failed, entries: [%{channel: :pitch}]}}, 2000)
+    assert {:ok, current} = Neumu.extract_output(id, "lead")
+
+    ref =
+      push(socket, "repatch_output", %{
+        "track_id" => "lead",
+        "patch_id" => pin.id,
+        "token" => Jason.decode!(Jason.encode!(current.token))
+      })
+
+    assert_reply(ref, :ok, %{data: %{result: %{status: :repatched}}}, 2000)
+    assert {:ok, %{status: :ok}} = Neumu.check(id)
+    assert {:ok, _} = Neumu.undo(id)
+    assert {:ok, %{status: :failed}} = Neumu.check(id)
+    assert {:ok, ^mounted} = Neumu.undo(id)
+    assert {:ok, %{status: :ok}} = Neumu.check(id)
+  end
+
+  test "输出令牌拒绝旧版本和伪造底料，模型完成后的提交仍检查版本", %{socket: socket, project_id: id} do
+    {:ok, output} = Neumu.extract_output(id, "lead")
+    original = output.token
+    assert {:ok, _} = Neumu.edit_note(id, "lead", "n1", %{pitch: 62})
+
+    assert {:error, :stale_output_context} =
+             Neumu.put_output(
+               id,
+               "lead",
+               "n1",
+               :pitch,
+               [[0, 64]],
+               output.regions["n1"].pitch.digest,
+               original
+             )
+
+    assert {:ok, _} = Neumu.undo(id)
+    # cursor 回到原节点，seq 仍可识别中途产生过新历史。
+    assert {:error, :stale_output_context} =
+             Neumu.put_output(
+               id,
+               "lead",
+               "n1",
+               :pitch,
+               [[0, 64]],
+               output.regions["n1"].pitch.digest,
+               original
+             )
+
+    {:ok, multi, cursor} = GenServer.call(Neumu.ProjectServer.whereis(id), :preflight_context)
+    expected = {cursor, multi.session.history.seq}
+
+    {:ok, prepared} =
+      Neume.MultiTrack.put_output(
+        multi,
+        "lead",
+        "n1",
+        :pitch,
+        [[0, 64]],
+        output.regions["n1"].pitch.digest
+      )
+
+    assert {:ok, changed} = Neumu.edit_note(id, "lead", "n1", %{pitch: 63})
+
+    assert {:error, :stale_output_context} =
+             GenServer.call(
+               Neumu.ProjectServer.whereis(id),
+               {:commit_output, expected, prepared, nil}
+             )
+
+    assert {:ok, ^changed} = Neumu.history_pin(id)
+
+    ref =
+      push(socket, "put_output", %{
+        "track_id" => "lead",
+        "note_id" => "n1",
+        "channel" => "pitch",
+        "values" => [[0, 64]],
+        "digest" => "forged",
+        "token" => Map.put(Jason.decode!(Jason.encode!(original)), "base", %{})
+      })
+
+    assert_reply(ref, :error, %{reason: ":invalid_output_token"})
+    assert {:ok, %{tracks: [%{pins: []}]}} = Neumu.snapshot(id)
+  end
+
   defp token(socket) do
     ref = push(socket, "preflight_pin", %{"track_id" => "lead", "note_id" => "n1"})
     assert_reply(ref, :ok, %{data: token})

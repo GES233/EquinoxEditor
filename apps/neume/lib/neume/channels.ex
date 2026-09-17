@@ -44,10 +44,12 @@ defmodule Neume.Channels.PitchPin do
        %Descriptor{
          payload_schema: schema,
          base_schema: base_schema(schema),
-         carrier: :score
+         carrier: if(schema == "model_output_v1", do: :model_output, else: :score)
        }}
     end
   end
+
+  defp base_schema("model_output_v1"), do: "model_output_base_v1"
 
   defp base_schema(schema) when schema in [@score_pitch_v2, @pitch_curve_v2],
     do: @score_region_v1
@@ -57,6 +59,9 @@ defmodule Neume.Channels.PitchPin do
   # v2 底料：谱面区域事实（track + 锚定音符 + 坐标系）。不含绝对起点
   # （拖动跟随）、不含歌词/音素/声库（Pin<S> 与语音学解耦）。
   @impl Neume.Pin.Semantics
+  def base(_context, _anchor, %Descriptor{base_schema: "model_output_base_v1"}, _payload),
+    do: {:error, :output_extraction_required}
+
   def base(%Context{} = context, anchor, %Descriptor{base_schema: @score_region_v1}, _payload),
     do: score_region_base(context, anchor)
 
@@ -207,15 +212,19 @@ defmodule Neume.Channels.DurationPin do
        %Descriptor{
          payload_schema: schema,
          base_schema: base_schema(schema),
-         carrier: :correspondence
+         carrier: if(schema == "model_output_v1", do: :model_output, else: :correspondence)
        }}
     end
   end
 
+  defp base_schema("model_output_v1"), do: "model_output_base_v1"
   defp base_schema(@phoneme_duration_v2), do: @correspondence_v1
   defp base_schema(_legacy), do: Schema.base_pin_input_v1()
 
   @impl Neume.Pin.Semantics
+  def base(_context, _anchor, %Descriptor{base_schema: "model_output_base_v1"}, _payload),
+    do: {:error, :output_extraction_required}
+
   def base(%Context{} = context, anchor, %Descriptor{base_schema: @correspondence_v1}, _payload),
     do: correspondence_base(context, anchor)
 

@@ -49,6 +49,16 @@ export interface CheckReport {
 
 export type CheckState = 'unchecked' | 'checking' | 'ok' | 'failed' | 'error';
 export interface PinToken { track_id: string; note_id: string; history_pin: number }
+export interface OutputToken { track_id: string; history_pin: number; history_seq: number }
+export interface OutputProjection {
+  digest: string; values: number[]; segments: { language: string; phoneme: string; start: number; end: number }[];
+  start_frame: number; end_frame: number; start_sec: number; frame_rate: number; blocked: boolean;
+}
+export interface OutputExtraction {
+  token: OutputToken;
+  regions: Record<string, { duration?: OutputProjection; pitch?: OutputProjection }>;
+  entries: CheckEntry[];
+}
 export interface EditResult {
   history_pin: number;
   results?: { patch_id: string; status: 'repatched' | 'degraded'; reason?: unknown }[];
@@ -72,4 +82,5 @@ export type EditIntent =
   | { command: 'replace_pitch'; track_id: string; patch_id: string; points: PitchPoint[] }
   | { command: 'repatch'; track_id: string; patch_ids: string[] }
   | { command: 'unmount_pitch'; track_id: string; note_id: string }
+  | { command: 'unmount_output'; track_id: string; note_id: string; channel: 'pitch' | 'duration' }
   | { command: 'undo' | 'redo' };

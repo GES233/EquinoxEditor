@@ -63,6 +63,9 @@ defmodule NeumeOpuDs.Runtime do
   defdelegate analyze(state, snapshot, pins, globals, track_id), to: Pipeline
 
   @impl true
+  defdelegate output_packets(state, snapshot, pins, globals, track_id), to: Pipeline
+
+  @impl true
   defdelegate phonemes(state, snapshot, track_id), to: Pipeline
 
   @impl true

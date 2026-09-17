@@ -301,7 +301,10 @@ defmodule NeumeOpuDs.Pipeline.Steps.Analysis do
     end
   end
 
-  defp probe(%{notes: notes} = plan, opts) when is_list(notes) and notes != [] do
+  @doc false
+  def probe(plan, opts, action \\ "check")
+
+  def probe(%{notes: notes} = plan, opts, action) when is_list(notes) and notes != [] do
     client = Keyword.fetch!(opts, :client)
     config = Keyword.fetch!(opts, :worker_config)
     globals = plan.globals
@@ -317,7 +320,7 @@ defmodule NeumeOpuDs.Pipeline.Steps.Analysis do
          {:ok, result} <-
            client.call(
              %{
-               action: "check",
+               action: action,
                words: prepared.words,
                globals: globals,
                overrides: overrides,
@@ -333,7 +336,7 @@ defmodule NeumeOpuDs.Pipeline.Steps.Analysis do
          groups: prepared.groups,
          overrides: overrides,
          ph_dur: Map.fetch!(result, "ph_dur"),
-         pitch_pred_midi: Map.fetch!(result, "pitch_pred_midi"),
+         pitch_pred_midi: Map.get(result, "pitch_pred_midi", []),
          total_frames: Map.get(result, "total_frames", Enum.sum(Map.fetch!(result, "ph_dur"))),
          boundaries: boundaries,
          note_phonemes: note_phonemes,
@@ -344,8 +347,8 @@ defmodule NeumeOpuDs.Pipeline.Steps.Analysis do
     end
   end
 
-  defp probe(%{notes: []}, _opts), do: {:error, :empty_score}
-  defp probe(plan, _opts), do: {:error, {:invalid_score_plan, plan}}
+  def probe(%{notes: []}, _opts, _action), do: {:error, :empty_score}
+  def probe(plan, _opts, _action), do: {:error, {:invalid_score_plan, plan}}
 
   # G2P（按需）+ 词/组装配：probe 与挂载 probe（`NeumeOpuDs.Pipeline.phonemes/3`）
   # 的共用前段。不做任何模型推理、不消费 overrides——pin 不改变音素身份；

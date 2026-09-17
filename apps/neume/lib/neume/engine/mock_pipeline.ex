@@ -100,9 +100,17 @@ defmodule Neume.Engine.MockPipeline do
     with {:ok, phrases} <- Neume.Phrase.split(snapshot, track_id, pins) do
       {results, errors} =
         Enum.reduce(phrases, {[], []}, fn phrase, {results, errors} ->
-          case analyze(state, phrase.snapshot, phrase.pins, globals, track_id) do
+          result =
+            if Neume.Output.pins?(pins),
+              do: analyze_output(state, phrase.snapshot, phrase.pins, globals, track_id),
+              else: analyze(state, phrase.snapshot, phrase.pins, globals, track_id)
+
+          case result do
             {:ok, analysis} ->
               {[{phrase, analysis} | results], errors}
+
+            {:error, {:check_failed, entries}} ->
+              {results, Enum.map(entries, &Map.put(&1, :track_id, track_id)) ++ errors}
 
             {:error, reason} ->
               error = %{
@@ -126,13 +134,43 @@ defmodule Neume.Engine.MockPipeline do
   @impl true
   @spec analyze(state(), Snapshot.t(), map(), map(), term()) ::
           {:ok, Analysis.t()} | {:error, term()}
-  def analyze(
-        %{ticks_per_frame: ticks_per_frame},
-        %Snapshot{} = snapshot,
-        pins,
-        _globals,
-        track_id
-      ) do
+  def analyze(state, snapshot, pins, globals, track_id) do
+    if Neume.Output.pins?(pins) do
+      analyze_output(state, snapshot, pins, globals, track_id)
+    else
+      analyze_legacy(state, snapshot, pins, globals, track_id)
+    end
+  end
+
+  defp analyze_output(state, snapshot, pins, globals, track_id) do
+    with {:ok, packet} <-
+           Neume.OutputPipeline.run(
+             Neume.Engine.MockOutput,
+             state,
+             snapshot,
+             pins,
+             globals,
+             track_id
+           ),
+         [] <- packet.entries do
+      {:ok, Neume.Engine.MockOutput.analysis(packet)}
+    else
+      [_ | _] = entries -> {:error, {:check_failed, entries}}
+      error -> error
+    end
+  end
+
+  @impl true
+  def output_packets(state, snapshot, pins, globals, track_id),
+    do: Neume.Engine.MockOutput.packets(state, snapshot, pins, globals, track_id)
+
+  defp analyze_legacy(
+         %{ticks_per_frame: ticks_per_frame},
+         %Snapshot{} = snapshot,
+         pins,
+         _globals,
+         track_id
+       ) do
     with {:ok, view} <- Map.fetch(snapshot.tracks, track_id),
          :ok <- ensure_vocal(view),
          :ok <- validate_pitch_pins(view.elements, Map.get(pins, :pitch, %{})) do
@@ -187,7 +225,38 @@ defmodule Neume.Engine.MockPipeline do
   @impl true
   @spec render(state(), Snapshot.t(), map(), map(), term()) ::
           {:ok, Neume.RenderArtifact.t()} | {:error, term()}
-  def render(%{compiled: compiled}, %Snapshot{} = snapshot, pins, _globals, track_id) do
+  def render(state, snapshot, pins, globals, track_id) do
+    if Neume.Output.pins?(pins) do
+      with {:ok, results, []} <- analyze_phrases(state, snapshot, pins, globals, track_id),
+           {:ok, analysis} <- Analysis.merge(results) do
+        owners =
+          Map.new(
+            for s <- analysis.phonemes,
+                s.end_frame > s.start_frame,
+                i <- s.start_frame..(s.end_frame - 1),
+                do: {i, s.note_id}
+          )
+
+        ids = for i <- 0..(analysis.total_frames - 1), do: Map.get(owners, i)
+
+        {:ok,
+         %Neume.RenderArtifact{
+           frame_count: analysis.total_frames,
+           midi: analysis.pitch_pred_midi,
+           note_ids: ids,
+           phonemes: analysis.phonemes,
+           phoneme_durations: analysis.phoneme_durations
+         }}
+      else
+        {:ok, _, entries} -> {:error, {:check_failed, entries}}
+        error -> error
+      end
+    else
+      render_legacy(state, snapshot, pins, globals, track_id)
+    end
+  end
+
+  defp render_legacy(%{compiled: compiled}, %Snapshot{} = snapshot, pins, _globals, track_id) do
     data =
       snapshot
       |> base_data(track_id)

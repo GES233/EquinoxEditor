@@ -1,5 +1,5 @@
 import { Socket, type Channel } from 'phoenix';
-import type { CheckReport, ConnectionState, EditIntent, EditResult, PinToken, Snapshot, Voicebank } from './types';
+import type { CheckReport, ConnectionState, EditIntent, EditResult, PinToken, Snapshot, Voicebank, OutputExtraction, OutputToken, PitchPoint } from './types';
 
 interface Callbacks {
   snapshot: (snapshot: Snapshot) => void;
@@ -94,6 +94,17 @@ export class ProjectClient {
 
   voicebanks() { return this.request<Voicebank[]>('voicebanks'); }
   check() { return this.request<CheckReport>('check', {}, 120_000); }
+  extractOutput(track_id: string) { return this.request<OutputExtraction>('extract_output', { track_id }, 120_000); }
+  async putOutput(track_id: string, note_id: string, channel: 'duration' | 'pitch', values: number[] | PitchPoint[], digest: string, token: OutputToken) {
+    const result = await this.request<number>('put_output', { track_id, note_id, channel, values, digest, token }, 120_000);
+    await this.refresh();
+    return result;
+  }
+  async repatchOutput(track_id: string, patch_id: string, token: OutputToken) {
+    const result = await this.request<{ result: { status: string } }>('repatch_output', { track_id, patch_id, token }, 120_000);
+    await this.refresh();
+    return result;
+  }
   preflight(track_id: string, note_id: string) {
     return this.request<PinToken>('preflight_pin', { track_id, note_id });
   }

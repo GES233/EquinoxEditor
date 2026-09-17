@@ -241,6 +241,12 @@ class DiffSingerEngine:
         return self._g2p[language]
 
     def check(self, words, globals_, overrides=None, groups=None):
+        result = self.duration_output(words, globals_, overrides, groups)
+        result.update(self.pitch_output(words, result["ph_dur"], globals_, overrides, groups))
+        return result
+
+    def duration_output(self, words, globals_, overrides=None, groups=None):
+        """时长阶段的有效输出；保留上游与旧时长约束，不应用输出型干预。"""
         words, owners, remap = self._expand(words, groups)
         overrides = self._remap_overrides(overrides, remap)
         duration_encoded = self._encode(words, "duration")
@@ -256,18 +262,30 @@ class DiffSingerEngine:
             owners,
         )
         ph_dur = np.asarray([alignment["ph_dur"]], dtype=np.int64)
-        pitch_encoded = self._encode(words, "pitch")
-        pitch = self._pitch_forward(
-            words, pitch_encoded, ph_dur, globals_, overrides or []
-        )
         return {
             "ph_dur": ph_dur[0].tolist(),
-            "pitch_pred_midi": pitch[0].tolist(),
             "total_frames": int(ph_dur.sum()),
             "phonemes": alignment["phonemes"],
             "lead_in_sec": alignment["lead_in_sec"],
             "note_phonemes": note_phonemes(words, owners),
         }
+
+    def pitch_output(self, words, durations, globals_, overrides=None, groups=None):
+        """消费 DAG 上游已经合并的时长，只预测 pitch，不跑声学模型。"""
+        if not isinstance(durations, list) or any(
+            not isinstance(value, int) or isinstance(value, bool) or value < 0
+            for value in durations
+        ):
+            raise ValueError("output durations must be nonnegative integer frames")
+        words, _owners, remap = self._expand(words, groups)
+        overrides = self._remap_overrides(overrides, remap)
+        ph_dur = np.asarray([durations], dtype=np.int64)
+        count = sum(len(word_parts(word)[0]) for word in words)
+        if ph_dur.shape != (1, count) or np.any(ph_dur < 0) or not ph_dur.sum():
+            raise ValueError("invalid output duration shape or values")
+        encoded = self._encode(words, "pitch")
+        pitch = self._pitch_forward(words, encoded, ph_dur, globals_, overrides or [])
+        return {"pitch_pred_midi": pitch[0].tolist()}
 
     def expand(self, words, groups=None):
         """轻量 probe：只做组展开，返回逐原词（音符）的音素序列。
@@ -682,6 +700,10 @@ def dispatch(engine, request):
             request.get("overrides"),
             request.get("groups"),
         )
+    if action == "duration":
+        return engine.duration_output(request["words"], globals_, request.get("overrides"), request.get("groups"))
+    if action == "pitch":
+        return engine.pitch_output(request["words"], request["ph_dur"], globals_, request.get("overrides"), request.get("groups"))
     if action == "render":
         return engine.render(
             request["words"],

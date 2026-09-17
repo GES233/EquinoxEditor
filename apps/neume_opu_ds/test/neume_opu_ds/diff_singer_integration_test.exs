@@ -17,6 +17,61 @@ defmodule Neume.DiffSingerIntegrationTest do
   @voicebank "E:/ProgramAssets/OpenUTAUSingers/Asaritsu"
   @python "D:/CodeRepo/Qy/coconut/.venv/Scripts/python.exe"
 
+  @tag tmp_dir: "neighbor-output"
+  test "改 A 导致 B 的模型输出漂移时，冲突定位在 B", %{tmp_dir: tmp_dir} do
+    {:ok, editor} = asaritsu_editor(tmp_dir, "neighbor")
+    {:ok, editor} = Editor.insert_note(editor, "a", :head, {0, 480}, %{pitch: 60, lyric: "啦"})
+    {:ok, editor} = Editor.insert_note(editor, "b", "a", {480, 960}, %{pitch: 62, lyric: "米"})
+    {:ok, original} = Neume.OutputEditor.extract(editor)
+
+    {:ok, editor} =
+      Neume.OutputEditor.put(editor, "b", :pitch, [[0, 65]], original.regions["b"].pitch.digest)
+
+    {:ok, editor} = Editor.edit_note(editor, "a", %{pitch: 72})
+    assert {:error, {:check_failed, entries}} = Editor.check(editor)
+    assert Enum.any?(entries, &(&1.note_id == "b" and &1.reason == :base_changed))
+  end
+
+  @tag tmp_dir: "output"
+  test "Pure-FP 输出可重放，duration 先于 pitch 合并，重挂后实际渲染", %{tmp_dir: tmp_dir} do
+    assert {:ok, editor} =
+             Editor.new(
+               voicebank_path: System.get_env("DS_VOICEBANK") || @voicebank,
+               voicebank_mode: :modified,
+               python: [System.get_env("DS_PYTHON") || @python],
+               output_dir: tmp_dir,
+               speaker: "Normal",
+               steps: 2,
+               seed: 0
+             )
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "啦"})
+
+    assert {:ok, first} = Neume.OutputEditor.extract(editor)
+    assert {:ok, ^first} = Neume.OutputEditor.extract(editor)
+    pitch = first.regions["n1"].pitch
+    duration = first.regions["n1"].duration
+    assert [a, b] = duration.values
+    assert b > 1
+
+    assert {:ok, editor} =
+             Neume.OutputEditor.put(editor, "n1", :pitch, [[0, 64], [10, 65]], pitch.digest)
+
+    assert {:ok, editor} =
+             Neume.OutputEditor.put(editor, "n1", :duration, [a + 1, b - 1], duration.digest)
+
+    assert {:error, {:check_failed, entries}} = Editor.check(editor)
+    assert [%{channel: :pitch, patch_id: patch_id}] = entries
+    assert {:ok, editor, %{status: :repatched}} = Neume.OutputEditor.repatch(editor, patch_id)
+    assert {:ok, editor, analysis} = Editor.analyze(editor)
+    assert Enum.slice(analysis.pitch_pred_midi, pitch.start_frame, 2) == [64.0, 64.1]
+    assert {:ok, _, artifact} = Editor.render(editor)
+    assert File.regular?(artifact.path)
+    assert artifact.phoneme_durations == analysis.phoneme_durations
+    assert artifact.phonemes == analysis.phonemes
+  end
+
   @tag tmp_dir: "asaritsu"
   test "同一 Asaritsu 的 Stock/Modified 是独立可渲染声库且缓存不串", %{tmp_dir: tmp_dir} do
     voicebank = System.get_env("DS_VOICEBANK") || @voicebank
@@ -161,6 +216,7 @@ defmodule Neume.DiffSingerIntegrationTest do
              Editor.insert_note(editor, "n3", "n2", {960, 1440}, %{pitch: 64, lyric: "啦"})
 
     assert {:ok, editor, analysis} = Editor.analyze(editor)
+
     assert [%{id: "n1", phonemes: [_ | _]}, %{id: "n2", phonemes: [_ | _]}, %{id: "n3"}] =
              analysis.notes
 

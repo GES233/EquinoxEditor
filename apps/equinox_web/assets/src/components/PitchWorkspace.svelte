@@ -18,6 +18,7 @@
   let pins = $derived(track?.pins.filter((pin) => pin.channel === 'pitch' && pin.anchor.refs.includes(note?.id ?? '')) ?? []);
   let stored = $derived(note ? pitchPoints(pins[0], note) : []);
   let supported = $derived(stored !== null && pins.length <= 1);
+  let outputPin = $derived(pins.some((pin) => (pin.payload as { schema?: string })?.schema === 'model_output_v1'));
   let points = $state<PitchPoint[]>([]);
   let editing = $state(false);
   let details = $state<HTMLDivElement>();
@@ -42,7 +43,7 @@
 
 <PianoRoll {track} {historyPin} {disabled} {onmove} {points} editingPitch={editing && supported} {dirty} {issue} ondraft={(value) => { points = value; }} onissue={() => { details?.focus(); details?.scrollIntoView({ block: 'nearest' }); }} />
 
-{#if editing || (pins.length && !supported)}
+{#if editing || (pins.length && !supported && !outputPin)}
   <PitchControls {points} duration={note ? note.end_tick-note.start_tick : 0} {disabled} {dirty} hasPin={pins.length > 0} {supported}
     ondraft={(value) => { points = value; }} onapply={() => onapply([...points].sort((a,b) => a[0]-b[0]), pins[0]?.id)}
     oncancel={() => { points = (stored ?? []).map((p) => [...p] as PitchPoint); editing = false; }} {onremove} />
@@ -59,13 +60,14 @@
         <details><summary>查看详情</summary><code>{JSON.stringify(entry.reason)}</code></details>
       </div>
     {/each}
-    {#if issue && pins.length}
+    {#if issue && pins.length && !outputPin}
       <div class="actions">
         <button {disabled} onclick={() => onrepatch(pins.map((pin) => pin.id))}>尝试沿用调校</button>
         <button disabled={disabled || !supported} onclick={begin}>重新编辑调校</button>
         <button {disabled} onclick={onremove}>移除音高调校</button>
       </div>
     {/if}
+    {#if outputPin}<p>请在下方「模型输出编辑」提取当前输出，确认或移除修改。</p>{/if}
   </div>
 {/if}
 

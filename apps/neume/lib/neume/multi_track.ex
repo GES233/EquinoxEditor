@@ -399,6 +399,24 @@ defmodule Neume.MultiTrack do
   def mount_pitch(runtime, track_id, note_id, points, opts \\ []),
     do: invoke_track(runtime, track_id, &Editor.mount_pitch(&1, note_id, points, opts))
 
+  @doc "只读提取 channel 输出与局部底料。"
+  def extract_output(runtime, track_id) do
+    with {:ok, editor} <- attach_editor(runtime, track_id), do: Neume.OutputEditor.extract(editor)
+  end
+
+  @doc "在提取时的输出上挂载或替换修改，一条历史边。"
+  def put_output(runtime, track_id, note_id, channel, values, digest),
+    do:
+      invoke_track(
+        runtime,
+        track_id,
+        &Neume.OutputEditor.put(&1, note_id, channel, values, digest)
+      )
+
+  @doc "显式接受当前输出底料；无法表达时保留原件。"
+  def repatch_output(runtime, track_id, patch_id),
+    do: invoke_track(runtime, track_id, &Neume.OutputEditor.repatch(&1, patch_id))
+
   @spec mount_pitch_curve(t(), Track.track_id(), term(), term(), keyword()) ::
           {:ok, t()} | {:error, term()}
   def mount_pitch_curve(runtime, track_id, note_id, curve, opts \\ []),

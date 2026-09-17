@@ -1103,7 +1103,8 @@ defmodule Neume.Editor do
   # legacy 批次回退 `checked_pins/1` 兼容入口；批次中出现 v2 schema 直接
   # `{:unsupported_pin_schema, schema}`——绝不把 v2 payload 塞进 legacy
   # 路径猜解。
-  defp lowered_pins(%__MODULE__{} = editor, request) do
+  @doc false
+  def lowered_pins(%__MODULE__{} = editor, request) do
     with {:ok, resolved} <- resolved_pins(editor) do
       cond do
         function_exported?(editor.pipeline, :lower_pins, 4) ->
@@ -1160,7 +1161,9 @@ defmodule Neume.Editor do
             channel: patch.channel,
             descriptor: descriptor,
             anchor: patch.anchor,
-            payload: patch.tamale_patch.payload
+            payload: patch.tamale_patch.payload,
+            base_digest: patch.tamale_patch.base_digest,
+            patch_id: patch.id
           }
 
           {:cont, {:ok, [resolved | acc]}}

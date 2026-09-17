@@ -49,6 +49,9 @@ defmodule Neume.Runtime do
               {:ok, Neume.Analysis.t()} | {:error, term()}
 
   @callback phonemes(state(), Snapshot.t(), term()) :: {:ok, map()} | {:error, term()}
+  @doc "提取带局部输出底料的逐乐句执行结果；由 runtime 的 DAG 应用输出干预。"
+  @callback output_packets(state(), Snapshot.t(), pins(), map(), term()) ::
+              {:ok, [map()]} | {:error, term()}
   @callback render(state(), Snapshot.t(), pins(), map(), term()) ::
               {:ok, Neume.RenderArtifact.t()} | {:error, term()}
   @callback render_checked(state(), Snapshot.t(), list(), map(), term()) ::
@@ -67,7 +70,8 @@ defmodule Neume.Runtime do
   @callback lower_pins(state(), Snapshot.t(), [Neume.Pin.Resolved.t()], term()) ::
               {:ok, pins()} | {:error, term()}
 
-  @optional_callbacks render_checked: 5,
+  @optional_callbacks output_packets: 5,
+                      render_checked: 5,
                       lower_pins: 4,
                       checked_pins: 1,
                       phonology_digest: 1,
