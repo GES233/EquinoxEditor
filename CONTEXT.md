@@ -58,12 +58,13 @@ Neume → 引擎；凡 Host/facade 方向取挂载前状态，一律说"预检�
 | 概念 | 领域正名 | coconut | coconut_oi | neume | neumu |
 |---|---|---|---|---|---|
 | 用户对模型生成施加的意图 | **干预 intervention** | 概念（载体是 patch） | 概念（翻译成 Oi data） | pin 是它的身份具体化，不叫 intervention | 手势 |
-| 编辑载体（可 undo 的历史单元） | patch | `Coconut.Edit.Patch` | — | — | — |
+| 干预载体（内容、锚与底料摘要） | patch | `Coconut.Edit.Patch`；挂载/卸载/重挂经 command 入史 | — | pin 语义解释同一载体 | — |
+| 持久化的历史写记录 | command | `Coconut.Edit.Command`；覆盖音符、轨道、patch 等写入 | — | 编辑手势委托 Coconut | facade 命令串行入史 |
 | 底座 patch（依赖层） | tamale patch | `%Patch{tamale_patch: %Tamale.Patch{}}` | — | — | — |
 | 引擎消费的数据切面 | channel | `Coconut.Render.Channel`；`Coconut.Render.Channels.{Lyric,Duration,Pitch}` | `port_map` | `Neume.Channels.{PitchPin,DurationPin}`——就是 channel，只是多实现 `Neume.Pin.Semantics` | 手势参数 `channel ∈ {:pitch, :duration}`（= channel 键） |
 | 引擎 base 输入 | base interventions | `Coconut.Session.interventions` | — | `Neume.TrackRuntime.interventions` | — |
 | 折叠后的引擎输入 | resolved interventions | `Resolve.run_check/3` 返回的 `:interventions` | `Assemble.assemble/2` | — | — |
-| 身份单元（存活/裁决对象） | pin | 无此概念 | — | `Neume.Pin.*`、`Neume.Identity` | snapshot 的 `pins` |
+| 干预的身份语义（存活/裁决对象） | pin | 无此概念 | — | `Neume.Pin.*`、`Neume.Identity`；不另存实体 | snapshot 的 `pins` |
 | pin 承载的领域对象分类 | carrier | — | — | `:score` / `:phonology` / `:correspondence` | — |
 | 身份底料（被签名的输入事实） | base | `base_digest`（tamale） | — | base schema `pin_input_v1` / `score_region_v1` / `phoneme_correspondence_v1` | 预检令牌不携底料 |
 | 挂载前预检（两阶段挂载第一阶段） | **pin 挂载预检 preflight** | — | — | `Neume.MultiTrack.preflight_pin/3`、`Editor.derive_base/2` | `Neumu.preflight_pin/3`；令牌 = `%{track_id, note_id, history_pin}` |
@@ -77,9 +78,9 @@ Neume → 引擎；凡 Host/facade 方向取挂载前状态，一律说"预检�
 | D1 | `intervention` 在文档里是万能词（动作 / 载体 / 引擎输入 都叫它） | 文档 ↔ 全部层 | 已拍板（Q3）：只做领域概念正名 |
 | D2 | `interventions` 键同时指 base 输入与折叠结果 | coconut 层内 | **已勘误**：不是分歧 |
 | D3 | `channel` 三层三义 | 跨层 | **已勘误**：不是分歧 |
-| D4 | "patch" 跨层重名：`Tamale.Patch`（依赖层）与 `Coconut.Edit.Patch`（载体层） | 依赖 ↔ coconut | 开放（Q6） |
+| D4 | "patch" 跨层重名：`Tamale.Patch`（依赖层）与 `Coconut.Edit.Patch`（载体层） | 依赖 ↔ coconut | 已拍板（Q7）：tamale patch 写全名 |
 | D5 | `probe` 层内两义：向引擎索取物化结果 vs 纯派生 | 层内 | 已拍板（Q4） |
-| D6 | pin 与 patch 的边界叙述：谁是身份、谁是载体 | neume ↔ coconut | 开放（ADR 0001 候补） |
+| D6 | pin 与 patch 的边界叙述：谁是身份、谁是载体 | neume ↔ coconut | ADR 0001 已接受；pin 不另存实体，History 记录 command |
 | D7 | `pin` 层内两义：History cursor vs 在册干预载体 | neume / neumu 层内 | 已拍板（Q5）：裸 pin 归干预 |
 | D8 | `base` 多义：History `base_seq`（窗口根）vs 底料 vs base interventions | coconut 层内 + 跨层 | 已拍板（Q6）：裸 base = 底料 |
 | D9 | `patch` 三处同名：`Coconut.Edit.Patch` / `Tamale.Patch` / `Coconut.Pickle.Patch` | 依赖 ↔ coconut | 已拍板（Q7）：裸 patch 归载体，tamale 写全名 |

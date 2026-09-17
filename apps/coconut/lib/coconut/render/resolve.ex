@@ -155,9 +155,8 @@ defmodule Coconut.Render.Resolve do
   end
 
   defp resolve_one(ws, %Patch{} = patch, spec) do
-    # probe 期 channel（§6.6 身份/输出底料）：底料在 workspace 之外物化，
-    # 静态 check 跳过 digest 裁决，直接放行 payload；引擎 probe 用
-    # `Tamale.Patch.resolve/2` 对新底料重新裁决。
+    # :probe channel 的 digest 裁决由宿主负责；此处只放行 payload，
+    # 不表示身份已通过，也不要求底料来自模型输出（见 Channel 契约）。
     if probe_stage?(spec) do
       {:ok, patch.tamale_patch.payload}
     else

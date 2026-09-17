@@ -5,13 +5,15 @@
 ## 决策
 
 1. **干预（intervention）是领域概念，不是数据结构。** 它指"用户对模型生成结果
-   施加的意图"。它在数据结构层面有两级具体化，各有专名，任何文档不得互相替代：
+   施加的意图"。其载体与身份语义各有专名，文档不得混用：
    - **`patch`（coconut 载体）** = `Coconut.Edit.Patch`：id + track_id + anchor +
-     channel + tamale 底座。它是可 undo 的历史单元，也是 Coconut History 里唯一
-     可持久化的编辑单元。
-   - **`pin`（neume 身份）** = `Neume.Pin.Descriptor/Context/Semantics/Schema`
-     与 `Neume.Identity`：它是存活与裁决单元（payload schema、base schema、
-     carrier）。
+     channel + tamale 底座，保存干预的内容、位置与底料摘要。挂载、卸载、
+     重挂经 `Coconut.Edit.Command` 进入 History；History 边记录的是 command，
+     音符、轨道等其他编辑也走同一历史，不必伪装成 patch。
+   - **`pin`（neume 身份语义）** = Neume 对已挂载干预的解释与裁决，
+     由 payload schema 决定 carrier、base schema 与可表达性规则。
+     `Descriptor/Context/Semantics/Schema` 与 `Neume.Identity` 实现这些规则；
+     pin 不另存一份实体，其内容与签名仍由同一 patch 承载。
 2. **层内唯一律**：同一层（同一 app / 同一命名空间）内，一个词只允许一个意思；
    跨层同名允许，但语义必须一致，否则登记为两个概念并改名。
 3. **限定词制**：裸词留给该层/该领域的核心概念，任何次要义必须带限定词。已按此
@@ -39,17 +41,15 @@ pin），这不是错误，而是分层职责的真实差异：coconut 管"能�
 - **语义迁移留下的化石名**：`probe_pin` / `probe_base` 在 2026-09-05 身份底料改
   为输入事实签名之后已不再调 worker（见
   `apps/neume/docs/decision-2026-09-pin-input-base.md`），名字却留在原地，于是
-  neume 层内出现了"probe 表示不 probe"的反义。改名（`preflight_pin`）已登记，
-  属施工批次。
+  neume 层内出现了"probe 表示不 probe"的反义。现已改名为 `preflight_pin`。
 
-不复用同名的代价是经常性的：`ProjectSnapshot` 里 `history_pin`（cursor）与
-`pins`（存活载体）并排出现；`patch.patch.payload` 需要读者在脑内展开一层；
-`apps/neume/docs/plan-2026-09-ui-facade-gestures.md` 至今教 UI 为一次纯函数调用
-准备"probe 待定"加载态。
+限定词仍有必要：`ProjectSnapshot` 里 `history_pin`（cursor）与 `pins`
+（干预投影）并排出现，但各自只有一个含义。
 
 ## 影响
 
 - 正名表与逐词判定记录：根 `CONTEXT.md`。
-- 本次不改代码标识符；改名候选（`preflight_pin`、`history_pin`、`root_seq`、
-  `Coconut.Edit.Patch` 的 `tamale_patch` 字段等）登记在 `CONTEXT.md` 的候选改名
-  清单，另立批次施工。
+- 2026-09-12 改名批次已落地：`preflight_pin`、`history_pin`、`root_seq`、
+  `Coconut.Edit.Patch.tamale_patch`；提交记录见 `CONTEXT.md`。
+- 2026-09-17 复核澄清：History 的持久化写记录为 `Command`；patch 是干预
+  载体，pin 是其 Neume 身份语义，不是第二套存储。

@@ -90,7 +90,7 @@ Python worker tests must run from `apps/neume_opu_ds` with the inference depende
 
 ## Neume Implementation Status
 
-更新日期：2026-09-12（迁移自 `apps/neume/STATUS.md`；不变量已并入上文 Architecture Boundaries，验证命令见 Validation 一节）。
+更新日期：2026-09-17（迁移自 `apps/neume/STATUS.md`；不变量已并入上文 Architecture Boundaries，验证命令见 Validation 一节）。
 
 ### 当前定位
 
@@ -303,14 +303,14 @@ Neume.Editor
 - `mix compile --force --warnings-as-errors`：通过。
 - `mix dialyzer`：`Total errors: 0`。
 - `git diff --check`：通过。
-- `apps/neume` 核心测试：`166 passed`（pin carrier 批次 A–E/E0 的
+- `apps/neume` 核心测试：`167 passed`（含混合 repatch 的 channel 语义隔离；pin carrier 批次 A–E/E0 的
   survival matrix、lowering 契约与 fallback 规则、repatch/replace_pin
   语义、`Neume.Phonology.Ref` 派生/解析与漂移矩阵；逐项清单见各测试
   文件）；`apps/neume_opu_ds` 适配器测试：`46 passed, 8 excluded`
   （excluded 为真声库集成测试，含双 runtime lowering 契约、v2 duration
   ref 降下标与失配 loud 报错、ref 契约向量与字典级 phonology digest
   门禁）。
-- `apps/neumu` 的 `mix test`：`75 passed, 1 excluded`（工程/渲染/事件/
+- `apps/neumu` 的 `mix test`：`76 passed, 1 excluded`（工程/渲染/事件/
   制品生命周期，facade 编辑命令与 pin 族手势全 matrix、试听支撑、
   tempo 族、E0b 音素查询，contract_test 完整契约回路；逐项清单见各
   测试文件）。

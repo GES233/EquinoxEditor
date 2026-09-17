@@ -51,7 +51,7 @@ defmodule Neume.Identity do
 
   自 2026-09-05 起不再是签名底料；只服务于 duration pin 的可表达性
   校验（`Neume.Channels.DurationPin.expressible?/4`，经
-  `Neume.Pin.Context.legacy_probe` 传入）与 Analysis 的词内下标平移。
+  `Neume.Pin.Context.note_phonemes` 传入）与 Analysis 的词内下标平移。
   """
   @type note_phonemes :: %{term() => [[String.t()]]}
 

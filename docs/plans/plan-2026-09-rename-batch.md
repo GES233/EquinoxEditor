@@ -28,7 +28,7 @@ DoD：
 
 - `Coconut.Render.Channel.resolve_stage/0 :: :static | :probe`、冲突 entry 的
   `stage: :probe`、Oi 端口 `{:analysis, :probe}`、`requires_probe?/2`、
-  `legacy_probe`、`probe_track_phonemes/1`、`{:probe_failed, _}`——都是
+  `probe_track_phonemes/1`、`{:probe_failed, _}`——都是
   **义 A**（向引擎索取物化结果），`probe` 在这里是正名。
 - `Editor.pin_entry/2` 的 `%{kind: :pin, ...}`——按 Q5 这是**正确**用法
   （kind 指用户 pin，不是 cursor）。

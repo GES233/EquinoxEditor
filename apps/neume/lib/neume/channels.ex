@@ -169,7 +169,7 @@ defmodule Neume.Channels.DurationPin do
     自 E0a 起仅经读档/兼容路径出现（`Neume.Editor.mount_phoneme_duration/4`
     的 list 入参换算为 v2 envelope 挂载），`ph_index` 越界等可表达性
     校验在消费边界（ScorePlan/Analysis）与 re-patch 手势里（后者读
-    `Context.legacy_probe` 的 probe 物化词内音素序列），行为不变；
+    `Context.note_phonemes` 的 probe 物化词内音素序列），行为不变；
   - `phoneme_duration_v2` envelope（批次 D）：stable segment ref
     （`%{unit, member, index}`，`Neume.Phonology.Ref`）替代裸
     `ph_index`，签 `phoneme_correspondence_v1` 底料——钉 track/note、
@@ -357,10 +357,10 @@ defmodule Neume.Channels.DurationPin do
     end
   end
 
-  defp probe_sequence(%Context{legacy_probe: nil}, note_id),
+  defp probe_sequence(%Context{note_phonemes: nil}, note_id),
     do: {:error, {:unknown_note, note_id}}
 
-  defp probe_sequence(%Context{legacy_probe: probe}, note_id) do
+  defp probe_sequence(%Context{note_phonemes: probe}, note_id) do
     case Map.fetch(probe, note_id) do
       {:ok, sequence} -> {:ok, sequence}
       :error -> {:error, {:unknown_note, note_id}}

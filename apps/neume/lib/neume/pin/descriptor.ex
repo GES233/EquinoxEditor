@@ -6,7 +6,7 @@ defmodule Neume.Pin.Descriptor do
   base schema；因此 carrier、payload schema 与 base schema 必须由
   payload 分派得出（`Neume.Pin.Semantics.describe/1`），不能挂在
   channel 模块级——同一个 `:pitch` channel 在迁移期同时承载 legacy
-  list / `pitch_curve_v1` 与未来的 `score_pitch_v2`。
+  list / `pitch_curve_v1` 与 v2 payload。
   """
 
   @enforce_keys [:payload_schema, :base_schema, :carrier]

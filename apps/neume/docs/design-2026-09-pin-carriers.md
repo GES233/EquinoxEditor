@@ -36,6 +36,11 @@
 > 音素序列查询 `Neumu.note_phonemes/1` 落地（UI 可直接拿 stable
 > segment ref 撰写 v2 envelope）。
 
+2026-09-17 复核：删除未使用的 `Context.phonology` 占位；物化序列槽位
+正名为 `note_phonemes`，用于 legacy/v2 duration 的可表达性校验，不进入
+签名底料。repatch 不再统一要求所有 pin 具有音素序列，交由各 channel
+判定；纯谱面 pin 在混合批次中也不依赖音素结果。
+
 ## 1. 问题
 
 当前 pitch 与 phoneme duration 是两个 Coconut channel，但共享
@@ -106,14 +111,13 @@ end
 
 defmodule Neume.Pin.Context do
   @enforce_keys [:track, :track_id]
-  defstruct [:track, :track_id, :voicebank_identity, phonology: nil, legacy_probe: nil, legacy_bases: nil]
+  defstruct [:track, :track_id, :voicebank_identity, note_phonemes: nil, legacy_bases: nil]
 
   @type t :: %__MODULE__{
           track: Coconut.Edit.Track.t(),
           track_id: Coconut.Edit.Track.track_id(),
           voicebank_identity: map() | nil,
-          phonology: term() | nil,
-          legacy_probe: term() | nil,
+          note_phonemes: Neume.Identity.note_phonemes() | nil,
           legacy_bases: %{term() => map()} | nil
         }
 end
@@ -158,14 +162,10 @@ end
 `score_pitch_v2`。它们都是 `Pin<S>`，但 payload/base schema 不同：legacy
 payload 继续使用 `pin_input_v1` base，v2 使用 `score_region_v1` base。
 
-`Context.phonology` 是 Neume 的稳定语音学表征，不是 runtime worker 的展开
-结果。`legacy_probe` 仅供旧 duration 下标兼容，v2 schema 不得依赖它：
-
-- v2 `Pin<S>` 的 `base/4` 与 `expressible?/4` 不得读取 phonology 或 legacy
-  probe；legacy 路径为保持旧 digest 行为可继续读取旧输入事实；
-- `Pin<Ph>` 只有在语义确实依赖派生 phonology 时才读取；
-- `Pin<Co<S,Ph>>` 可在 repatch/消费边界读取，但挂载是否需要异步 probe
-  由具体 payload schema 决定。
+`Context.note_phonemes` 是 runtime probe 的逐音符物化序列，仅用于可表达性
+校验。legacy/v2 duration 都需要它检查下标界内；v2 的 unit/member 另由谱面
+事实验证。底料仍是纯输入事实，挂载不需要 probe。v2 `Pin<S>` 的底料与
+可表达性都不读取音素序列；repatch 不在 channel 之外追加统一音素门禁。
 
 runtime 边界建议补一个 lowering callback，而不是让 `Editor` 理解各运行时
 端口（批次 B 已实施，`Neume.Runtime.lower_pins/4` 为 optional callback）：
@@ -281,18 +281,11 @@ Bezier envelope 已在批次 E 迁移：`pitch_curve_v2`（anchor 为 `note_tick
 `pitch_curve_v1` 继续签 `pin_input_v1`，经 `mount_pitch` 兼容路径或
 读档出现。
 
-## 7. `Pin<Ph>`：稳定 phonology
+## 7. 音素引用（当前由 duration 使用）
 
-Neume 不应把 OpenUTAU/DiffSinger worker 的 `[[language, phone]]` 输出直接当
-持久化身份。稳定 ref 至少要包含 namespace：
-
-```elixir
-%{namespace: "project_phonology_v1", unit: unit_id, segment: segment_id}
-```
-
-`unit_id` 指向显式 syllable group；`segment_id` 由 Neume 的语音学层生成，不能
-是 runtime word index 或数组下标。runtime provider 负责把 stable segment ref
-映射到自己的 inventory symbol/index。
+当前没有独立的 `Pin<Ph>` 编辑手势，不预设 namespace 或通用 phonology
+数据模型。duration 使用的 segment ref 为 `%{unit, member, index}`；provider
+提供成员内物化序列，Neume 负责解释引用及其存活语义。
 
 生成规则（§11.2 拍板，2026-09-11）：不引入持久化 ID——持久 ID 会在
 note id + melisma 旗标之外开第二条身份通道，split/merge/trim/drag 与
@@ -309,9 +302,6 @@ ref 仍是位置性的，安全性由 base 兜住：Co base 覆盖全组输入�
 repatch 显式重签，不会静默重解释。代价：G2P 输出变动即使听感上是
 "同一个音素"也冲突（与批次 B 同音字假冲突的取舍同构）。
 
-本阶段不决定完整 phonology 数据模型。没有真实 pronunciation 编辑手势前，
-只冻结 namespace/ref 要求，不先造通用音系学框架。
-
 ## 8. `Pin<Co<S,Ph>>`：duration/alignment
 
 duration payload 同时引用音素 segment 和谱面 tick 预算，因此属于
@@ -321,7 +311,7 @@ correspondence，不是纯 `Ph`。v2 应用 stable segment ref 替代裸 `ph_ind
 %{
   schema: "phoneme_duration_v2",
   values: [
-    %{segment: %{unit: unit_id, segment: segment_id}, duration_tick: 96}
+    %{segment: %{unit: head_note_id, member: 0, index: 1}, duration_tick: 96}
   ]
 }
 ```

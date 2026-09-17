@@ -235,8 +235,8 @@ defmodule Coconut do
     end
   end
 
-  # probe 期 channel 的底料在 workspace 之外物化（引擎 probe），必须由
-  # 调用方显式签名；静态 channel 的底料只能来自纯 workspace projection。
+  # :probe channel 的底料由宿主提供，不要求调用引擎；静态 channel 的
+  # 底料只能来自纯 workspace projection。
   defp mount_base(channel_module, ws, probe, opts) do
     probe_stage? =
       function_exported?(channel_module, :resolve_stage, 0) and

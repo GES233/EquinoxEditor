@@ -737,7 +737,7 @@ defmodule Neume.Editor do
     {:ok,
      Context.new(track, patch.track_id, digest,
        phonology_digest: phonology_digest(editor),
-       legacy_probe: sequences,
+       note_phonemes: sequences,
        legacy_bases: Identity.base_by_note(track, digest)
      )}
   end
@@ -990,17 +990,6 @@ defmodule Neume.Editor do
     end
   end
 
-  # 批次不含需要 probe 的 payload 时 sequences 为 nil，不做界内预校验
-  # （fetch_alive_patches 已保证音符存活）。
-  defp fetch_sequence(nil, _note_id), do: {:ok, nil}
-
-  defp fetch_sequence(sequences, note_id) do
-    case Map.fetch(sequences, note_id) do
-      {:ok, sequence} -> {:ok, sequence}
-      :error -> {:error, {:unknown_note, note_id}}
-    end
-  end
-
   # re-patch 计划：逐 patch 经其 channel 的 pin 语义分派——先校验可表达性
   # （duration 下标在 probe 序列界内），可表达的以该 channel 的当前底料
   # 重签后进批量。整轨 legacy 底料预计算一次，经 Context.legacy_bases
@@ -1010,17 +999,14 @@ defmodule Neume.Editor do
 
     {discards, attaches, results} =
       Enum.reduce(patches, {[], [], []}, fn patch, {discards, attaches, results} ->
-        note_id = hd(patch.anchor.refs)
-
         context =
           Context.new(track, patch.track_id, voicebank_digest,
             phonology_digest: phonology_digest,
-            legacy_probe: sequences,
+            note_phonemes: sequences,
             legacy_bases: bases
           )
 
         with {:ok, semantics} <- fetch_semantics(channels, patch.channel),
-             {:ok, _sequence} <- fetch_sequence(sequences, note_id),
              {:ok, descriptor} <- semantics.describe(patch.tamale_patch.payload),
              {:ok, effective_payload, redirected?} <-
                expressible_or_redirect(

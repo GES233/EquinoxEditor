@@ -51,6 +51,13 @@ defmodule Neume.PinSemanticsTest do
       do: raise("phonemes/3 不应在纯 Pin<S> re-patch 中被调用")
   end
 
+  # probe 只返回部分音符：缺失序列只能影响实际依赖音素的 pin。
+  defmodule PartialPhonemesPipeline do
+    @moduledoc false
+    defdelegate voicebank_digest(state), to: Neume.Engine.MockPipeline
+    def phonemes(_state, _snapshot, _track_id), do: {:ok, %{"n2" => [["zh", "a"]]}}
+  end
+
   setup do
     {:ok, editor} =
       Editor.new(
@@ -157,7 +164,7 @@ defmodule Neume.PinSemanticsTest do
     test "duration 下标在 probe 序列界内则 :ok，越界原因形状不变", %{editor: editor} do
       anchor = %Tamale.Anchor.Ordinal{refs: ["n1"]}
       probe = %{"n1" => [["zh", "l"], ["zh", "a"]]}
-      context = context(editor, legacy_probe: probe)
+      context = context(editor, note_phonemes: probe)
 
       assert :ok = DurationPin.expressible?(context, anchor, nil, [[1, 96]])
 
@@ -175,7 +182,7 @@ defmodule Neume.PinSemanticsTest do
                DurationPin.expressible?(context(editor), anchor, nil, [[0, 96]])
     end
 
-    test "pitch 恒可表达，不读 legacy_probe", %{editor: editor} do
+    test "pitch 恒可表达，不读 note_phonemes", %{editor: editor} do
       assert :ok = PitchPin.expressible?(context(editor), %Tamale.Anchor.Ordinal{}, nil, [])
     end
   end
@@ -283,6 +290,36 @@ defmodule Neume.PinSemanticsTest do
                Editor.check(editor)
 
       assert {:ok, _editor, [%{status: :repatched}]} = Editor.repatch(editor, [entry])
+    end
+
+    test "混合 repatch 按各 pin 的语义检查音素需求，一次 undo 还原成功项", %{editor: editor} do
+      {:ok, editor} =
+        Editor.insert_note(editor, "n2", "n1", {480, 960}, %{pitch: 62, lyric: "la"})
+
+      {:ok, editor} =
+        Editor.insert_note(editor, "n3", "n2", {960, 1440}, %{pitch: 64, lyric: "la"})
+
+      {:ok, editor} = Editor.mount_pitch(editor, "n1", [[0, 60.0]])
+      {:ok, editor} = Editor.mount_phoneme_duration(editor, "n2", [[0, 96]])
+      {:ok, editor} = Editor.mount_phoneme_duration(editor, "n3", [[0, 96]])
+      original = current_track(editor).patches
+      [pitch, duration, missing] = original
+      editor = %{editor | pipeline: PartialPhonemesPipeline}
+      before_seq = editor.session.history.seq
+
+      assert {:ok, repatched, results} = Editor.repatch(editor, Enum.map(original, & &1.id))
+
+      assert [
+               %{patch_id: pitch_id, status: :repatched},
+               %{patch_id: duration_id, status: :repatched},
+               %{patch_id: missing_id, status: :degraded, reason: {:unknown_note, "n3"}}
+             ] = results
+
+      assert {pitch_id, duration_id, missing_id} == {pitch.id, duration.id, missing.id}
+      assert repatched.session.history.seq == before_seq + 1
+      assert missing in current_track(repatched).patches
+      assert {:ok, restored} = Editor.undo(repatched)
+      assert current_track(restored).patches == original
     end
 
     test "repatch 遇到未实现 pin 语义的 channel 时降级为 tagged error", %{editor: editor} do

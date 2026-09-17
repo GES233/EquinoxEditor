@@ -18,15 +18,12 @@ defmodule Coconut.Render.Channel do
     `[{port_ref, value}]` pairs. `target/1` additionally receives the
     patch, for ports derived from the anchor (e.g. per-note ports like
     `{:port, note_id, :pitch}`). At least one of the two must be exported.
-  - `resolve_stage/0` (optional, default `:static`) — `:probe` declares
-    that the channel's base materializes outside the workspace (engine
-    probe, e.g. post-G2P phoneme sequences; design doc
-    `design-2026-08-orchid-intervention.md` §6.6 identity/output bases).
-    `Resolve` then skips the digest adjudication and folds the payload
-    as-is; the engine probe re-runs `Tamale.Patch.resolve/2` against the
-    materialized base. Transport (anchor survival) is always static.
-    Probe-stage patches must be mounted with an explicit `:base`
-    (`Coconut.mount/6`), since `projection/2` stays pure-workspace.
+  - `resolve_stage/0`（可选，默认 `:static`）——`:probe` 表示 digest
+    裁决交给宿主，Coconut 只做 anchor transport 并原样折叠 payload。
+    该标签不要求底料来自模型输出，也不要求执行异步 probe；例如 Neume
+    从谱面输入事实与声库摘要纯派生底料，在自己的 check 中裁决。
+    宿主必须在消费前以 `Tamale.Patch.resolve/2` 完成这一步；挂载时需
+    显式传 `:base`（`Coconut.mount/6`），`projection/2` 保持纯 workspace。
   """
 
   alias Coconut.Edit.{Patch, Workspace}

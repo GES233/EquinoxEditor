@@ -10,11 +10,10 @@ defmodule Neume.Pin.Semantics do
 
   - `describe/1` 必须按 payload 分派，不能用模块级 `carrier/0`——同一
     channel 在迁移期会同时承载多个 payload/base schema；
-  - v2 `Pin<S>` 的 `base/4` 与 `expressible?/4` 不得读取
-    `Context.phonology` 或 `Context.legacy_probe`；legacy 路径为保持旧
-    digest 行为可继续读取旧输入事实；
-  - `Pin<Co<S,Ph>>` 可在 repatch/消费边界读取 `legacy_probe`，但挂载
-    是否需要异步 probe 由具体 payload schema 决定。
+  - v2 `Pin<S>` 的 `base/4` 与 `expressible?/4` 不读取音素序列；
+    legacy 路径为保持旧 digest 行为可继续读取旧输入事实；
+  - `Pin<Co<S,Ph>>` 在 repatch 的可表达性校验中读取
+    `Context.note_phonemes`；签名底料由输入事实推导，不读取 probe 结果。
   """
 
   alias Neume.Pin.{Context, Descriptor}
@@ -31,7 +30,7 @@ defmodule Neume.Pin.Semantics do
               :ok | {:error, term()}
 
   @doc """
-  该 payload 的可表达性校验是否需要 probe 物化序列（`Context.legacy_probe`）。
+  该 payload 的可表达性校验是否需要 probe 物化序列（`Context.note_phonemes`）。
 
   按 descriptor/payload schema 判定，不由 channel 一刀切：纯 `Pin<S>`
   返回 `false` 时，re-patch 不强迫引擎实现音素展开（`phonemes/3`）。

@@ -6,10 +6,9 @@ defmodule Neume.Pin.Context do
     （legacy 底料用）与字典级 phonology 摘要 `:phonology_digest`
     （批次 C，`Pin<Ph>`/`Pin<Co>` 的 v2 底料用）；无声库（mock 管线）
     时为 `nil`。
-  - `:phonology`——Neume 的稳定语音学表征，不是 runtime worker 的展开
-    结果；本批次不提供（`nil`）。
-  - `:legacy_probe`——仅供旧 duration 下标兼容的 probe 物化序列
-    （`Neume.Identity.note_phonemes()`）；v2 schema 不得依赖它。
+  - `:note_phonemes`——runtime probe 物化的逐音符音素序列
+    （`Neume.Identity.note_phonemes()`），供 legacy 与 v2 duration 的
+    可表达性校验；不作为签名底料，谱面 pitch 语义不读取它。
   - `:legacy_bases`——批量裁决时整轨预计算的 legacy 底料
     （`%{note_id => Neume.Identity.input_base()}`），供 `base/4` 复用，
     避免逐 patch 重算整轨；`nil` 时 legacy base 回退现场推导。
@@ -20,8 +19,7 @@ defmodule Neume.Pin.Context do
     :track,
     :track_id,
     :voicebank_identity,
-    phonology: nil,
-    legacy_probe: nil,
+    note_phonemes: nil,
     legacy_bases: nil
   ]
 
@@ -29,8 +27,7 @@ defmodule Neume.Pin.Context do
           track: Coconut.Edit.Track.t(),
           track_id: Coconut.Edit.Track.track_id(),
           voicebank_identity: %{digest: String.t(), phonology_digest: String.t() | nil} | nil,
-          phonology: term() | nil,
-          legacy_probe: Neume.Identity.note_phonemes() | nil,
+          note_phonemes: Neume.Identity.note_phonemes() | nil,
           legacy_bases: %{term() => Neume.Identity.input_base()} | nil
         }
 
@@ -38,7 +35,7 @@ defmodule Neume.Pin.Context do
   构造裁决上下文。`voicebank_digest` 为 `nil`（无声库）时
   `voicebank_identity` 为 `nil`；`opts[:phonology_digest]` 挂字典级
   phonology 摘要（runtime 经 `Neume.Runtime.phonology_digest/1` 提供），
-  `opts[:legacy_probe]` 挂 probe 物化序列，`opts[:legacy_bases]` 挂整轨
+  `opts[:note_phonemes]` 挂 probe 物化序列，`opts[:legacy_bases]` 挂整轨
   预计算的 legacy 底料。
   """
   @spec new(Coconut.Edit.Track.t(), Coconut.Edit.Track.track_id(), String.t() | nil, keyword()) ::
@@ -48,7 +45,7 @@ defmodule Neume.Pin.Context do
       track: track,
       track_id: track_id,
       voicebank_identity: identity(voicebank_digest, Keyword.get(opts, :phonology_digest)),
-      legacy_probe: Keyword.get(opts, :legacy_probe),
+      note_phonemes: Keyword.get(opts, :note_phonemes),
       legacy_bases: Keyword.get(opts, :legacy_bases)
     }
   end
