@@ -14,7 +14,7 @@ defmodule Neume.RenderJob do
 
   @type id :: term()
   @type project_id :: term()
-  @type status :: :queued | :running | :completed | :failed
+  @type status :: :queued | :running | :completed | :failed | :cancelled
   @type artifact :: Neume.RenderArtifact.t() | Neume.MixArtifact.t()
 
   @type t :: %__MODULE__{
@@ -74,6 +74,19 @@ defmodule Neume.RenderJob do
 
   def fail(%__MODULE__{status: :running}, nil), do: {:error, :missing_failure_reason}
   def fail(%__MODULE__{} = job, _reason), do: invalid_transition(job, :failed)
+
+  @doc """
+  取消排队中或运行中的任务（协作取消，不抢占）。
+
+  取消信号本身（如 `Oi.CancelToken`）由上层运行时持有；本函数只做
+  状态机转换。已取消任务的迟到结果由上层丢弃，不再转换。
+  """
+  @spec cancel(t()) :: {:ok, t()} | {:error, term()}
+  def cancel(%__MODULE__{status: status} = job) when status in [:queued, :running] do
+    {:ok, %{job | status: :cancelled}}
+  end
+
+  def cancel(%__MODULE__{} = job), do: invalid_transition(job, :cancelled)
 
   defp invalid_transition(job, target) do
     {:error, {:invalid_render_job_transition, job.status, target}}

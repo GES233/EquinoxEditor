@@ -784,32 +784,49 @@ defmodule Neume.Editor do
   渲染前先跑与 `check/1` 相同的静态 check + probe + 身份裁决；任何失败
   聚合为 `{:error, {:check_failed, entries}}`（与死 patch、adopt 失败
   共用冲突裁决界面）。管线自身的执行错误原样返回。
+
+  选项：`:cancel_token`（`Oi.CancelToken`）为协作取消信号。实现了
+  `render_checked/6` 的 runtime 在乐句边界轮询并以
+  `{:error, :render_cancelled}` 终止；未实现的 runtime 忽略该选项，
+  渲染跑完为止（不抢占）。
   """
-  @spec render(t()) :: {:ok, t(), Neume.RenderArtifact.t()} | {:error, term()}
-  def render(%__MODULE__{} = editor) do
+  @spec render(t(), keyword()) :: {:ok, t(), Neume.RenderArtifact.t()} | {:error, term()}
+  def render(%__MODULE__{} = editor, opts \\ []) do
     with {:ok, editor, request, _analysis, checked_phrases, pins} <- checked_probe(editor),
-         {:ok, artifact} <- render_checked(editor, request, checked_phrases, pins) do
+         {:ok, artifact} <- render_checked(editor, request, checked_phrases, pins, opts) do
       {:ok, editor, artifact}
     end
   end
 
-  defp render_checked(editor, request, checked, pins) do
-    if function_exported?(editor.pipeline, :render_checked, 5) do
-      editor.pipeline.render_checked(
-        editor.pipeline_state,
-        request.snapshot,
-        checked,
-        request.globals,
-        editor.track_id
-      )
-    else
-      editor.pipeline.render(
-        editor.pipeline_state,
-        request.snapshot,
-        pins,
-        request.globals,
-        editor.track_id
-      )
+  defp render_checked(editor, request, checked, pins, opts) do
+    cond do
+      function_exported?(editor.pipeline, :render_checked, 6) ->
+        editor.pipeline.render_checked(
+          editor.pipeline_state,
+          request.snapshot,
+          checked,
+          request.globals,
+          editor.track_id,
+          opts
+        )
+
+      function_exported?(editor.pipeline, :render_checked, 5) ->
+        editor.pipeline.render_checked(
+          editor.pipeline_state,
+          request.snapshot,
+          checked,
+          request.globals,
+          editor.track_id
+        )
+
+      true ->
+        editor.pipeline.render(
+          editor.pipeline_state,
+          request.snapshot,
+          pins,
+          request.globals,
+          editor.track_id
+        )
     end
   end
 

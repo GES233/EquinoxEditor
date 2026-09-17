@@ -74,6 +74,10 @@ defmodule NeumeOpuDs.Runtime do
   @impl true
   defdelegate render_checked(state, snapshot, checked, globals, track_id), to: Pipeline
 
+  # 协作取消入口：`:cancel_token` 透传到管线的逐乐句轮询。
+  @impl true
+  defdelegate render_checked(state, snapshot, checked, globals, track_id, opts), to: Pipeline
+
   defp put_option(target, target_key, source, source_key) do
     case Keyword.fetch(source, source_key) do
       {:ok, value} -> Keyword.put(target, target_key, value)

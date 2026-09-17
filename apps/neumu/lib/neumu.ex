@@ -688,7 +688,8 @@ defmodule Neumu do
   `Neume.RenderJob`，任务在 ProjectServer 之外执行。返回处于 `:running`
   状态的权威 job。选项：
 
-  - `:renderer` — 覆盖本次渲染的渲染函数（测试注入用）；
+  - `:renderer` — 覆盖本次渲染的渲染函数（测试注入用）；注入 renderer
+    收不到取消令牌，`cancel_render/2` 后其迟到结果整体丢弃；
   - `:job_id` — 指定任务 id，默认生成唯一整数；该工程内已存在同名
     job（在途或终态）时返回 `{:error, {:job_already_exists, job_id}}`，
     不覆盖权威 job；
@@ -711,6 +712,22 @@ defmodule Neumu do
           {:ok, RenderJob.t()} | {:error, term()}
   def render_job(project_id, job_id) do
     call_project(project_id, {:render_job, job_id})
+  end
+
+  @doc """
+  取消一个渲染任务（协作取消，不抢占）。
+
+  排队/运行中的任务立即落 `:cancelled` 并派发一次
+  `{:render_changed, job_id, :cancelled}`；默认渲染路径
+  （`Neume.MultiTrack.render/2`）在 Oi stage 边界与 DiffSinger 乐句
+  边界轮询令牌尽快停止，迟到结果整体丢弃（不入 ArtifactStore、不派发
+  `artifact_ready`）。未知 job 返回 `{:error, {:job_not_found, job_id}}`；
+  终态任务返回 `{:error, {:job_not_cancellable, job_id, status}}`。
+  """
+  @spec cancel_render(RenderJob.project_id(), RenderJob.id()) ::
+          {:ok, RenderJob.t()} | {:error, term()}
+  def cancel_render(project_id, job_id) do
+    call_project(project_id, {:cancel_render, job_id})
   end
 
   # --- 事件订阅 ---

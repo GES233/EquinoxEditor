@@ -683,20 +683,24 @@ defmodule Neume.MultiTrack do
 
   solo/mute 路由后只渲染可听轨（`MixPipeline.audible_tracks/1`），track 级
   fan-out、mix/master 节点缓存与混音图执行交给 `Neume.RenderGraph`（Oi）。
+
+  选项：`:cancel_token`（`Oi.CancelToken`）为协作取消信号，透传到
+  渲染图（Oi stage 边界 + 各轨乐句轮询）；取消返回
+  `{:error, :render_cancelled}`，不抢占在途步骤。
   """
-  @spec render(t()) :: {:ok, t(), Neume.MixArtifact.t()} | {:error, term()}
-  def render(%__MODULE__{} = runtime) do
+  @spec render(t(), keyword()) :: {:ok, t(), Neume.MixArtifact.t()} | {:error, term()}
+  def render(%__MODULE__{} = runtime, opts \\ []) do
     with {:ok, project} <- Coconut.project(runtime.session),
          audible <- MixPipeline.audible_tracks(project.workspace.tracks) do
-      render_audible(runtime, audible)
+      render_audible(runtime, audible, opts)
     end
   end
 
-  defp render_audible(_runtime, []), do: {:error, :no_audible_tracks}
+  defp render_audible(_runtime, [], _opts), do: {:error, :no_audible_tracks}
 
-  defp render_audible(runtime, audible) do
+  defp render_audible(runtime, audible, opts) do
     with {:ok, runtime, _reports} <- check_tracks(runtime, Enum.map(audible, &elem(&1, 0))),
-         {:ok, runtime, artifact} <- RenderGraph.run(runtime, audible) do
+         {:ok, runtime, artifact} <- RenderGraph.run(runtime, audible, opts) do
       {:ok, runtime, artifact}
     end
   end

@@ -58,6 +58,16 @@ defmodule Neume.Runtime do
               {:ok, Neume.RenderArtifact.t()} | {:error, term()}
 
   @doc """
+  携带调用级选项的 `render_checked`。`:cancel_token`（`Oi.CancelToken`）
+  是协作取消信号：runtime 应在乐句/窗口边界轮询，取消时以
+  `{:error, :render_cancelled}` 终止；不抢占在途步骤。未实现本回调
+  的 runtime 不支持窗粒度取消，`Editor.render/2` 回退到无选项入口，
+  渲染跑完为止。
+  """
+  @callback render_checked(state(), Snapshot.t(), list(), map(), term(), keyword()) ::
+              {:ok, Neume.RenderArtifact.t()} | {:error, term()}
+
+  @doc """
   把裁决侧构造的 `Neume.Pin.Resolved` 列表降为本 runtime 的执行输入
   （`pins()` 形状）。runtime 可委托 `Neume.Pin.Lower`（默认 lowering：
   legacy 透传、`note_tick` 平移为绝对 tick）；不支持的 payload schema
@@ -72,6 +82,7 @@ defmodule Neume.Runtime do
 
   @optional_callbacks output_packets: 5,
                       render_checked: 5,
+                      render_checked: 6,
                       lower_pins: 4,
                       checked_pins: 1,
                       phonology_digest: 1,

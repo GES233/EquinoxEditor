@@ -19,9 +19,12 @@ defmodule Neume.RenderGraph do
   - 并发上限走 `Oi.Executor.TaskSup`（`:concurrency` 默认
     `System.schedulers_online()`）；stage 内 fail-fast，错误聚合成
     `{:error, {:render_failed, entries}}`，entry 带 `track_id`。
-
-  取消与结构化进度仍是 Oi 侧缺口（见设计文档"下一实现顺序"），本图不自建
-  第二执行器。
+  - 协作取消：`run/3` 的 `:cancel_token`（`Oi.CancelToken`）同时进入
+    Oi dispatch（stage 边界闸门）与各轨渲染请求（`TrackRender` 入口
+    检查 + `Editor.render/2` 透传给实现 `render_checked/6` 的 runtime
+    做乐句粒度轮询）。取消统一归一为 `{:error, :render_cancelled}`；
+    不抢占在途步骤。结构化进度仍是 Oi 侧缺口（见设计文档"下一实现
+    顺序"），本图不自建第二执行器。
   """
 
   alias Coconut.Edit.{Track, Workspace}
@@ -45,27 +48,36 @@ defmodule Neume.RenderGraph do
           pickle_registry: registry,
           track_runtime: track_runtime,
           track_id: track_id
-        } ->
-          with {:ok, editor} <- Editor.attach_runtime(track_runtime, session, registry),
-               {:ok, editor, artifact} <- Editor.render(editor),
-               {:ok, track_runtime} <- Editor.detach_runtime(editor),
-               {:ok, track} <- Workspace.fetch_track(Coconut.workspace(session), track_id) do
-            ok(%{
-              track_id: track_id,
-              artifact: artifact,
-              track_runtime: track_runtime,
-              mix: TrackConfig.mix(track),
-              # 每次渲染的制品路径都是新文件，内容摘要才是稳定的缓存 key 成分。
-              wav_digest: wav_digest(artifact.path)
-            })
+        } = req ->
+          token = Map.get(req, :cancel_token)
+
+          if Neume.RenderGraph.cancel_requested?(token) do
+            {:error, {:track_render_failed, track_id, :render_cancelled}}
           else
-            {:error, reason} -> {:error, {:track_render_failed, track_id, reason}}
+            with {:ok, editor} <- Editor.attach_runtime(track_runtime, session, registry),
+                 {:ok, editor, artifact} <- Editor.render(editor, render_opts(token)),
+                 {:ok, track_runtime} <- Editor.detach_runtime(editor),
+                 {:ok, track} <- Workspace.fetch_track(Coconut.workspace(session), track_id) do
+              ok(%{
+                track_id: track_id,
+                artifact: artifact,
+                track_runtime: track_runtime,
+                mix: TrackConfig.mix(track),
+                # 每次渲染的制品路径都是新文件，内容摘要才是稳定的缓存 key 成分。
+                wav_digest: wav_digest(artifact.path)
+              })
+            else
+              {:error, reason} -> {:error, {:track_render_failed, track_id, reason}}
+            end
           end
 
         other ->
           {:error, {:invalid_render_request, other}}
       end
     end
+
+    defp render_opts(nil), do: []
+    defp render_opts(token), do: [cancel_token: token]
 
     defp wav_digest(path) do
       case File.read(path) do
@@ -134,6 +146,13 @@ defmodule Neume.RenderGraph do
     end
   end
 
+  # ---------- 取消信号 ----------
+
+  @doc "协作取消令牌是否已被取消；无令牌（nil）恒为 false。"
+  @spec cancel_requested?(Oi.CancelToken.t() | nil) :: boolean()
+  def cancel_requested?(nil), do: false
+  def cancel_requested?(%Oi.CancelToken{} = token), do: Oi.CancelToken.cancelled?(token)
+
   # ---------- 缓存 stores（per-MultiTrack ETS，生命周期随工程） ----------
 
   @doc "新建一对 stratum ETS stores（meta/blob），供 `orchid_baggage` 使用。"
@@ -181,7 +200,7 @@ defmodule Neume.RenderGraph do
           {:ok, MultiTrack.t(), Neume.MixArtifact.t()} | {:error, term()}
   def run(%MultiTrack{} = runtime, audible, opts \\ []) do
     with {:ok, compiled} <- build(audible, output_dir: runtime.output_dir),
-         data <- build_data(runtime, audible),
+         data <- build_data(runtime, audible, Keyword.get(opts, :cancel_token)),
          {:ok, sup} <- Task.Supervisor.start_link() do
       try do
         execute_and_collect(runtime, compiled, data, audible, sup, opts)
@@ -209,17 +228,19 @@ defmodule Neume.RenderGraph do
     end)
   end
 
-  defp build_data(runtime, audible) do
+  defp build_data(runtime, audible, cancel_token) do
     Map.new(audible, fn {track_id, _track} ->
-      {render_node(track_id),
-       %{
-         request: %{
-           session: runtime.session,
-           pickle_registry: runtime.pickle_registry,
-           track_runtime: Map.fetch!(runtime.tracks, track_id),
-           track_id: track_id
-         }
-       }}
+      request = %{
+        session: runtime.session,
+        pickle_registry: runtime.pickle_registry,
+        track_runtime: Map.fetch!(runtime.tracks, track_id),
+        track_id: track_id
+      }
+
+      request =
+        if cancel_token, do: Map.put(request, :cancel_token, cancel_token), else: request
+
+      {render_node(track_id), %{request: request}}
     end)
   end
 
@@ -234,8 +255,18 @@ defmodule Neume.RenderGraph do
       ] ++ opts
 
     case Oi.execute(compiled, execute_opts) do
-      {:ok, result} -> collect(runtime, result, audible)
-      {:error, _} = error -> normalize_error(error)
+      {:ok, %Oi.Result{status: :cancelled}} ->
+        # 取消发生在 stage 边界（track 渲染全部结束之后、mix 之前等）。
+        {:error, :render_cancelled}
+
+      {:ok, result} ->
+        collect(runtime, result, audible)
+
+      {:error, _} = error ->
+        # track 渲染经 token 轮询提前终止时，取消语义优先于原始错误形状。
+        if cancel_requested?(Keyword.get(opts, :cancel_token)),
+          do: {:error, :render_cancelled},
+          else: normalize_error(error)
     end
   end
 

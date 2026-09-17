@@ -206,7 +206,9 @@ queued -> running -> completed
 任务创建时保存 `project_id` 与 Coconut History cursor node id（`source_pin`）。
 后续编辑不改写该 pin；完成态持有实际 `RenderArtifact` 或 `MixArtifact`，失败态
 持有原因，终态不能再次转换。调度失败若需进入任务生命周期，应先把任务标记为
-running，再以明确原因结束为 failed；当前不提前加入 cancellation 状态。
+running，再以明确原因结束为 failed。取消态（2026-09-17 起）：`cancelled` 是终态，
+排队/运行中可取消；取消信号（`Oi.CancelToken`）由上层运行时持有，不进入领域值，
+已取消任务的迟到结果由上层整体丢弃。
 
 `Neume.Event` 的公开事件固定为三个小 tuple：
 
@@ -250,8 +252,13 @@ UI 不直接启动 Task、不直接调用 NIF、不把浏览器本地播放状�
    TrackGainPan/Mix/Master/Export 挂 orchid_stratum 整步缓存
    （per-MultiTrack ETS stores，工程生命周期）；solo/mute 路由在建图前由
    `MixPipeline.audible_tracks/1` 完成（solo 进 `Track.extras[:neume][:mix]`，
-   随 History 持久化）。**仍缺**（需扩展 Oi）：cooperative cancellation /
-   execution handle、结构化进度回调、check 并行化（同构小步）、GenStage 背压
+   随 History 持久化）。协作取消（2026-09-17，oi 0.9）：`Oi.CancelToken` 经
+   `MultiTrack.render/2` 的 `:cancel_token` 透传——Oi stage 边界闸门 +
+   `TrackRender` 入口 + `Neume.Runtime.render_checked/6` 契约（
+   `NeumeOpuDs.Pipeline` 逐乐句轮询），统一归一 `{:error, :render_cancelled}`；
+   Neumu 侧 `cancel_render/2` 落 `RenderJob :cancelled` 并丢弃迟到结果。
+   **仍缺**（需扩展 Oi）：结构化进度回调、check 并行化（同构小步）、
+   GenStage 背压
    （orchid_stage 与 orchid 0.6.3 不兼容且不能插 `Oi.Executor`，暂用
    `:concurrency` 上限）。
 2. 将现有 TrackGainPan/Mix/Master 的纯 Elixir 实现保留为 reference backend，

@@ -169,6 +169,76 @@ defmodule Neumu.ProjectServerTest do
     assert {:ok, %{status: :completed}} = Neumu.render_job(id, :dup_done)
   end
 
+  # ---------- 协作取消 ----------
+
+  test "取消运行中的渲染：落 :cancelled 并派发事件，迟到结果整体丢弃", %{project_id: id} do
+    :ok = Neumu.subscribe(id)
+
+    assert {:ok, job} = Neumu.submit_render(id, renderer: blocking_renderer(self()))
+    assert_receive {:render_started, render_pid}, 500
+    assert_receive {:render_changed, job_id, :running}, 500
+    assert job_id == job.id
+
+    assert {:ok, cancelled} = Neumu.cancel_render(id, job.id)
+    assert cancelled.status == :cancelled
+    assert cancelled.artifact == nil
+    assert cancelled.error == nil
+    assert_receive {:render_changed, ^job_id, :cancelled}, 500
+
+    # 放行阻塞中的 renderer：迟到结果不入 ArtifactStore、不再派发事件。
+    send(render_pid, :release_render)
+    refute_receive {:render_changed, ^job_id, _}, 300
+    refute_receive {:artifact_ready, _, _, _}
+
+    assert {:ok, %{status: :cancelled, artifact: nil, error: nil}} =
+             Neumu.render_job(id, job_id)
+
+    assert {:ok, [%{job_id: ^job_id, status: :cancelled, artifact_id: nil}]} =
+             Neumu.list_render_jobs(id)
+
+    # 取消不污染工程：后续渲染照常完成。
+    assert {:ok, job2} =
+             Neumu.submit_render(id, renderer: fn _mt -> {:ok, ProjectStub.mix_artifact()} end)
+
+    assert {:ok, %{status: :completed}} = await_status(id, job2.id, :completed)
+  end
+
+  test "取消未知 job 与终态 job 返回带定位的 tagged error", %{project_id: id} do
+    assert {:error, {:job_not_found, :no_such_job}} = Neumu.cancel_render(id, :no_such_job)
+
+    assert {:ok, job} =
+             Neumu.submit_render(id, renderer: fn _mt -> {:ok, ProjectStub.mix_artifact()} end)
+
+    assert {:ok, %{status: :completed}} = await_status(id, job.id, :completed)
+
+    assert {:error, {:job_not_cancellable, job_id, :completed}} =
+             Neumu.cancel_render(id, job.id)
+
+    assert job_id == job.id
+
+    assert {:ok, failed_job} =
+             Neumu.submit_render(id, renderer: fn _mt -> {:error, :boom} end)
+
+    assert {:ok, %{status: :failed}} = await_status(id, failed_job.id, :failed)
+
+    assert {:error, {:job_not_cancellable, _, :failed}} =
+             Neumu.cancel_render(id, failed_job.id)
+  end
+
+  test "重复取消已取消的 job 返回 job_not_cancellable", %{project_id: id} do
+    assert {:ok, job} = Neumu.submit_render(id, renderer: blocking_renderer(self()))
+    assert_receive {:render_started, render_pid}, 500
+
+    assert {:ok, %{status: :cancelled}} = Neumu.cancel_render(id, job.id)
+
+    assert {:error, {:job_not_cancellable, job_id, :cancelled}} =
+             Neumu.cancel_render(id, job.id)
+
+    assert job_id == job.id
+
+    send(render_pid, :release_render)
+  end
+
   test "重复订阅幂等：每个事件只投递一次", %{project_id: id} do
     :ok = Neumu.subscribe(id)
     :ok = Neumu.subscribe(id)

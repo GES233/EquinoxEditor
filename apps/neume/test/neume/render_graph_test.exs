@@ -255,4 +255,20 @@ defmodule Neume.RenderGraphTest do
     assert {:ok, _runtime, artifact2} = MultiTrack.render(runtime)
     assert artifact2.path != artifact1.path
   end
+
+  # ---------- 协作取消 ----------
+
+  test "预取消令牌：渲染终止并归一为 :render_cancelled，不产出制品" do
+    runtime =
+      mock_runtime(["lead"])
+      |> insert_note("lead", "n1", %{pitch: 60, lyric: "la"})
+
+    token = Oi.CancelToken.new()
+    :ok = Oi.CancelToken.cancel(token)
+
+    assert {:error, :render_cancelled} = MultiTrack.render(runtime, cancel_token: token)
+
+    # 令牌只随调用传递，不污染 runtime：不带令牌重渲照常出制品。
+    assert {:ok, _runtime, %Neume.MixArtifact{}} = MultiTrack.render(runtime)
+  end
 end

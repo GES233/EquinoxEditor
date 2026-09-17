@@ -92,6 +92,25 @@ defmodule Neume.DiffSingerWindowedTest do
     end
   end
 
+  defmodule CancellingClient do
+    @moduledoc """
+    委托 CountingClient，在首个 render 调用时取消随 config 传入的令牌：
+    在途窗口跑完（协作不抢占），后续窗口在乐句边界轮询到取消后终止。
+    """
+    @behaviour NeumeOpuDs.Worker
+
+    @impl true
+    def call(%{action: "render"} = payload, config) do
+      if token = Map.get(config, :cancel_token) do
+        Oi.CancelToken.cancel(token)
+      end
+
+      CountingClient.call(payload, config)
+    end
+
+    def call(payload, config), do: CountingClient.call(payload, config)
+  end
+
   @tag tmp_dir: true
   test "分窗缓存：编辑只失效内容变化的窗口", %{tmp_dir: tmp_dir} do
     voicebank = VoicebankFixture.diffsinger(tmp_dir)
@@ -316,6 +335,37 @@ defmodule Neume.DiffSingerWindowedTest do
     assert length(artifact3.windows) == 2
     assert Enum.all?(artifact3.windows, &(&1.cache == :miss))
     assert Enum.count(drain_calls("render")) == 2
+  end
+
+  @tag tmp_dir: true
+  test "协作取消：在途窗口跑完，后续窗口在乐句边界终止", %{tmp_dir: tmp_dir} do
+    voicebank = VoicebankFixture.diffsinger(tmp_dir)
+    token = Oi.CancelToken.new()
+
+    assert {:ok, editor} =
+             Editor.new(
+               voicebank_path: voicebank,
+               voicebank_mode: :stock,
+               diffsinger_client: CancellingClient,
+               diffsinger_client_config: %{test_pid: self(), cancel_token: token},
+               output_dir: Path.join(tmp_dir, "renders")
+             )
+
+    # 两个窗口：n1 一窗，空档 >= 3 拍切开，n2 一窗。
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n1", :head, {0, 480}, %{pitch: 60, lyric: "啊"})
+
+    assert {:ok, editor} =
+             Editor.insert_note(editor, "n2", "n1", {4800, 5280}, %{pitch: 64, lyric: "灿"})
+
+    # 窗 1 render 调用期间令牌被取消：窗 1 跑完，窗 2 在乐句边界终止。
+    assert {:error, :render_cancelled} = Editor.render(editor, cancel_token: token)
+    assert Enum.count(drain_calls("render")) == 1
+
+    # 取消不污染缓存与 editor：不带令牌重渲，窗 1 命中、窗 2 补渲。
+    assert {:ok, _editor, artifact} = Editor.render(editor)
+    assert [%{cache: :hit}, %{cache: :miss}] = artifact.windows
+    assert Enum.count(drain_calls("render")) == 1
   end
 
   defp drain_checked_phrases do

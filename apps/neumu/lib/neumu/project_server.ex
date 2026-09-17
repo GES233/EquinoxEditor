@@ -37,7 +37,8 @@ defmodule Neumu.ProjectServer do
   @type render_task :: %{
           job_id: RenderJob.id(),
           snapshot: Neume.MultiTrack.t(),
-          pid: pid()
+          pid: pid(),
+          cancel_token: Oi.CancelToken.t()
         }
 
   # --- 进程生命周期 ---
@@ -111,10 +112,10 @@ defmodule Neumu.ProjectServer do
              render_target(state.multi_track, Keyword.get(opts, :history_pin)),
            {:ok, job} <- RenderJob.new(job_id, state.project_id, source_pin),
            {:ok, job} <- RenderJob.start(job) do
-        renderer = Keyword.get(opts, :renderer, &default_renderer/1)
+        cancel_token = Oi.CancelToken.new()
+        task_fun = render_task_fun(Keyword.get(opts, :renderer), render_target, cancel_token)
 
-        task =
-          Task.Supervisor.async_nolink(Neumu.RenderSupervisor, fn -> renderer.(render_target) end)
+        task = Task.Supervisor.async_nolink(Neumu.RenderSupervisor, task_fun)
 
         state = %{
           state
@@ -123,7 +124,8 @@ defmodule Neumu.ProjectServer do
               Map.put(state.tasks, task.ref, %{
                 job_id: job_id,
                 snapshot: render_target,
-                pid: task.pid
+                pid: task.pid,
+                cancel_token: cancel_token
               })
         }
 
@@ -132,6 +134,25 @@ defmodule Neumu.ProjectServer do
       else
         {:error, _} = error -> {:reply, error, state}
       end
+    end
+  end
+
+  # 协作取消：job 立即落 :cancelled 并派发 render_changed；默认渲染路径
+  # 的令牌随任务创建、经 MultiTrack.render/2 透传到渲染图。迟到结果在
+  # settle_render 整体丢弃（不入 ArtifactStore、不再派发事件）。
+  def handle_call({:cancel_render, job_id}, _from, state) do
+    with {:ok, job} <- Map.fetch(state.jobs, job_id),
+         {:ok, job} <- RenderJob.cancel(job) do
+      cancel_task_token(state.tasks, job_id)
+      state = %{state | jobs: Map.put(state.jobs, job_id, job)}
+      broadcast(state, Event.render_changed(job))
+      {:reply, {:ok, job}, state}
+    else
+      :error ->
+        {:reply, {:error, {:job_not_found, job_id}}, state}
+
+      {:error, {:invalid_render_job_transition, status, :cancelled}} ->
+        {:reply, {:error, {:job_not_cancellable, job_id, status}}, state}
     end
   end
 
@@ -304,20 +325,27 @@ defmodule Neumu.ProjectServer do
   # --- 渲染结果落账 ---
 
   defp settle_render(state, job_id, snapshot, result) do
-    case result do
-      {:ok, %Neume.MultiTrack{} = refreshed, artifact} ->
-        # 渲染期间没有编辑时才采纳带回的 runtime（缓存等），避免覆盖新编辑。
-        state = maybe_adopt_runtime(state, snapshot, refreshed)
-        complete_render(state, job_id, artifact)
+    case Map.fetch!(state.jobs, job_id) do
+      # 已取消：迟到结果（含制品）整体丢弃，不入 ArtifactStore、不派发事件。
+      %{status: :cancelled} ->
+        state
 
-      {:ok, artifact} ->
-        complete_render(state, job_id, artifact)
+      _job ->
+        case result do
+          {:ok, %Neume.MultiTrack{} = refreshed, artifact} ->
+            # 渲染期间没有编辑时才采纳带回的 runtime（缓存等），避免覆盖新编辑。
+            state = maybe_adopt_runtime(state, snapshot, refreshed)
+            complete_render(state, job_id, artifact)
 
-      {:error, reason} ->
-        fail_render(state, job_id, reason)
+          {:ok, artifact} ->
+            complete_render(state, job_id, artifact)
 
-      other ->
-        fail_render(state, job_id, {:unexpected_render_result, other})
+          {:error, reason} ->
+            fail_render(state, job_id, reason)
+
+          other ->
+            fail_render(state, job_id, {:unexpected_render_result, other})
+        end
     end
   end
 
@@ -536,12 +564,29 @@ defmodule Neumu.ProjectServer do
     Neume.Voicebank.Registry.fetch(multi_track.voicebank_registry, voicebank_id)
   end
 
-  # 生产默认渲染路径：现有 Neume.MultiTrack render API。
-  defp default_renderer(%Neume.MultiTrack{} = multi_track) do
-    case Neume.MultiTrack.render(multi_track) do
+  # 生产默认渲染路径：现有 Neume.MultiTrack render API；取消令牌经
+  # 渲染选项透传到渲染图（Oi stage 闸门 + 乐句轮询）。
+  defp render_task_fun(nil, render_target, cancel_token) do
+    fn -> default_renderer(render_target, cancel_token) end
+  end
+
+  # 注入 renderer 保持一元契约，收不到令牌；取消后其返回结果整体丢弃。
+  defp render_task_fun(renderer, render_target, _cancel_token) do
+    fn -> renderer.(render_target) end
+  end
+
+  defp default_renderer(%Neume.MultiTrack{} = multi_track, cancel_token) do
+    case Neume.MultiTrack.render(multi_track, cancel_token: cancel_token) do
       {:ok, refreshed, artifact} -> {:ok, refreshed, artifact}
       {:error, _} = error -> error
     end
+  end
+
+  defp cancel_task_token(tasks, job_id) do
+    Enum.each(tasks, fn
+      {_ref, %{job_id: ^job_id, cancel_token: token}} -> Oi.CancelToken.cancel(token)
+      {_ref, _other} -> :ok
+    end)
   end
 
   defp new_job_id, do: System.unique_integer([:positive, :monotonic])

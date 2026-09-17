@@ -92,4 +92,48 @@ defmodule Neume.RenderJobTest do
     assert {:ok, completed} = RenderJob.complete(running, %RenderArtifact{frame_count: 1})
     assert {:error, :invalid_artifact_id} = Event.artifact_ready(completed, nil)
   end
+
+  test "排队与运行中的任务可取消" do
+    assert {:ok, queued} = RenderJob.new("job-1", "project-1", 7)
+    assert {:ok, cancelled} = RenderJob.cancel(queued)
+    assert cancelled.status == :cancelled
+    assert cancelled.source_pin == 7
+    assert cancelled.artifact == nil
+    assert cancelled.error == nil
+
+    assert {:ok, running} = RenderJob.start(queued)
+    assert {:ok, cancelled} = RenderJob.cancel(running)
+    assert cancelled.status == :cancelled
+    assert Event.render_changed(cancelled) == {:render_changed, "job-1", :cancelled}
+  end
+
+  test "取消后不可再转换，终态不能取消" do
+    artifact = %RenderArtifact{frame_count: 1}
+    assert {:ok, job} = RenderJob.new("job-1", "project-1", 0)
+    assert {:ok, job} = RenderJob.start(job)
+    assert {:ok, cancelled} = RenderJob.cancel(job)
+
+    assert {:error, {:invalid_render_job_transition, :cancelled, :completed}} =
+             RenderJob.complete(cancelled, artifact)
+
+    assert {:error, {:invalid_render_job_transition, :cancelled, :failed}} =
+             RenderJob.fail(cancelled, :late_error)
+
+    assert {:error, {:invalid_render_job_transition, :cancelled, :cancelled}} =
+             RenderJob.cancel(cancelled)
+
+    assert {:ok, job} = RenderJob.new("job-2", "project-1", 0)
+    assert {:ok, job} = RenderJob.start(job)
+    assert {:ok, completed} = RenderJob.complete(job, artifact)
+
+    assert {:error, {:invalid_render_job_transition, :completed, :cancelled}} =
+             RenderJob.cancel(completed)
+
+    assert {:ok, job} = RenderJob.new("job-3", "project-1", 0)
+    assert {:ok, job} = RenderJob.start(job)
+    assert {:ok, failed} = RenderJob.fail(job, :boom)
+
+    assert {:error, {:invalid_render_job_transition, :failed, :cancelled}} =
+             RenderJob.cancel(failed)
+  end
 end

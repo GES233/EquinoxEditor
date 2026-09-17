@@ -92,6 +92,13 @@
   entries 风格，`kind: :probe`，带 `track_id`/`note_id` 定位）
 - `list_render_jobs/1` → `{:ok, [%{job_id, source_pin, status,
   artifact_id, error}]}`
+- `cancel_render/2`（2026-09-17，协作取消）→ `{:ok, job}`：排队/运行中
+  的任务立即落 `:cancelled` 并派发一次 `render_changed`；默认渲染路径
+  在 Oi stage 边界与 DiffSinger 乐句边界轮询令牌尽快停止（不抢占在途
+  步骤），迟到结果整体丢弃（不入 ArtifactStore、不派发
+  `artifact_ready`）。注入的 `:renderer` 收不到令牌，结果同样丢弃。
+  未知 job `{:error, {:job_not_found, _}}`；终态（含已取消）
+  `{:error, {:job_not_cancellable, job_id, status}}`
 - `artifact/1` → `{:ok, artifact}`（含 WAV `path`、采样率、时长等）
 - `region_duration_sec/3` → `{:ok, float}`：`[start_tick, end_tick)` 在
   当前 tempo 阶梯下的物理秒数；空 tempo 轨回退 flat 120 BPM
@@ -99,7 +106,7 @@
 ## 事件（`Neumu.subscribe/1` 订阅，幂等）
 
 - `{:project_changed, project_id, history_pin}` — 落边一次发一次
-- `{:render_changed, job_id, status}` — `status` 为 `:running|:completed|:failed`
+- `{:render_changed, job_id, status}` — `status` 为 `:running|:completed|:failed|:cancelled`
 - `{:artifact_ready, job_id, artifact_id, source_pin}`
 
 ## pin 族两阶段挂载与 stale_pin
@@ -174,6 +181,7 @@
 `{:invalid_source_pin, _}`、`{:stale_pin, _}`、`{:pin_not_found, _, _}`、
 `{:patch_not_alive, _}`、`{:check_failed, entries}`、
 `{:job_already_exists, _}`、`{:job_not_found, _}`、
+`{:job_not_cancellable, _, _}`、
 `{:voicebank_not_registered, _}`。
 
 ## 壳实现参考（已查证）

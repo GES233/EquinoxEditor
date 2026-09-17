@@ -313,11 +313,26 @@ defmodule NeumeOpuDs.Pipeline do
         ) ::
           {:ok, Neume.RenderArtifact.t()} | {:error, term()}
   def render_checked(%{} = state, %Snapshot{} = snapshot, checked, session_globals, track_id) do
+    run_render_checked(state, snapshot, checked, session_globals, track_id, nil)
+  end
+
+  def render_checked(%{} = state, %Snapshot{} = snapshot, checked, session_globals, track_id, opts) do
+    run_render_checked(
+      state,
+      snapshot,
+      checked,
+      session_globals,
+      track_id,
+      Keyword.get(opts, :cancel_token)
+    )
+  end
+
+  defp run_render_checked(%{} = state, %Snapshot{} = snapshot, checked, session_globals, track_id, token) do
     globals = effective_globals(state.globals, session_globals)
 
     with {:ok, view} <- fetch_vocal_view(snapshot, track_id),
          windows <- Enum.map(checked, fn {phrase, _analysis, _data} -> phrase end),
-         {:ok, results} <- render_checked_phrases(state, view, checked, globals) do
+         {:ok, results} <- render_checked_phrases(state, view, checked, globals, token) do
       assemble(state, windows, results)
     else
       {:error, reason} -> {:error, OrchidError.slim(reason)}
@@ -366,27 +381,15 @@ defmodule NeumeOpuDs.Pipeline do
     {:ok, Neume.Windowing.split(items, tpqn: tpqn)}
   end
 
-  defp render_checked_phrases(state, view, checked, globals) do
+  # 逐乐句渲染循环：每个乐句边界轮询协作取消令牌（在途乐句跑完），
+  # 取消时以 {:error, :render_cancelled} 终止（经 OrchidError.slim 原样
+  # 透出）。
+  defp render_checked_phrases(state, view, checked, globals, token) do
     Enum.reduce_while(checked, {:ok, []}, fn {phrase, _analysis, data}, {:ok, acc} ->
-      elements =
-        Enum.filter(view.elements, fn {id, _note, _span} -> id in phrase.note_ids end)
-
-      key = render_key(state, elements, phrase.pins, globals, phrase.snapshot)
-
-      result =
-        case cache_fetch(state, cache_dir(state), key) do
-          {:hit, entry} ->
-            hit_result(entry)
-
-          :skip ->
-            with {:ok, rendered} <- execute_checked_phrase(state, data.plan, data.probe) do
-              cache_store(state, cache_dir(state), key, rendered)
-            end
-        end
-
-      case result do
-        {:ok, value} -> {:cont, {:ok, [value | acc]}}
-        {:error, _} = error -> {:halt, error}
+      if cancel_requested?(token) do
+        {:halt, {:error, :render_cancelled}}
+      else
+        render_checked_phrase(state, view, phrase, data, acc, globals)
       end
     end)
     |> case do
@@ -394,6 +397,32 @@ defmodule NeumeOpuDs.Pipeline do
       {:error, _} = error -> error
     end
   end
+
+  defp render_checked_phrase(state, view, phrase, data, acc, globals) do
+    elements =
+      Enum.filter(view.elements, fn {id, _note, _span} -> id in phrase.note_ids end)
+
+    key = render_key(state, elements, phrase.pins, globals, phrase.snapshot)
+
+    result =
+      case cache_fetch(state, cache_dir(state), key) do
+        {:hit, entry} ->
+          hit_result(entry)
+
+        :skip ->
+          with {:ok, rendered} <- execute_checked_phrase(state, data.plan, data.probe) do
+            cache_store(state, cache_dir(state), key, rendered)
+          end
+      end
+
+    case result do
+      {:ok, value} -> {:cont, {:ok, [value | acc]}}
+      {:error, _} = error -> {:halt, error}
+    end
+  end
+
+  defp cancel_requested?(nil), do: false
+  defp cancel_requested?(%Oi.CancelToken{} = token), do: Oi.CancelToken.cancelled?(token)
 
   defp execute_checked_phrase(state, plan, probe) do
     with {:ok, result} <-
